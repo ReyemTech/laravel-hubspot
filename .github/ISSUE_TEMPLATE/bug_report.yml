@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a bug in reyemtech/laravel-hubspot
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Do not use this form to report a security vulnerability.** See `SECURITY.md` for the
+        private disclosure process instead.
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: Output of `composer show reyemtech/laravel-hubspot`
+      placeholder: "1.2.3"
+    validations:
+      required: true
+  - type: input
+    id: php-laravel
+    attributes:
+      label: PHP and Laravel versions
+      placeholder: "PHP 8.3, Laravel 12.x"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal reproduction is the fastest path to a fix.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >-
+        Redact any HubSpot access tokens or client secrets before pasting — they should never
+        appear in logs in the first place (STANDARDS §10), but redact regardless.
+      render: shell
+    validations:
+      required: false

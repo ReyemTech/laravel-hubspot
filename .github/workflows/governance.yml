@@ -1,0 +1,16 @@
+name: Governance
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    name: Repository governance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check repository governance files
+        run: bash scripts/ci/check-repo-governance.sh

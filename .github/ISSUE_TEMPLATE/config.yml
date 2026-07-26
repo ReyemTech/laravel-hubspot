@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/ReyemTech/laravel-hubspot/security/advisories/new
+    about: >-
+      Please do not report security vulnerabilities through public GitHub issues. See SECURITY.md
+      for the private disclosure address and process instead.
