@@ -16,13 +16,36 @@ bar than an application nobody else has to integrate with.
 
 | | Standard | Rationale |
 |---|---|---|
-| PHP | `^8.2` | Laravel 11's own floor. `apps/laravel` is `^8.3`, but a library that excludes 8.2 excludes a large share of installs for no benefit we can name |
-| Laravel | 11.x, 12.x | Laravel 10 is past EOL. Supporting a dead branch is unpaid work |
+| PHP | `^8.2` | Laravel 11's floor. `apps/laravel` is `^8.3`, but excluding 8.2 would exclude a large share of the installs this package is trying to migrate |
+| Laravel | 11.x, 12.x, 13.x | Reach over tidiness — see the EOL note below |
 | HubSpot SDK | `hubspot/api-client:^14.1` | Matches what `apps/laravel` already runs |
 
-Every supported combination is in the CI matrix, run against both `prefer-stable` and
-`prefer-lowest`. A version we do not test is a version we do not support, and the README says
-so.
+**Signed off 2026-07-26, against verified upstream data.** Laravel 11 reached end of security
+support on 12 March 2026 and PHP 8.2 reaches it on 31 December 2026, so both are formally dead or
+dying. They are supported anyway, deliberately, for one nameable reason: design spec goal #6 is a
+one-line migration path for `tapp/laravel-hubspot`'s installed base, and a package that will not
+install alongside what those users are running cannot offer them one. Reach is the point; this is
+not an oversight.
+
+This overrides the reasoning used to exclude Laravel 10 ("past EOL, supporting a dead branch is
+unpaid work"). Laravel 10 stays excluded because it is eighteen months dead and no longer part of
+any realistic migration path — not merely because it is EOL.
+
+**Support matrix.** Version ranges do not overlap cleanly, so the matrix is not rectangular:
+Laravel 11 accepts PHP 8.2–8.4, Laravel 12 accepts 8.2–8.5, Laravel 13 requires 8.3+. Ten valid
+combinations:
+
+| | PHP 8.2 | PHP 8.3 | PHP 8.4 | PHP 8.5 |
+|---|---|---|---|---|
+| **Laravel 11** | ✓ | ✓ | ✓ | — |
+| **Laravel 12** | ✓ | ✓ | ✓ | ✓ |
+| **Laravel 13** | — | ✓ | ✓ | ✓ |
+
+Every combination is in the CI matrix, run against both `prefer-stable` and `prefer-lowest` — 20
+jobs. A version we do not test is a version we do not support, and the README says so.
+
+**Consequence for the code:** the Illuminate constraint is `^11.0|^12.0|^13.0`, so no framework
+API introduced in 12 or 13 may be used without a compatibility shim. Review checks this.
 
 ## 2. Runtime dependencies are near-frozen
 
@@ -340,14 +363,16 @@ need to watch for a stray `feat:` inside a branch bumping the minor version.
 
 ## Decisions needing sign-off
 
-Seven decisions are recorded here. **#0 (merge commits) and #2 (Pest) are settled**; the remaining
-five need sign-off. Each diverges from current ReyemTech practice or sets a cost, and is flagged
+Seven decisions are recorded here. **Six are now signed off — #0, #1, #2, #3, #4 and #6. Only #5
+remains open.** Each diverges from current ReyemTech practice or sets a cost, and was flagged
 rather than assumed:
 
 0. **~~Merge commits vs release-please~~ — SIGNED OFF 2026-07-26** (§12a). Merge commits stay;
    commitlint on every commit is mandatory and is a required check in §12b. Rationale: squashing
    would delete the RED→GREEN history that §6a exists to preserve.
-1. **PHP floor `^8.2`, not `^8.3`** — widens adoption; `apps/laravel` stays 8.3.
+1. **~~PHP floor `^8.2`, not `^8.3`~~ — SIGNED OFF 2026-07-26.** `^8.2` confirmed, and the Laravel
+   range widened to 11.x/12.x/13.x, after verifying support dates against laravel.com and php.net.
+   Both ends of the range are EOL or near it; kept deliberately for migration reach. See §1.
 2. **Test framework: Pest.** `apps/laravel`'s CLAUDE.md mandates PHPUnit and says to convert
    Pest to PHPUnit — that rule is app-scoped and does not carry here.
 
@@ -365,14 +390,16 @@ rather than assumed:
    **Hazard:** an agent working in this workspace will read `apps/laravel`'s CLAUDE.md and try to
    convert the suite to PHPUnit. The package ships its own `CLAUDE.md` stating Pest is
    deliberate.
-3. **`declare(strict_types=1)` everywhere** — new to both repos. Justified in §4.
-4. **Coverage 95% / MSI 80%.** These are real floors that will occasionally block a merge. Lower
-   them now if they are not wanted, rather than discovering it under deadline.
+3. **~~`declare(strict_types=1)` everywhere~~ — SIGNED OFF 2026-07-26.** Required, enforced by an
+   architecture test. New to both repos. Justified in §4.
+4. **~~Coverage 95% / MSI 80%~~ — SIGNED OFF 2026-07-26.** Confirmed as written. These are real
+   floors that will occasionally block a merge; that is the point.
 5. **`final` by default.** Reduces consumer flexibility, prevents accidental BC commitments. The
    escape hatch is interfaces, which the layer design already provides.
-6. **Function hard limit at 150 lines** (§6b). Kept as specified, but with everything else in
-   this document a 150-line function should never survive review — the *review target* of 40 is
-   the number that will actually operate.
+6. **~~Function hard limit at 150 lines~~ — SIGNED OFF 2026-07-26** (§6b). Confirmed at 500 file /
+   150 function / 10 complexity, with review targets of 300 / 40 / 5. With everything else in this
+   document a 150-line function should never survive review — the *review target* is the number
+   that will actually operate.
 
 ---
 
