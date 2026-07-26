@@ -98,7 +98,7 @@ REL-02.
 
 ### Release & Publishing
 
-- [ ] **REL-01**: Local release plumbing
+- [x] **REL-01**: Local release plumbing
   — `REQ-release-publishing` part 1, **re-cut 2026-07-26** (STANDARDS §12, §12b; signals spec §15.1)
 
   - Acceptance: `composer validate --strict` is a required CI check, and release-please is configured
@@ -613,7 +613,7 @@ Deferred. Tracked but not in the current roadmap.
 | FOUND-03 | Phase 1 | Pending — **blocked** (developer account token) |
 | FOUND-04 | Phase 1 | Pending |
 | FOUND-05 | Phase 1 | Pending |
-| REL-01 | Phase 1 | Pending |
+| REL-01 | Phase 1 | Complete |
 | GW-01 | Phase 2 | Pending |
 | GW-02 | Phase 2 | Pending |
 | GW-03 | Phase 2 | Pending |

@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 1
 current_phase_name: Foundation & Gates
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-07-26T19:46:40.664Z"
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-07-26T20:02:42.831Z"
 last_activity: 2026-07-26
 last_activity_desc: roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 7
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -32,11 +32,11 @@ request lifecycle.
 ## Current Position
 
 Phase: 1 of 9 (Foundation & Gates)
-Plan: 1 of 7 in current phase
+Plan: 2 of 7 in current phase
 Status: Ready to execute
 Last activity: 2026-07-26 — roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 
-Progress: [█░░░░░░░░░] 14%
+Progress: [███░░░░░░░] 29%
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Progress: [█░░░░░░░░░] 14%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P02 | 20min | 3 tasks | 10 files |
+| Phase 01 P01 | 20min | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 - [Phase ?]: Private disclosure address set to security@reyem.tech; owner must confirm mailbox exists and is monitored
 - [Phase ?]: Research assumption A3 confirmed: wagoid/commitlint-github-action@v6 needs no root package.json; commitlint.config.mjs alone is sufficient
+- [Phase ?]: composer/semver added to require-dev mid-plan (used directly by tests/Ci/ComposerManifestTest.php; verified legitimate against Packagist directly)
+- [Phase ?]: Coverage floor (--min=95) on empty src/ observed to fail with a clean PHPUnit runner warning rather than crash or vacuous pass; kept as-is rather than adding a placeholder file to src/ (would violate the locked 'src/ stays empty' decision) or disabling failOnPhpunitWarning (causes an uncaught crash instead)
 
 ### Pending Todos
 
@@ -164,6 +167,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-26T19:46:40.639Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-07-26T20:02:42.804Z
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None
