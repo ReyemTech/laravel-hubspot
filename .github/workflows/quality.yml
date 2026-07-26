@@ -1,0 +1,126 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  phpstan:
+    name: phpstan (level max, no baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --no-progress
+
+  pint:
+    name: pint (style, laravel preset)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Run Pint
+        run: vendor/bin/pint --test
+
+  code-shape:
+    name: code shape (file/function length, cyclomatic complexity)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Run PHPCS
+        run: vendor/bin/phpcs --standard=phpcs.xml -q
+
+  source-hygiene:
+    name: source hygiene (no deferred-work markers)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run the source-hygiene scan
+        run: bash scripts/ci/check-source-hygiene.sh
+
+      - name: Prove the scan rejects both markers
+        run: bash scripts/ci/check-source-hygiene.sh --self-test
+
+  quality-gates-fire:
+    name: quality gates fire (violation-fixture proof)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Prove PHPStan and the code-shape gate each reject a deliberate violation
+        run: bash scripts/ci/verify-quality-gates-fire.sh
+
+  mutation:
+    # Only meaningful once the `tests` job (ci.yml) is green: pest --mutate
+    # runs the tests covering each mutation, so a red test suite makes this
+    # job's own output uninformative rather than a true mutation score. No
+    # `needs:` on that job here (they run in separate workflows/files), but
+    # a failing `tests` job elsewhere in the same pull request should be
+    # read as "the number below isn't meaningful yet", not ignored.
+    name: mutation (pest --mutate, MSI floor 80)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: pcov
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Run the mutation floor
+        run: vendor/bin/pest --mutate --min=80
