@@ -57,15 +57,20 @@ Production `require` is exactly:
 - `illuminate/support` — `ServiceProvider`, facades, the `Route` macro
 - `illuminate/database` — the Eloquent `Model` the sync trait and observer are typed against
 - `laravel/prompts` — the optional installer (§7)
+- `illuminate/view` — the `Frontend` layer's Blade components
 
-The first three are this package's own surface. The last three are Illuminate code the package
+The first three are this package's own surface. The last four are Illuminate code the package
 calls directly, and are **declared rather than assumed**: every consumer has `laravel/framework`
 installed, so relying on it to supply them transitively would work in practice — and would still
 be an undeclared dependency. `laravel/prompts` in particular ships with the framework, which is
 why the design spec calls it "no new dependency"; that is true of the vendor tree and not true of
 this package's `composer.json`.
 
-**Adding a seventh requires written justification in the PR description**, and the reviewer's
+`illuminate/view` was added 2026-07-26 with the `Frontend` layer. It is first-party Laravel and
+used directly by a component the package ships and renders itself, so it is in-policy under the
+rule this section actually encodes.
+
+**Adding an eighth requires written justification in the PR description**, and the reviewer's
 default answer is no. The rule being encoded is *no third-party runtime dependencies*, and that is
 unchanged. Notably excluded:
 
@@ -113,9 +118,15 @@ implied. CI runs `pint --test` and fails on any diff.
 
 | Metric | Floor | Tool |
 |---|---|---|
-| Line coverage | **95%** | Pest + Xdebug/PCOV |
+| Line coverage (PHP) | **95%** | Pest + Xdebug/PCOV |
 | Mutation score (MSI) | 80% | `pest --mutate` |
+| Line coverage (JS) | **95%** | Vitest |
 | Architecture rules | all pass | see below |
+
+The JavaScript floor exists because the `Frontend` layer's booking listener validates
+`event.origin` before trusting a `postMessage` payload — the most security-sensitive code in the
+package — and PHP line coverage cannot see a single line of it. It is affordable because the
+documentation site already brings Node into CI.
 
 Coverage alone measures which lines ran, not whether an assertion would notice them breaking.
 Mutation testing is what makes the coverage number mean something, and it is the standard that
@@ -129,11 +140,22 @@ Gateway   → may depend on: hubspot/api-client
 Registry  → may depend on: Gateway
 Sync      → may depend on: Registry, Gateway
 Webhooks  → may depend on: Registry, Gateway
+Signals   → may depend on: Registry, Gateway
+Frontend  → may depend on: the public facade ONLY
 ```
 
 Anything reaching upward fails the build. `Gateway` is the only layer permitted to reference
 `HubSpot\*` classes — that is what makes the SDK swappable and the rest of the package fast to
 test.
+
+Two further rules, added 2026-07-26 with the `Signals` and `Frontend` layers:
+
+- **`Signals` may not depend on `Sync` or `Webhooks`.** It is a peer, not a consumer. Signals are
+  event-shaped and have no local model; `Sync` is model-shaped. Merging them would blur the
+  largest boundary in the package.
+- **`Frontend` may not reference `HubSpot\*`, `Gateway`, `Registry`, `Sync`, `Webhooks` or
+  `Signals`.** It talks to the same public facade a consumer would, which stops the frontend
+  becoming a back door around the boundary that makes the SDK swappable.
 
 **Tests are deterministic or they are broken.** Time is frozen (`Carbon::setTestNow()`), never
 `sleep()`; randomness is seeded; ordering is never assumed. A test that passes in isolation and
@@ -413,5 +435,8 @@ Rejected so nobody re-proposes them in month three:
   an 80% mutation score is a genuinely higher bar than 100% coverage with weak assertions.
 - **Rector in CI.** Excellent for one-off upgrades, noisy as a gate. Run it deliberately at
   version bumps.
-- **A `docs/` site.** README plus inline examples until there is enough surface to justify one.
-  Documentation nobody reads still has to be maintained.
+- ~~**A `docs/` site.**~~ **Adopted 2026-07-26.** This rejection was explicitly conditional —
+  "README plus inline examples *until there is enough surface to justify one*". Adopting intent
+  signals, attribution, a `Frontend` layer and a public `identify()` API is that condition firing,
+  not a reversal of the reasoning. Astro + Starlight in `site/`, published to a `docs-pages`
+  branch, following the pattern proven in `ReyemTech/apps/stint`.

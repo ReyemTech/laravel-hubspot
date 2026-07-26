@@ -76,7 +76,16 @@ deals, products, line items, tickets and custom objects nearly free instead of ~
 
 - A CRM-agnostic driver layer. CRM abstractions leak; nobody has asked for one.
 - Replacing the official SDK. We wrap it; `Gateway` is the only layer that names `HubSpot\*`.
-- Marketing/CMS/Conversations APIs. CRM only, until someone asks.
+- Marketing/CMS/Conversations APIs. CRM only, until someone asks — **with one recorded exception,
+  below.**
+
+**Exception, added 2026-07-26.** The Meetings embed component (`2026-07-26-signals-attribution-and-frontend-design.md`
+§10) is a frontend widget, not a CRM API call, and sits outside the "CRM only" line on the most
+natural reading. It is adopted deliberately, on the reading that this package's differentiator is
+*inbound* signal — and a booking confirmation is inbound signal whose trust problem, validating
+that a message genuinely came from HubSpot, is the same class as webhook signature verification.
+The `Frontend` layer's isolation (§3) is what keeps this from eroding the CRM core. Recorded here
+so the two design documents do not contradict each other.
 
 ## 3. Architecture
 
@@ -87,9 +96,16 @@ Gateway   → may depend on: hubspot/api-client        (the ONLY layer that name
 Registry  → may depend on: Gateway
 Sync      → may depend on: Registry, Gateway
 Webhooks  → may depend on: Registry, Gateway
+Signals   → may depend on: Registry, Gateway         [added 2026-07-26]
+Frontend  → may depend on: the public facade ONLY    [added 2026-07-26]
 ```
 
 Anything reaching upward fails the build. Swapping SDKs touches one layer.
+
+`Signals` and `Frontend` are specified in
+`2026-07-26-signals-attribution-and-frontend-design.md`. `Signals` may not depend on `Sync` or
+`Webhooks` — it is a peer, not a consumer. `Frontend` may not reference `HubSpot\*` or any
+internal layer.
 
 | Component | Layer | Job |
 |---|---|---|
