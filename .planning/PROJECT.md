@@ -58,7 +58,7 @@ two design specs, one candidate brief, and no code.)
 
 ### Active
 
-- [ ] **Foundation (FOUND-01..05)** — repository, the full 20-job CI matrix, branch protection with
+- [ ] **Foundation (FOUND-01..05)** — repository, the full 16-job CI matrix, branch protection with
       every standards gate green on an empty package; `SECURITY.md` from day one; the Node/pnpm
       toolchain with the Vitest floor and docs build; six-layer architecture rules; the §6.4
       association-inverse empirical probe
@@ -181,9 +181,9 @@ build), the docs-site rejection (now adopted), and publishing (now owner-gated).
 
 ## Constraints
 
-- **Tech stack**: PHP `^8.2`; Laravel 11.x, 12.x and 13.x; `hubspot/api-client:^14.1`. The matrix is
-  **not rectangular** — L11 accepts PHP 8.2-8.4, L12 accepts 8.2-8.5, L13 requires 8.3+ — giving ten
-  valid combinations, each run on `prefer-stable` and `prefer-lowest` for 20 CI jobs. A version not
+- **Tech stack**: PHP `^8.3`; Laravel 11.x, 12.x and 13.x; `hubspot/api-client:^14.1`. The matrix is
+  **not rectangular** — L11 accepts PHP 8.3-8.4, L12 accepts 8.3-8.5, L13 requires 8.3+ — giving eight
+  valid combinations, each run on `prefer-stable` and `prefer-lowest` for 16 CI jobs. A version not
   tested is not supported, and the README says so.
 - **Framework API ceiling**: the Illuminate constraint is `^11.0|^12.0|^13.0`, so **no framework API
   introduced in Laravel 12 or 13 may be used without a compatibility shim.** Review checks this.
@@ -237,13 +237,13 @@ key. D-34 onward postdate the intel files and have no key.
 
 ### Support matrix and dependencies
 
-- **D-01:** **Signed off 2026-07-26, against verified upstream data (laravel.com, php.net).** PHP floor `^8.2`; Laravel 11.x, 12.x and 13.x; `hubspot/api-client:^14.1`. The matrix is **not rectangular** — L11 accepts PHP 8.2-8.4, L12 accepts 8.2-8.5, L13 requires 8.3+ — giving **ten** valid combinations, each run on both `prefer-stable` and `prefer-lowest`, for **20 CI jobs**. Laravel 11 reached end of security support on 12 March 2026 and PHP 8.2 does on 31 December 2026; both are supported anyway, deliberately, because goal #6 is a one-line migration path for tapp's installed base and a package that will not install alongside what those users run cannot offer one. Laravel 10 stays excluded because it is eighteen months dead, not merely because it is EOL. **Consequence:** the Illuminate constraint is `^11.0|^12.0|^13.0`, so no framework API introduced in 12 or 13 may be used without a shim. A version not tested is not supported and the README says so. (DEC-support-matrix)
+- **D-01:** **Signed off 2026-07-26 against verified upstream data (laravel.com, php.net); PHP floor amended the same day during Phase 1 research.** PHP floor `^8.3`; Laravel 11.x, 12.x and 13.x; `hubspot/api-client:^14.1`. The matrix is **not rectangular** — L11 accepts PHP 8.2-8.4, L12 accepts 8.2-8.5, L13 requires 8.3+ — giving **eight** valid combinations, each run on both `prefer-stable` and `prefer-lowest`, for **16 CI jobs**. Laravel 11 reached end of security support on 12 March 2026 and is supported anyway, deliberately, because goal #6 is a one-line migration path for tapp's installed base and a package that will not install alongside what those users run cannot offer one. **The PHP floor was raised from `^8.2` to `^8.3` on 2026-07-26** because Pest 4, `pest-plugin-arch` 4.x and `pest-plugin-laravel` 4.x all require 8.3, and keeping an 8.2 leg would have put the unmaintained `pest-plugin-arch` 3.1.1 on those jobs — making architecture tests and mutation scoring behave differently depending on which PHP version ran them. Migration reach is untouched: all three Laravel majors survive, since Laravel 11 supports PHP 8.2-8.4. Laravel 10 stays excluded because it is eighteen months dead, not merely because it is EOL. **Consequence:** the Illuminate constraint is `^11.0|^12.0|^13.0`, so no framework API introduced in 12 or 13 may be used without a shim. A version not tested is not supported and the README says so. (DEC-support-matrix)
 - **D-02:** **Amended 2026-07-26.** Production `require` is exactly **seven** packages — `php`, `hubspot/api-client`, `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `laravel/prompts`, `illuminate/view`. An eighth requires written justification in the PR description; the reviewer's default answer is no. The rule being encoded is *no third-party runtime dependencies* and it is **unchanged** — the Illuminate packages are first-party Laravel that this package calls directly, declared rather than assumed. (DEC-runtime-dependencies)
 - **D-03:** Three packages are excluded deliberately — `spatie/laravel-package-tools` (hand-roll the service provider instead), `spatie/laravel-webhook-client` (forces its `webhook_calls` migration on every consumer), and `fakerphp/faker` from production (`require-dev` only, every call site guarded by `class_exists()`). (DEC-excluded-dependencies)
 
 ### Static analysis, style, and code shape
 
-- **D-04:** PHPStan + Larastan at level 9 (max) with `checkModelProperties: true`. A baseline file is **forbidden** — suppression is per-line, never per-file, and always carries a written reason. CI fails on any new error; there is no "fix it later" mode. (DEC-phpstan-level-9)
+- **D-04:** PHPStan + Larastan at the pinned major's **maximum** level (`level: max` — PHPStan 2.x's true maximum is 10, not the literal 9 STANDARDS §3 mentions) with `checkModelProperties: true`. A baseline file is **forbidden** — suppression is per-line, never per-file, and always carries a written reason. CI fails on any new error; there is no "fix it later" mode. (DEC-phpstan-level-9)
 - **D-05:** Pint with the `laravel` preset and a committed `pint.json` so the ruleset is explicit rather than implied. CI runs `pint --test` and fails on any diff. (DEC-style-pint)
 - **D-06:** **Signed off 2026-07-26.** Code shape hard fails at file 500 lines, **function 150 lines**, cyclomatic complexity 10; review targets are 300 / 40 / 5. Enforced by a CI script — over the hard limit fails the build, over the review target needs a sentence in the PR saying why. The *review target* is the number that will actually operate; with everything else in the standards a 150-line function should never survive review. Extract behaviour, not shape — two functions answering the same question become one immediately, not on the third occurrence. (DEC-code-shape-limits)
 - **D-07:** No `TODO`/`FIXME` reaches `main`. CI greps for them; they become issues instead. (DEC-no-todo-on-main)
@@ -322,7 +322,7 @@ key. D-34 onward postdate the intel files and have no key.
 ## Open Decisions — Awaiting Sign-Off
 
 **One remains.** Six of the seven `STANDARDS.md` decisions were signed off on 2026-07-26 and are now
-in the `<decisions>` block above: #0 merge commits + mandatory commitlint (D-25), #1 PHP `^8.2` and
+in the `<decisions>` block above: #0 merge commits + mandatory commitlint (D-25), #1 PHP `^8.3` and
 Laravel 11/12/13 (D-01), #2 Pest (D-08), #3 `strict_types` (D-34), #4 coverage and MSI floors (D-43),
 #6 code shape limits (D-06).
 
@@ -350,7 +350,7 @@ Laravel 11/12/13 (D-01), #2 Pest (D-08), #3 `strict_types` (D-34), #4 coverage a
 | Associations modelled as a directed pair, registry miss throws | Directional type ids differ per direction; a silent inverse fallback is how 202 gets written where 201 belongs, and nobody notices for months. | — Pending validation |
 | Merge commits, not squash; commitlint mandatory (D-25) | Only merge commits preserve the RED→GREEN sequence into `main`, which is the point of D-13. | ✓ Signed off 2026-07-26 |
 | Pest, not PHPUnit (D-08) | `pest --mutate` + `pest-plugin-arch` deliver the mutation floor and layer-boundary tests in one runner; PHPUnit needs four tools. | ✓ Settled |
-| PHP `^8.2`, Laravel 11/12/13, 20-job matrix (D-01) | Verified against laravel.com and php.net. Both ends of the range are EOL or near it and kept deliberately for migration reach — a package that will not install alongside what tapp's users run cannot offer them a migration path. | ✓ Signed off 2026-07-26 |
+| PHP `^8.3`, Laravel 11/12/13, 16-job matrix (D-01) | Verified against laravel.com and php.net. Both ends of the range are EOL or near it and kept deliberately for migration reach — a package that will not install alongside what tapp's users run cannot offer them a migration path. | ✓ Signed off 2026-07-26 |
 | Signals as a peer layer, not part of `Sync` (D-35) | Signals are event-shaped and have no local model; `Sync` is model-shaped. Merging them blurs the largest boundary in the package. | ✓ Approved in the signals spec |
 | Buffer-first, one batch write per flush (D-40) | A `dataLayer` push cannot map 1:1 to a HubSpot write: HubSpot has hard rate limits, needs a contact to exist first, and stores property bags rather than event streams. Buffering also makes the flush idempotent and removes the read-then-write concurrency hazard. | ✓ Approved in the signals spec |
 | Database-backed buffer, cache explicitly rejected (D-38) | The pre-identity window is where attribution value lives, and cache is evictable by definition. Better explicitly off than silently lossy. | ✓ Approved in the signals spec |

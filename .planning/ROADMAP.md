@@ -15,7 +15,7 @@ then `Registry` on top of it, then `Sync` and `Webhooks` on top of both. Phases 
 paid ad spend traceable to pipeline across a 3-10 week sales cycle. Phase 8 adds `Frontend`, a leaf
 layer that talks to the same public facade a consumer would. Phase 9 makes the package adoptable.
 
-Every phase ships green against the full 20-job CI matrix with the coverage and MSI floors met. No
+Every phase ships green against the full 16-job CI matrix with the coverage and MSI floors met. No
 phase merges with a gate disabled "temporarily".
 
 **Recorded, not reopened:** shipping v1 at phase 5 — the originally specced scope, the part that
@@ -37,7 +37,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 
 ## Phases
 
-- [ ] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 20-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
+- [ ] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 16-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
 - [ ] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
 - [ ] **Phase 3: Registry & Stores** - Directional `(from, to, label) → typeId` resolution, cache and database stores, zero-migration install, diagnostics
 - [ ] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
@@ -196,7 +196,7 @@ breaks one is not complete.
 
 | Invariant | Source |
 |---|---|
-| Full 20-job CI matrix green — ten PHP × Laravel combinations, each on `prefer-stable` and `prefer-lowest` — with PHP line coverage ≥95%, JS line coverage ≥95%, and MSI ≥80% | D-01, D-30, D-43, STANDARDS §1, §6 |
+| Full 16-job CI matrix green — eight PHP × Laravel combinations, each on `prefer-stable` and `prefer-lowest` — with PHP line coverage ≥95%, JS line coverage ≥95%, and MSI ≥80% | D-01, D-30, D-43, STANDARDS §1, §6 |
 | No framework API introduced in Laravel 12 or 13 is used without a compatibility shim — the Illuminate constraint is `^11.0\|^12.0\|^13.0` and review checks this | D-01, STANDARDS §1 |
 | No gate disabled "temporarily". Turning gates on later never happens | core spec §13, BRIEF.md |
 | The RED test commit precedes the GREEN implementation commit, visible in `git log` on `main` | D-13, D-25, CON-tdd-sequence |
