@@ -102,12 +102,127 @@ PHP
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Code shape: Pint style, file length, function length, cyclomatic complexity
+# ---------------------------------------------------------------------------
+check_shape() {
+    if [ ! -f "$ROOT/pint.json" ]; then
+        failures+=("shape: pint.json does not exist yet")
+    fi
+
+    if [ ! -f "$ROOT/phpcs.xml" ]; then
+        failures+=("shape: phpcs.xml does not exist yet")
+    fi
+
+    if [ ! -f "$ROOT/pint.json" ] || [ ! -f "$ROOT/phpcs.xml" ]; then
+        return
+    fi
+
+    log "shape: asserting Pint rejects a misformatted file"
+
+    local pint_fixture="$TMP_DIR/Misformatted.php"
+    cat > "$pint_fixture" <<'PHP'
+<?php
+declare(strict_types=1);
+namespace ReyemTech\Hubspot\Tests\QualityGateFixtures;
+class Misformatted{
+public function foo(){
+return 'bad';
+}
+}
+PHP
+
+    if vendor/bin/pint --config="$ROOT/pint.json" --test "$pint_fixture" > "$TMP_DIR/pint-fixture.log" 2>&1; then
+        failures+=("shape: pint --test accepted a misformatted file (see $TMP_DIR/pint-fixture.log)")
+    fi
+
+    log "shape: asserting phpcs rejects a 501-line file (independent of function length/complexity)"
+
+    local file_length_dir="$TMP_DIR/shape-file-length"
+    mkdir -p "$file_length_dir"
+    {
+        echo '<?php'
+        echo 'declare(strict_types=1);'
+        echo 'namespace ReyemTech\Hubspot\Tests\QualityGateFixtures;'
+        echo 'final class LongFileOnly'
+        echo '{'
+        for i in $(seq 1 500); do
+            echo "    public const PADDING_${i} = ${i};"
+        done
+        echo '}'
+    } > "$file_length_dir/LongFileOnly.php"
+
+    if vendor/bin/phpcs --standard="$ROOT/phpcs.xml" -q "$file_length_dir/LongFileOnly.php" \
+        > "$TMP_DIR/shape-file-length.log" 2>&1; then
+        failures+=("shape: phpcs accepted a 501-line file (see $TMP_DIR/shape-file-length.log)")
+    elif ! grep -qi 'file is too long' "$TMP_DIR/shape-file-length.log"; then
+        failures+=("shape: phpcs rejected the 501-line fixture but not for file length (see $TMP_DIR/shape-file-length.log)")
+    fi
+
+    log "shape: asserting phpcs rejects a 151-line function (independent of file length/complexity)"
+
+    local function_length_dir="$TMP_DIR/shape-function-length"
+    mkdir -p "$function_length_dir"
+    {
+        echo '<?php'
+        echo 'declare(strict_types=1);'
+        echo 'namespace ReyemTech\Hubspot\Tests\QualityGateFixtures;'
+        echo 'final class LongFunctionOnly'
+        echo '{'
+        echo '    public function run(): int'
+        echo '    {'
+        echo '        $total = 0;'
+        for i in $(seq 1 150); do
+            echo "        \$total += ${i};"
+        done
+        echo '        return $total;'
+        echo '    }'
+        echo '}'
+    } > "$function_length_dir/LongFunctionOnly.php"
+
+    if vendor/bin/phpcs --standard="$ROOT/phpcs.xml" -q "$function_length_dir/LongFunctionOnly.php" \
+        > "$TMP_DIR/shape-function-length.log" 2>&1; then
+        failures+=("shape: phpcs accepted a 151-line function (see $TMP_DIR/shape-function-length.log)")
+    elif ! grep -qi 'function is too long' "$TMP_DIR/shape-function-length.log"; then
+        failures+=("shape: phpcs rejected the 151-line-function fixture but not for function length (see $TMP_DIR/shape-function-length.log)")
+    fi
+
+    log "shape: asserting phpcs rejects cyclomatic complexity 11 (independent of file/function length)"
+
+    local complexity_dir="$TMP_DIR/shape-complexity"
+    mkdir -p "$complexity_dir"
+    {
+        echo '<?php'
+        echo 'declare(strict_types=1);'
+        echo 'namespace ReyemTech\Hubspot\Tests\QualityGateFixtures;'
+        echo 'final class ComplexFunction'
+        echo '{'
+        echo '    public function run(int $x): int'
+        echo '    {'
+        echo '        $y = 0;'
+        for i in $(seq 1 10); do
+            echo "        if (\$x === ${i}) { \$y = ${i}; }"
+        done
+        echo '        return $y;'
+        echo '    }'
+        echo '}'
+    } > "$complexity_dir/ComplexFunction.php"
+
+    if vendor/bin/phpcs --standard="$ROOT/phpcs.xml" -q "$complexity_dir/ComplexFunction.php" \
+        > "$TMP_DIR/shape-complexity.log" 2>&1; then
+        failures+=("shape: phpcs accepted a cyclomatic-complexity-11 function (see $TMP_DIR/shape-complexity.log)")
+    elif ! grep -qi 'cyclomatic complexity' "$TMP_DIR/shape-complexity.log"; then
+        failures+=("shape: phpcs rejected the complexity-11 fixture but not for cyclomatic complexity (see $TMP_DIR/shape-complexity.log)")
+    fi
+}
+
 run() {
     case "$ONLY" in
         phpstan) check_phpstan ;;
-        shape) log "shape: not yet implemented" ;;
+        shape) check_shape ;;
         all)
             check_phpstan
+            check_shape
             ;;
         *)
             echo "Unknown --only value: ${ONLY}" >&2
