@@ -1,0 +1,53 @@
+{
+    "name": "reyemtech/laravel-hubspot",
+    "description": "A Laravel package for integrating with the HubSpot CRM API.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.3",
+        "hubspot/api-client": "^14.1",
+        "illuminate/contracts": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0",
+        "illuminate/database": "^11.0|^12.0|^13.0",
+        "illuminate/view": "^11.0|^12.0|^13.0",
+        "laravel/prompts": "^0.3.21"
+    },
+    "require-dev": {
+        "pestphp/pest": "^4.0",
+        "pestphp/pest-plugin-laravel": "^4.0",
+        "pestphp/pest-plugin-arch": "^4.0",
+        "phpstan/phpstan": "^2.2",
+        "larastan/larastan": "^3.10",
+        "phpstan/extension-installer": "^1.4",
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "squizlabs/php_codesniffer": "^4.0",
+        "slevomat/coding-standard": "^8.31",
+        "laravel/pint": "^1.0",
+        "symfony/yaml": "^7.0|^8.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "ReyemTech\\Hubspot\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "ReyemTech\\Hubspot\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "phpstan/extension-installer": true,
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "extra": {
+        "laravel": {
+            "providers": []
+        }
+    }
+}
