@@ -419,6 +419,22 @@ The Phase 1 additions land early on purpose. `BRIEF.md` states that Phase 0 exis
 gate green on an empty package because *"turning gates on later never happens."* The JS coverage
 gate and the docs build therefore ship in Phase 1, before anything uses them.
 
+### 15.1 Publishing is explicitly user-gated
+
+**Decided 2026-07-26.** The repository is `ReyemTech/laravel-hubspot`, created **private**. Packagist
+registration, the GitHub↔Packagist integration and the first public release are deferred until the
+owner has reviewed the package — publishing is not an autonomous step and will not be performed
+without explicit approval.
+
+Phase 1 therefore keeps only the parts of `REQ-release-publishing` that are local: `composer
+validate --strict` as a required check, and release-please configuration. Claiming the Packagist
+name and wiring the webhook move to a later owner-gated step, and cannot happen at all while the
+repository is private, since Packagist requires a public repository.
+
+Two further consequences of the repository being private: GitHub Pages needs a paid plan on private
+repositories, so the documentation site may build in CI but not deploy until the repository is made
+public; and branch protection rules may be limited by plan.
+
 **Recorded for the record:** shipping v1 at phase 5 — the originally specced scope, the part that
 displaces `tapp/laravel-hubspot` — and treating phases 6–9 as v1.1 was offered and declined. The
 owner chose all nine in v1 with the 6→9 phase cost stated. Noted here so the trade-off is visible
