@@ -34,8 +34,11 @@ function normalizePath(string $path): string
 }
 
 it('boots a Laravel application under orchestra/testbench and resolves it from the container', function (): void {
-    expect($this->app)->toBeInstanceOf(Application::class);
-    expect($this->app->bound(Application::class))->toBeTrue();
+    // `app()` (not `$this->app`) so the assertion is typed against the real
+    // container helper rather than a Pest-closure `$this` PHPStan cannot
+    // follow across the dynamic binding `uses(TestCase::class)` performs.
+    expect(app())->toBeInstanceOf(Application::class);
+    expect(app()->bound(Application::class))->toBeTrue();
 });
 
 it('registers the ReyemTech\Hubspot\ PSR-4 prefix mapped at src/ in the runtime autoloader', function (): void {
@@ -49,6 +52,10 @@ it('registers the ReyemTech\Hubspot\ PSR-4 prefix mapped at src/ in the runtime 
     }
 
     expect($loader)->toBeInstanceOf(ClassLoader::class);
+
+    if (! $loader instanceof ClassLoader) {
+        throw new RuntimeException('Expected a Composer\Autoload\ClassLoader to be registered.');
+    }
 
     $prefixes = $loader->getPrefixesPsr4();
 
