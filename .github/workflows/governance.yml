@@ -14,3 +14,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check repository governance files
         run: bash scripts/ci/check-repo-governance.sh
+
+  commitlint:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 gives commitlint the full commit range to compare
+      # against the PR's base branch. The commit-depth input below is
+      # deliberately left unset so every commit in the PR is linted, not
+      # just the head commit or the PR title (D-25, D-26) -- merge commits
+      # are the merge strategy, so a stray `feat:` buried in a branch would
+      # otherwise reach `main` undetected and bump the minor version.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: commitlint.config.mjs
+          failOnWarnings: false
