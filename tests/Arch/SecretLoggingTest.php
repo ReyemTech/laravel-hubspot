@@ -69,7 +69,7 @@ function reyemtech_hubspot_registered_src_root(): string
 }
 
 /**
- * @return array<int, string>
+ * @return list<string>
  */
 function reyemtech_hubspot_all_php_files(string $root): array
 {
@@ -83,7 +83,7 @@ function reyemtech_hubspot_all_php_files(string $root): array
     );
 
     foreach ($iterator as $file) {
-        if ($file->isFile() && $file->getExtension() === 'php') {
+        if ($file instanceof SplFileInfo && $file->isFile() && $file->getExtension() === 'php') {
             $files[] = $file->getPathname();
         }
     }

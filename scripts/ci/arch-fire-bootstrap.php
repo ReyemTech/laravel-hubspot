@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+use Composer\Autoload\ClassLoader;
 
 /**
  * Bootstrap used exclusively by scripts/ci/verify-arch-rules-fire.sh, via
@@ -24,7 +25,6 @@ declare(strict_types=1);
  * sidesteps all of that: it runs against the real, already-working vendor/ install,
  * and only ever touches the one Composer prefix mapping this package owns.
  */
-
 $scratchSrc = getenv('ARCH_FIRE_SCRATCH_SRC');
 
 if ($scratchSrc === false || $scratchSrc === '') {
@@ -42,7 +42,7 @@ if (! is_dir($scratchSrc)) {
 $overridden = false;
 
 foreach (spl_autoload_functions() as $autoloadFunction) {
-    if (is_array($autoloadFunction) && $autoloadFunction[0] instanceof Composer\Autoload\ClassLoader) {
+    if (is_array($autoloadFunction) && $autoloadFunction[0] instanceof ClassLoader) {
         $autoloadFunction[0]->setPsr4('ReyemTech\\Hubspot\\', [$scratchSrc]);
         $overridden = true;
     }

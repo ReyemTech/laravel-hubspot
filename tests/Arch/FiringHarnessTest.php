@@ -69,7 +69,7 @@ test('every fixture file on disk belongs to a declared rule', function (): void 
     );
 
     foreach ($onDisk as $file) {
-        if (! $file->isFile() || $file->getExtension() !== 'php') {
+        if (! $file instanceof SplFileInfo || ! $file->isFile() || $file->getExtension() !== 'php') {
             continue;
         }
 

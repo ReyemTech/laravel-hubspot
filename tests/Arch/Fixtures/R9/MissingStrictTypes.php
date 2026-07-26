@@ -9,6 +9,4 @@
 
 namespace ReyemTech\Hubspot\Gateway;
 
-final class MissingStrictTypes
-{
-}
+final class MissingStrictTypes {}
