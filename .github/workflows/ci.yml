@@ -50,3 +50,36 @@ jobs:
 
       - name: Run tests with coverage
         run: vendor/bin/pest --coverage --min=95
+
+  composer-validate:
+    name: composer validate --strict
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+  manifest:
+    name: manifest shape (seven production requires)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Run manifest test
+        run: vendor/bin/pest tests/Ci/ComposerManifestTest.php
