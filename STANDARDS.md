@@ -1,0 +1,390 @@
+# Engineering Standards — reyemtech/laravel-hubspot
+
+**Status:** Draft for review
+**Date:** 2026-07-26
+
+These are binding rules, not aspirations. Every one of them is enforced by CI or it does not
+belong in this document. A standard that depends on someone remembering it is not a standard.
+
+Where a rule diverges from existing ReyemTech practice (`apps/laravel`, `packages/sail`), the
+divergence is called out and justified — this is a public library, and it is held to a higher
+bar than an application nobody else has to integrate with.
+
+---
+
+## 1. Runtime and support matrix
+
+| | Standard | Rationale |
+|---|---|---|
+| PHP | `^8.2` | Laravel 11's own floor. `apps/laravel` is `^8.3`, but a library that excludes 8.2 excludes a large share of installs for no benefit we can name |
+| Laravel | 11.x, 12.x | Laravel 10 is past EOL. Supporting a dead branch is unpaid work |
+| HubSpot SDK | `hubspot/api-client:^14.1` | Matches what `apps/laravel` already runs |
+
+Every supported combination is in the CI matrix, run against both `prefer-stable` and
+`prefer-lowest`. A version we do not test is a version we do not support, and the README says
+so.
+
+## 2. Runtime dependencies are near-frozen
+
+Production `require` is exactly:
+
+- `php`
+- `hubspot/api-client`
+- `illuminate/contracts`
+- `illuminate/support` — `ServiceProvider`, facades, the `Route` macro
+- `illuminate/database` — the Eloquent `Model` the sync trait and observer are typed against
+- `laravel/prompts` — the optional installer (§7)
+
+The first three are this package's own surface. The last three are Illuminate code the package
+calls directly, and are **declared rather than assumed**: every consumer has `laravel/framework`
+installed, so relying on it to supply them transitively would work in practice — and would still
+be an undeclared dependency. `laravel/prompts` in particular ships with the framework, which is
+why the design spec calls it "no new dependency"; that is true of the vendor tree and not true of
+this package's `composer.json`.
+
+**Adding a seventh requires written justification in the PR description**, and the reviewer's
+default answer is no. The rule being encoded is *no third-party runtime dependencies*, and that is
+unchanged. Notably excluded:
+
+- `spatie/laravel-package-tools` — convenient, but it is a dependency to save perhaps 80 lines
+  of service provider. tapp takes it; we hand-roll.
+- `spatie/laravel-webhook-client` — forces its `webhook_calls` migration on every consumer,
+  which contradicts the zero-migration install (§7).
+- `fakerphp/faker` — test support only, `require-dev`, and every call site guarded by
+  `class_exists()`. A test helper must never drag Faker into a production vendor tree.
+
+## 3. Static analysis: level max, no baseline
+
+PHPStan + Larastan at **level 9 (max)**, `checkModelProperties: true`.
+
+**A baseline file is forbidden.** `apps/laravel` runs level 5 with a baseline and `packages/sail`
+runs level 0 — that is how you get analysis that reports zero problems while the code has
+plenty. On a greenfield package there is no legacy to grandfather, so there is no excuse.
+
+Suppression is per-line, never per-file, and always carries a reason:
+
+```php
+/** @phpstan-ignore-line SDK codegen returns `mixed`; shape asserted in ObjectGatewayTest */
+```
+
+CI fails on any new error. There is no "fix it later" mode.
+
+## 4. `declare(strict_types=1)` in every PHP file
+
+Enforced by an architecture test, not by review. This diverges from both existing repos (1 file
+out of 395 in `apps/laravel`). The justification is specific rather than dogmatic: this package
+passes HubSpot object ids around as strings that look like integers. Coercive typing turns
+`"0"` and `0` and `""` into silent equivalents, and a wrong object id writes to the wrong CRM
+record. Strict types is the cheapest defence available.
+
+## 5. Style
+
+Pint, `laravel` preset, with a committed `pint.json` so the ruleset is explicit rather than
+implied. CI runs `pint --test` and fails on any diff.
+
+`apps/laravel` has no style gate in CI at all. That is the gap this closes.
+
+## 6. Tests
+
+**Floors, enforced in CI:**
+
+| Metric | Floor | Tool |
+|---|---|---|
+| Line coverage | **95%** | Pest + Xdebug/PCOV |
+| Mutation score (MSI) | 80% | `pest --mutate` |
+| Architecture rules | all pass | see below |
+
+Coverage alone measures which lines ran, not whether an assertion would notice them breaking.
+Mutation testing is what makes the coverage number mean something, and it is the standard that
+most packages in this ecosystem — including tapp — do not have.
+
+**Architecture tests enforce the layer boundaries**, because a boundary that lives only in a
+design document erodes within three months:
+
+```
+Gateway   → may depend on: hubspot/api-client
+Registry  → may depend on: Gateway
+Sync      → may depend on: Registry, Gateway
+Webhooks  → may depend on: Registry, Gateway
+```
+
+Anything reaching upward fails the build. `Gateway` is the only layer permitted to reference
+`HubSpot\*` classes — that is what makes the SDK swappable and the rest of the package fast to
+test.
+
+**Tests are deterministic or they are broken.** Time is frozen (`Carbon::setTestNow()`), never
+`sleep()`; randomness is seeded; ordering is never assumed. A test that passes in isolation and
+fails in the parallel suite is a failing test, not an environment quirk.
+
+**No skipped, incomplete or risky tests on `main`.** PHPUnit runs with `failOnSkipped`,
+`failOnIncomplete` and `failOnRisky` enabled. A test worth skipping is worth deleting or fixing.
+
+**Flaky tests are quarantined within 24 hours** — reverted or marked and issued, never left to
+rot in CI. One tolerated flake teaches everyone to re-run red builds.
+
+**No test may perform real network I/O.** The suite runs green with no HubSpot credentials and
+no internet. Integration tests against a live developer portal live in a separate, opt-in suite
+gated on a secret, and are never required to merge.
+
+## 6a. TDD, from the first commit
+
+Every change starts as a **failing (RED) test** and is implemented until green. Not a preference
+— the working method.
+
+- The test commit precedes the implementation commit. With merge-commit SDLC (§12) that history
+  survives into `main`, so the RED→GREEN sequence is visible in `git log` forever.
+- Every bug fix opens with a test that reproduces the bug. The PR description names the commit
+  where it was red.
+- Review checks the sequence, since CI cannot: a PR whose tests were written after the code is
+  sent back.
+
+The honest caveat: this is the one standard here that tooling cannot fully enforce. It holds
+because review enforces it, which means reviewers have to actually look.
+
+## 6b. Code shape
+
+| Limit | Hard fail | Review target |
+|---|---|---|
+| File length | **500 lines** | 300 |
+| Function length | **150 lines** | 40 |
+| Cyclomatic complexity | 10 | 5 |
+
+Enforced by a CI script — anything over the hard limit fails the build; anything over the review
+target needs a sentence in the PR saying why. Given everything else in this document, a
+150-line function should be close to nonexistent. `HubspotContactService` in tapp is 601 lines,
+and its sibling is a 405-line near-duplicate of it; that is the outcome these limits exist to
+prevent.
+
+**Logic used more than once is extracted and reused.** One qualifier, learned from the same
+package: extract *behaviour*, not *shape*. tapp's contact and company services look alike, which
+is why they were written twice and then quietly diverged into different method names and return
+types. Two functions that resemble each other but answer different questions stay separate; two
+that answer the same question become one, immediately — not on the third occurrence.
+
+## 7. Install and consumer surface
+
+- **Zero migrations on install.** The package works after `composer require` with no publish
+  step and no `migrate`. Database-backed stores are opt-in via one env var (§ design spec).
+- **`hubspot:install` is optional, never required.** A package that breaks without an install
+  step gets abandoned at the README.
+- **Config is documented inline.** Every key in `config/hubspot.php` carries a comment stating
+  what it does and what breaks if it is wrong.
+- **Env vars are namespaced `HUBSPOT_*`** and listed in the README with their defaults.
+
+## 8. Public API and backward compatibility
+
+- Semantic versioning, strictly. The public API is everything not marked `@internal`.
+- Every class is `final` unless extension is an explicit, documented feature. Unsealing later is
+  a patch; sealing later is a breaking change.
+- `roave/backward-compatibility-check` runs on every PR to `main`. A detected break fails CI
+  unless the PR is labelled `breaking` and targets the next major.
+- Deprecations live for **two minor versions minimum**, emit `E_USER_DEPRECATED`, and name their
+  replacement in the message.
+- `UPGRADE.md` is updated in the same PR as any breaking change — not at release time.
+
+## 9. Errors
+
+A typed hierarchy rooted at a package-owned interface:
+
+```
+HubspotException (interface)
+├── ConfigurationException      — missing token, unknown store, unmapped model
+├── AssociationTypeException    — direction not in the registry, label unknown for that pair
+├── ObjectTypeException         — unknown or unmappable object type
+└── ApiException                — wraps the SDK's, preserving status, body and request id
+```
+
+**A raw `HubSpot\Client\...\ApiException` must never reach userland.** Consumers catch our
+types, which means we can change SDKs without breaking their `catch` blocks.
+
+Every exception message names the fix, not just the fault: *"HUBSPOT_STORE=database but
+`hubspot_association_types` does not exist — run `php artisan migrate`."*
+
+## 10. Security
+
+- Tokens and client secrets are **never logged**, never in exception messages, never in
+  `dd()`-able state. An architecture test greps for the config keys in log calls.
+- Webhook signature verification **fails closed** by default.
+- Signature comparison uses `hash_equals`, delegated to the SDK's validator — we do not
+  hand-roll HMAC.
+- `SECURITY.md` with a private disclosure address, published from day one.
+- Dependabot enabled; security advisories are patch releases within 48 hours.
+
+## 11. Performance
+
+- Batch endpoints are used wherever HubSpot offers one. Syncing a collection issues one batch
+  request, not N.
+- **N+1 API calls are a test failure, not a code smell**: `Hubspot::fake()` counts requests, and
+  the sync tests assert exact call counts.
+- No API call in a request lifecycle by default — sync is queued unless explicitly told
+  otherwise.
+
+## 12. SDLC — branching, PRs, releases
+
+**Branching:**
+
+- Every feature branch starts from a **freshly pulled `main`**. No exceptions.
+- **Branching from a branch is strictly forbidden.** If work depends on unmerged work, the
+  dependency merges first. Stacked branches produce review diffs nobody can read and merge
+  conflicts nobody can resolve.
+- A stale branch is updated by **rebasing onto a freshly pulled `main`**. Rebase replays your
+  commits in order, so the RED→GREEN sequence of §6a is preserved intact — only the parent
+  changes. Merging `main` in is also acceptable; it just adds noise commits.
+- Rebase means force-pushing, so: **always `--force-with-lease`**, never `--force`. This is safe
+  here precisely because §12 forbids branching from a branch — every branch is single-author by
+  construction, so a rewrite cannot destroy anyone else's work.
+- One side effect worth knowing: rewritten SHAs mark existing review comments "outdated" on
+  GitHub. Rebase before requesting review, not in the middle of one.
+- Branch names: `feat/`, `fix/`, `chore/`, `docs/` + a short slug.
+
+**Pull requests:**
+
+- **Merge commits**, not squash. The commit history — including the failing-test commit — is
+  part of the record.
+- Every PR states what was verified and how. "Tests pass" is not a verification statement;
+  naming the command and its result is.
+- PRs are reviewable in one sitting. Over ~400 changed lines, the description must say why it
+  could not be split.
+- No PR merges red. Not "it's unrelated", not "it's flaky" — see §6.
+
+**Commits:**
+
+- **Conventional Commits on every commit**, not merely the PR title — see the conflict noted in
+  §12a. Enforced by commitlint in CI.
+- No `TODO`/`FIXME` reaches `main`. CI greps for them; they become issues instead. A TODO is a
+  decision deferred where nobody will find it.
+
+**Releases:**
+
+- release-please owns versioning and `CHANGELOG.md`. Nobody edits the changelog by hand.
+- `main` is always releasable.
+- **Packagist is wired, not manual.** release-please cuts the tag and the GitHub release; it does
+  *not* publish. The GitHub↔Packagist integration (App or webhook) is what makes a tag appear as
+  an installable version. Without it, tags land and Packagist never notices — the package looks
+  abandoned while `main` is green.
+- The Packagist name is claimed in Phase 0, before the vendor namespace, README and docs are
+  written against it. A name collision found at first release is a rename across the whole
+  package; found in Phase 0 it costs nothing. The trade-off accepted here is a public `dev-main`
+  with no functionality until the first tag.
+- Publishing is verified end-to-end at the first tagged release: tag → release-please → Packagist
+  shows the version → `composer require reyemtech/laravel-hubspot` resolves in a clean project.
+
+### 12a. Resolved: merge commits, with commitlint mandatory
+
+`apps/laravel` squash-merges and gates on `semantic-pr-title`, so only the PR title has to be a
+conventional commit — the messy commits inside the branch never reach `main`.
+
+Merge commits change that. release-please derives the changelog and the version bump from the
+**individual commits** on `main`, so with merge commits:
+
+- every commit must be a valid Conventional Commit, or it is silently dropped from the changelog;
+- a `feat:` commit buried in a branch bumps the minor version, even if the PR was labelled a fix;
+- `semantic-pr-title` alone is no longer sufficient — **commitlint on every commit becomes
+  mandatory**, and contributors will hit it.
+
+Both work. They just require different tooling, and the merge-commit path puts more friction on
+the contributor.
+
+**Signed off 2026-07-26: merge commits stay, and commitlint on every commit is therefore
+mandatory** — added to the required checks in §12b. The deciding argument is §6a: the whole point
+of preserving the RED→GREEN sequence is that it "survives into `main`… visible in `git log`
+forever". Squash-merging deletes exactly that, which would negate a standard set deliberately
+elsewhere in this document. The accepted costs are contributor friction from commitlint, and the
+need to watch for a stray `feat:` inside a branch bumping the minor version.
+
+## 12b. Repository governance
+
+- **`main` is protected**: PR required, CI required, no direct pushes, no force-push.
+  `ReyemTech/laravel` currently has **no branch protection at all** — anyone can push to master.
+  A public package cannot start that way.
+- Required checks: tests (full matrix), Pint, PHPStan, `pest --mutate`, architecture tests,
+  `composer audit`, BC check, **commitlint**, `composer validate --strict`.
+
+  commitlint is required, not optional — see §12a. `composer validate --strict` is required
+  because an invalid `composer.json` fails at Packagist submission time, which is the worst
+  moment to discover it.
+- `CODEOWNERS`, plus PR and issue templates. The PR template carries the Definition of Done
+  below.
+- **Definition of Done** — every box ticked before review is requested:
+  1. Started as a RED test
+  2. Full matrix green
+  3. Coverage ≥95%, MSI ≥80%
+  4. Pint and PHPStan clean, no new baseline
+  5. Docs and `UPGRADE.md` updated in this PR
+  6. No new runtime dependency (or justified in the description)
+  7. Public API changes are semver-assessed
+
+## 12c. Dependencies and audits
+
+- `composer audit` runs in CI and **fails the build** on any advisory.
+- Dependabot weekly; patch and minor dev-dependency bumps auto-merge on green, as
+  `packages/sail` already does.
+- Dependencies are updated at the start of a work cycle, never mixed into a feature PR.
+- The matrix (§1) is what makes aggressive updating safe: every supported PHP × Laravel
+  combination is exercised on `prefer-lowest` and `prefer-stable`, so a bump that breaks an older
+  supported version fails before release, not in someone's application.
+
+## 13. Documentation
+
+- README opens with a **60-second quickstart** — install, one model, one sync. Anything longer
+  before the first working example loses the reader.
+- Every public method has a usage example in the docs. Signature-only reference is not
+  documentation.
+- The association direction table (279 vs 280, 19 vs 20, 201 vs 202) is documented prominently.
+  It is the single most common source of HubSpot integration bugs and the reason this package
+  exists in its current shape.
+- `CONTRIBUTING.md` states these standards and the fact that CI enforces them, so nobody
+  discovers the mutation-score floor from a red build.
+
+---
+
+## Decisions needing sign-off
+
+Seven decisions are recorded here. **#0 (merge commits) and #2 (Pest) are settled**; the remaining
+five need sign-off. Each diverges from current ReyemTech practice or sets a cost, and is flagged
+rather than assumed:
+
+0. **~~Merge commits vs release-please~~ — SIGNED OFF 2026-07-26** (§12a). Merge commits stay;
+   commitlint on every commit is mandatory and is a required check in §12b. Rationale: squashing
+   would delete the RED→GREEN history that §6a exists to preserve.
+1. **PHP floor `^8.2`, not `^8.3`** — widens adoption; `apps/laravel` stays 8.3.
+2. **Test framework: Pest.** `apps/laravel`'s CLAUDE.md mandates PHPUnit and says to convert
+   Pest to PHPUnit — that rule is app-scoped and does not carry here.
+
+   The reason is tooling, not taste. `spatie/package-skeleton-laravel` (the template most Laravel
+   packages start from) and tapp both ship Pest + `pest-plugin-arch`. More decisively, two of the
+   standards in this document are first-class Pest features and third-party bolt-ons under
+   PHPUnit: mutation testing (`pest --mutate`, which runs only the tests covering each mutation)
+   and architecture tests (`pest-plugin-arch`). PHPUnit would mean Infection plus deptrac/phpat —
+   four tools for what Pest does in one runner.
+
+   Nothing is lost: Pest runs on PHPUnit, so PHPUnit-style test classes work unmodified inside a
+   Pest project. Costs: Pest's mutation engine is younger and less configurable than Infection,
+   and `--mutate` wants precise `covers()` annotations.
+
+   **Hazard:** an agent working in this workspace will read `apps/laravel`'s CLAUDE.md and try to
+   convert the suite to PHPUnit. The package ships its own `CLAUDE.md` stating Pest is
+   deliberate.
+3. **`declare(strict_types=1)` everywhere** — new to both repos. Justified in §4.
+4. **Coverage 95% / MSI 80%.** These are real floors that will occasionally block a merge. Lower
+   them now if they are not wanted, rather than discovering it under deadline.
+5. **`final` by default.** Reduces consumer flexibility, prevents accidental BC commitments. The
+   escape hatch is interfaces, which the layer design already provides.
+6. **Function hard limit at 150 lines** (§6b). Kept as specified, but with everything else in
+   this document a 150-line function should never survive review — the *review target* of 40 is
+   the number that will actually operate.
+
+---
+
+## Not standards, deliberately
+
+Rejected so nobody re-proposes them in month three:
+
+- **Commit signing.** Real security value, real onboarding friction for outside contributors.
+  Revisit if the package gains maintainers beyond ReyemTech.
+- **100% coverage.** The last 5% is `__toString()` and unreachable defensive branches. 95% plus
+  an 80% mutation score is a genuinely higher bar than 100% coverage with weak assertions.
+- **Rector in CI.** Excellent for one-off upgrades, noisy as a gate. Run it deliberately at
+  version bumps.
+- **A `docs/` site.** README plus inline examples until there is enough surface to justify one.
+  Documentation nobody reads still has to be maintained.

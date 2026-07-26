@@ -1,0 +1,28 @@
+# Explicit ingest manifest for /gsd-ingest-docs.
+#
+# Why this exists: GSD's directory-convention scan matches only
+# docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md. STANDARDS.md and
+# BRIEF.md live at the repo root under names no convention pattern matches, so a
+# default run would drop the binding standards document. This manifest is the
+# authoritative doc set.
+#
+# Precedence: lower number = higher precedence. STANDARDS.md is typed ADR and
+# ranked first because CLAUDE.md declares it binding and it owns the sign-off
+# list; the design spec's own §14 defers open decisions back to it.
+
+docs:
+  - path: STANDARDS.md
+    type: ADR
+    precedence: 0
+
+  - path: docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md
+    type: SPEC
+    precedence: 1
+
+  - path: BRIEF.md
+    type: DOC
+    precedence: 2
+
+# CLAUDE.md is deliberately NOT ingested. It is agent process guidance, not a
+# requirements source. It remains binding as a file; it is simply not a roadmap
+# input. Re-add it here if roadmap phases ever need to encode its process rules.

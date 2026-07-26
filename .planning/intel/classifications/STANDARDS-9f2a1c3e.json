@@ -1,0 +1,13 @@
+{
+  "source_path": "/home/mariomeyer/code/ReyemTech/packages/laravel-hubspot/STANDARDS.md",
+  "type": "ADR",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "Engineering Standards — reyemtech/laravel-hubspot",
+  "summary": "Binding CI-enforced engineering standards for the laravel-hubspot package, plus seven recorded decisions of which six await sign-off.",
+  "scope": ["PHP/Laravel support matrix", "runtime dependencies", "PHPStan level 9", "strict_types", "Pint", "Pest tests, coverage 95%, MSI 80%", "architecture layer boundaries", "TDD", "code shape limits", "install surface", "public API/semver", "exception hierarchy", "security", "performance", "SDLC branching/PRs/releases", "repository governance", "dependency audits", "documentation"],
+  "cross_refs": ["docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md", "CLAUDE.md", "UPGRADE.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "config/hubspot.php"],
+  "locked": false,
+  "precedence": 0,
+  "notes": "Manifest-typed ADR (authoritative). Document status is 'Draft for review', so locked=false per the Accepted-only rule; however sections 1-13 are stated as binding and CI-enforced and should be treated as locked constraints by the synthesizer. 'Decisions needing sign-off' lists SEVEN items numbered 0-6: #2 (Pest) is settled; #0 merge-commits-vs-release-please, #1 PHP floor ^8.2, #3 declare(strict_types=1), #4 coverage 95%/MSI 80%, #5 final by default, #6 function hard limit 150 lines remain UNSIGNED — extract as open decisions, not locked. 'Not standards, deliberately' section records four explicit rejections (commit signing, 100% coverage, Rector in CI, docs site) — non-goals."
+}

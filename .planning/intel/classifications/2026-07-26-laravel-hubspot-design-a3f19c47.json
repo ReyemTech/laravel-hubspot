@@ -1,0 +1,29 @@
+{
+  "source_path": "/home/mariomeyer/code/ReyemTech/packages/laravel-hubspot/docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md",
+  "type": "SPEC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "reyemtech/laravel-hubspot — Design",
+  "summary": "Approved architecture/design spec for a Laravel package wrapping the HubSpot CRM API via the SDK's generic objects and v4 associations APIs.",
+  "scope": [
+    "Gateway layer",
+    "generic CRM objects API",
+    "directional associations",
+    "association type ids",
+    "inbound webhooks",
+    "webhook signature verification",
+    "Hubspot::fake() test double",
+    "zero-migration install",
+    "tapp/laravel-hubspot migration path",
+    "phased delivery plan"
+  ],
+  "cross_refs": [
+    "../../../STANDARDS.md",
+    "BRIEF.md",
+    "TappNetwork/laravel-hubspot",
+    "hubspot/api-client"
+  ],
+  "locked": false,
+  "precedence": 1,
+  "notes": "Manifest-declared SPEC, precedence 1; content confirms (status Approved, implementation contracts, API surface tables). Extraction flags: §13 proposed six-phase breakdown with non-optional Phase 0 first; §6.4 open empirical question (association inverse) with prescribed probe procedure, not a reasoned decision; §14 defers open decisions to STANDARDS.md; §6 and §8 carry hard constraints — per-direction association typeIds and webhook signature verification that must not use fullUrl()."
+}

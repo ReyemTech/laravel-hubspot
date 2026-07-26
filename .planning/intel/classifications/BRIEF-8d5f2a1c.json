@@ -1,0 +1,13 @@
+{
+  "source_path": "/home/mariomeyer/code/ReyemTech/packages/laravel-hubspot/BRIEF.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "reyemtech/laravel-hubspot — Brief",
+  "summary": "Entry-point orientation brief for a greenfield Laravel HubSpot CRM package covering objects, directional associations, and inbound webhooks.",
+  "scope": ["HubSpot CRM", "Laravel package", "directional associations", "association type ids", "inbound webhooks", "webhook signature verification", "Gateway layer", "model bindings", "Phase 0", "CI standards gates", "TDD", "zero-migration install"],
+  "cross_refs": ["docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md", "STANDARDS.md", "CLAUDE.md"],
+  "locked": false,
+  "precedence": 2,
+  "notes": "Manifest-declared DOC. 'Things that will bite you if you skip the spec' and 'Non-negotiables' restate constraints owned by STANDARDS.md and the design spec; expect deduplication against higher-precedence sources rather than independent requirements."
+}
