@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 1
 current_phase_name: Foundation & Gates
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-07-26T20:35:30.822Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-07-26T20:36:03.969Z"
 last_activity: 2026-07-26
 last_activity_desc: roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 progress:
@@ -36,7 +36,7 @@ Plan: 4 of 7 in current phase
 Status: Ready to execute
 Last activity: 2026-07-26 — roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 
-Progress: [████░░░░░░] 43%
+Progress: [██████░░░░] 57%
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: [████░░░░░░] 43%
 | Phase 01 P02 | 20min | 3 tasks | 10 files |
 | Phase 01 P01 | 20min | 3 tasks | 14 files |
 | Phase 01 P04 | 29min | 3 tasks | 23 files |
+| Phase 01 P05 | 40min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -107,6 +108,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: PSR-4 ClassLoader override (not git-worktree+symlinked-vendor) proves arch rules fire without mutating the working tree — the worktree approach was tried and crashed
 - [Phase ?]: Empty-namespace pest-plugin-arch rules PASS vacuously (confirmed empirically), closing 01-RESEARCH.md assumption A2
 - [Phase ?]: R6's Frontend-may-depend-only-on-facade rule targets ReyemTech\Hubspot\Facades\Hubspot, a class Phase 2 introduces; R10's secret config keys (hubspot.token, hubspot.webhooks.secret) are provisional until config/hubspot.php ships
+- [Phase ?]: PHPStan level resolved to max (=10 under phpstan/phpstan 2.2.5), confirmed empirically via the installed phar's config.level*.neon files rather than trusted from STANDARDS' stale 'level 9' text
+- [Phase ?]: tests/Arch/Fixtures/* excluded from phpstan.neon and phpcs.xml: plan 04's deliberately rule-violating architecture fixtures are never production code and are outside this plan's ownership
+- [Phase ?]: Review targets (300/40/5) left as a PR-description convention, not encoded as PHPCS warnings: neither sniff used exposes a second, lower warning-only threshold
 
 ### Pending Todos
 
@@ -160,6 +164,9 @@ None yet.
   `.planning/intel/` say "Phase 0"; this roadmap says "Phase 1". GSD's `roadmap.analyze` silently
   drops a `### Phase 0:` header (verified 2026-07-26). Mapping table at the top of ROADMAP.md
 
+- Mutation required check (quality.yml) will report red for the remainder of Phase 1: pest --mutate --min=80 over the deliberately-empty src/ triggers PHPUnit's failOnPhpunitWarning path (WARN + exit 1, no score computed), mirroring plan 01's already-flagged coverage-floor gap. Resolves automatically once Phase 2 adds the first mutable file under src/.
+- Git-history attribution defect: commit 022b9e6 (plan 05) accidentally includes three of plan 04's task-2 files (tests/Arch/LayerBoundariesTest.php, SecretLoggingTest.php, StrictTypesTest.php) due to concurrent git staging in a shared (non-worktree) working directory. Content is correct and both plans are green; plan 04 lacks a dedicated GREEN commit for its rule implementations in git log. See 01-05-SUMMARY.md Issues Encountered.
+
 ## Deferred Items
 
 | Category | Item | Status | Deferred At |
@@ -171,6 +178,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-26T20:35:04.519Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-07-26T20:36:03.945Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None
