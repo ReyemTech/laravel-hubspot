@@ -13,6 +13,7 @@
         "laravel/prompts": "^0.3.21"
     },
     "require-dev": {
+        "composer/semver": "^3.4",
         "pestphp/pest": "^4.0",
         "pestphp/pest-plugin-laravel": "^4.0",
         "pestphp/pest-plugin-arch": "^4.0",
