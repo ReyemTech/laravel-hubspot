@@ -81,7 +81,7 @@ REL-02.
     green on an empty package because *"turning gates on later never happens."* The JS floor is
     affordable specifically because the docs site brings Node into CI anyway.
 
-- [ ] **FOUND-05**: Six-layer architecture rules enforced from the first commit
+- [x] **FOUND-05**: Six-layer architecture rules enforced from the first commit
   — signals spec §3; core spec §3 (amended 2026-07-26); STANDARDS §6 (amended 2026-07-26)
 
   - Acceptance: `pest-plugin-arch` encodes all six layers — `Gateway` → `hubspot/api-client`;
@@ -612,7 +612,7 @@ Deferred. Tracked but not in the current roadmap.
 | FOUND-02 | Phase 1 | Complete |
 | FOUND-03 | Phase 1 | Pending — **blocked** (developer account token) |
 | FOUND-04 | Phase 1 | Pending |
-| FOUND-05 | Phase 1 | Pending |
+| FOUND-05 | Phase 1 | Complete |
 | REL-01 | Phase 1 | Complete |
 | GW-01 | Phase 2 | Pending |
 | GW-02 | Phase 2 | Pending |

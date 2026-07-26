@@ -68,15 +68,15 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
   - **FOUND-03, the §6.4 association-inverse probe.** Requires a HubSpot developer account token the executing agent does not hold. It is an empirical probe with a prescribed procedure — run it when the token exists; do **not** reason to an answer. Everything else in Phase 1 proceeds without it, and `associate(..., verify: true)` plus `hubspot:associations:doctor` ship regardless: the probe sets a default, it does not block the design.
   - **Branch protection configuration.** Repository settings are owner action, and may additionally be limited by plan on a private repository. The required-check *definitions* are executable work; switching protection on is not.
 
-**Plans**: 2/7 plans executed
+**Plans**: 4/7 plans executed
 
 Plans:
 
 - [x] 01-01-PLAN.md — Package skeleton, Pest bootstrap, the 16-job matrix and `composer validate --strict`
 - [x] 01-02-PLAN.md — `SECURITY.md`, Dependabot, `CODEOWNERS`, PR/issue templates and commitlint
 - [ ] 01-03-PLAN.md — Node/pnpm toolchain and the 95% Vitest coverage floor, proven to fail
-- [ ] 01-04-PLAN.md — The ten architecture rules and a permanent harness proving each one fires
-- [ ] 01-05-PLAN.md — PHPStan at max with no baseline, Pint, code shape, hygiene and the mutation floor
+- [x] 01-04-PLAN.md — The ten architecture rules and a permanent harness proving each one fires
+- [x] 01-05-PLAN.md — PHPStan at max with no baseline, Pint, code shape, hygiene and the mutation floor
 - [ ] 01-06-PLAN.md — Astro + Starlight docs site building green, with the Phase 9 deploy recorded
 - [ ] 01-07-PLAN.md — release-please, `composer audit`, BC check, and the owner-gated handoff register
 
@@ -278,7 +278,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Gates | 2/7 | In Progress|  |
+| 1. Foundation & Gates | 4/7 | In Progress|  |
 | 2. Gateway Layer | 0/TBD | Not started | - |
 | 3. Registry & Stores | 0/TBD | Not started | - |
 | 4. Model Sync | 0/TBD | Not started | - |
