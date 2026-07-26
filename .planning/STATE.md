@@ -1,12 +1,19 @@
 ---
-gsd_state_version: '1.0'
-status: planning
+gsd_state_version: 1.0
+milestone: v1.1
+milestone_name: milestone
+current_phase: 1
+current_phase_name: Foundation & Gates
+status: executing
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-07-26T19:46:40.664Z"
+last_activity: 2026-07-26
+last_activity_desc: roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 progress:
-  total_phases: 9
+  total_phases: 1
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 7
+  completed_plans: 1
 ---
 
 # Project State
@@ -25,15 +32,16 @@ request lifecycle.
 ## Current Position
 
 Phase: 1 of 9 (Foundation & Gates)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
+Plan: 1 of 7 in current phase
+Status: Ready to execute
 Last activity: 2026-07-26 — roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 14%
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 - Average duration: —
 - Total execution time: —
@@ -45,10 +53,16 @@ Progress: [░░░░░░░░░░] 0%
 | - | - | - | - |
 
 **Recent Trend:**
+
 - Last 5 plans: —
 - Trend: —
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P02 | 20min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -61,23 +75,31 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - **D-35: six layers, not four.** `Signals` is a peer that may **not** depend on `Sync` or
   `Webhooks`; `Frontend` may not reference `HubSpot\*` or any internal layer. Both rules are
   architecture tests that ship in Phase 1
+
 - **D-01: the matrix is not rectangular.** L11 = PHP 8.2-8.4, L12 = 8.2-8.5, L13 = 8.3+. Ten
   combinations, 20 jobs. Illuminate constraint `^11.0|^12.0|^13.0`, so **no Laravel 12 or 13 API
   without a shim**
+
 - **D-02 / D-42: production `require` is seven packages now**, `illuminate/view` added with the
   `Frontend` layer. The no-third-party-runtime-dependency rule is unchanged
+
 - **D-43: three coverage floors** — 95% PHP line, **95% JS line (Vitest)**, 80% MSI
 - **D-40: buffer-first.** Roll-ups are absolute values computed from the buffer, never read back from
   HubSpot — which is what makes a flush idempotent and a queue retry unable to double-count
+
 - **D-41: exactly four merge verbs.** `first_wins`, `last_wins`, `increment`, `sum`, plus closures.
   **There is no `overwrite`** — an earlier draft listed it separately and it is the same operation as
   `last_wins`
+
 - **D-47: publishing is owner-gated.** Not autonomous, and impossible while the repo is private
 - **D-13 / D-25:** RED commit precedes GREEN, preserved by merge commits; commitlint mandatory
 - **D-12:** default suite does zero network I/O — green with no credentials, no internet
 - **D-04:** no PHPStan baseline, ever
 - **D-22:** `SECURITY.md` from day one — ADR precedence moves it out of the spec's final phase into
   Phase 1
+
+- [Phase ?]: Private disclosure address set to security@reyem.tech; owner must confirm mailbox exists and is monitored
+- [Phase ?]: Research assumption A3 confirmed: wagoid/commitlint-github-action@v6 needs no root package.json; commitlint.config.mjs alone is sufficient
 
 ### Pending Todos
 
@@ -92,12 +114,15 @@ None yet.
   the executing agent does not hold. **Phase 1 can do everything else.** The answer is not derivable
   by reasoning — HubSpot's docs do not state it. `associate(..., verify: true)` and
   `hubspot:associations:doctor` ship regardless; the probe sets a default, it does not block the design
+
 - **Branch protection configuration (Phase 1).** Owner action; may be limited by plan on a private
   repository. Defining the required checks is executable; switching protection on is not
+
 - **REL-02, Packagist and the first public release (Phase 9).** Owner-gated by decision **and**
   impossible while `ReyemTech/laravel-hubspot` is private — Packagist requires a public repository.
   REL-01 was shrunk accordingly and now covers only `composer validate --strict` as a required check
   plus release-please configuration
+
 - **SHIP-04's GitHub Pages deploy (Phase 9).** Pages needs a paid plan on private repositories. The
   site may build in CI and publish the `docs-pages` branch; the deploy waits
 
@@ -106,19 +131,24 @@ None yet.
 - **One unsigned decision remains: #5, `final` by default** (working default: `final`). It shapes
   Phase 2 onward, **not Phase 1**. Six of the seven are now signed and locked. `BRIEF.md` still says
   "Ask Mario rather than assuming" — confirm before or during Phase 2
+
 - **RES-01 (Phase 7) is research, not recall.** The four §8.1 questions — custom-object tier gates,
   behavioural-event tier gates, current rate limits, Timeline API credentials — are answered against
   **live HubSpot documentation**, with source URLs and dates recorded. Answering from model recall is
   a defect, not a shortcut. This is not blocked work; it is executable research
+
 - **REG-01 and HOOK-02 still have no acceptance criteria in any source document.** The 2026-07-26 spec
   review did not change that. Derive during `/gsd-plan-phase` for Phases 3 and 5; do not invent them
   at roadmap level
+
 - **`.planning/intel/` is partially stale.** Extracted before the signals spec existed. Reliable for
   Phase 2-5 content; wrong on layer count (four vs six), dependency count (six vs seven), support
   matrix (11/12 vs 11/12/13), the required-check list, the docs-site rejection, and publishing. The
   signals spec and the amended `STANDARDS.md` override it everywhere they disagree
+
 - **Agent hazard:** an agent reading `apps/laravel`'s CLAUDE.md will try to convert this suite from
   Pest to PHPUnit. That rule is app-scoped. Pest is locked (D-08)
+
 - **Phase numbering shifted.** The core spec §13, the signals spec §15 prose, `BRIEF.md` and
   `.planning/intel/` say "Phase 0"; this roadmap says "Phase 1". GSD's `roadmap.analyze` silently
   drops a `### Phase 0:` header (verified 2026-07-26). Mapping table at the top of ROADMAP.md
@@ -134,6 +164,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-26
-Stopped at: Roadmap regenerated to nine phases. 44 v1 requirements mapped across 9 phases, 100% coverage, 0 orphans, 0 duplicates. Four items marked blocked or owner-gated and excluded from executable planning.
+Last session: 2026-07-26T19:46:40.639Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

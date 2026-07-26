@@ -28,8 +28,9 @@ REL-02.
 
 ### Foundation
 
-- [ ] **FOUND-01**: Repository scaffolding with every standards gate green on an empty package
+- [x] **FOUND-01**: Repository scaffolding with every standards gate green on an empty package
   — `REQ-repo-scaffolding` (core spec §13 Phase 0; BRIEF.md; STANDARDS §12b)
+
   - Acceptance: `git init`, the composer skeleton, the CI matrix, and branch protection on `main`.
     Every required check configured and green on an empty package: tests across the **full 16-job
     matrix** (the eight valid PHP × Laravel combinations of STANDARDS §1, each on `prefer-stable`
@@ -37,26 +38,33 @@ REL-02.
     tests, Vitest, the docs-site build, `composer audit`, BC check, commitlint, and
     `composer validate --strict`. Plus `CODEOWNERS`, PR and issue templates carrying the Definition
     of Done.
+
   - Acceptance (dependencies): `composer.json` declares **exactly seven** production requires —
     `php`, `hubspot/api-client`, `illuminate/contracts`, `illuminate/support`, `illuminate/database`,
     `laravel/prompts`, `illuminate/view`. The Illuminate constraint is `^11.0|^12.0|^13.0`.
+
   - Note: the matrix is **not rectangular**. Laravel 11 accepts PHP 8.3–8.4, Laravel 12 accepts
     8.2–8.5, Laravel 13 requires 8.3+. Ten combinations, not twelve.
+
   - Note: **branch protection configuration is owner action** — see *Blocked / owner-gated* below.
 
-- [ ] **FOUND-02**: `SECURITY.md` published from day one
+- [x] **FOUND-02**: `SECURITY.md` published from day one
   — `DEC-security-md-day-one` (STANDARDS §10, precedence 0)
+
   - Acceptance: `SECURITY.md` with a private disclosure address exists in the repository before any
     code lands. Dependabot enabled. Security advisories are patch releases within 48 hours.
+
   - Note: core spec §13 schedules this in its Phase 5. ADR precedence moves it to the first phase.
 
 - [ ] **FOUND-03**: Association-inverse empirical probe — **BLOCKED**
   — `REQ-association-inverse-probe` (core spec §6.4, §13 Phase 0; BRIEF.md)
+
   - Acceptance: Against a HubSpot **developer test account** (never a production portal): create a
     labelled `deals → contacts` association, read `getPage('contacts', $contactId, 'deals')`, and
     record whether it returns and with which typeId. The recorded answer sets the default for the
     `bidirectional:` parameter. Regardless of outcome, `associate(..., verify: true)` and
     `php artisan hubspot:associations:doctor` both ship.
+
   - **Blocked:** requires a HubSpot developer account token the executing agent does not hold. Every
     other part of Phase 1 proceeds without it. Do **not** substitute reasoning for the probe — the
     procedure is prescribed precisely because the docs do not state the answer.
@@ -64,19 +72,23 @@ REL-02.
 - [ ] **FOUND-04**: Node/pnpm toolchain, JavaScript coverage gate and docs-site build, green on an
       empty package
   — signals spec §12, §13, §15; STANDARDS §6 (amended 2026-07-26)
+
   - Acceptance: CI installs Node and pnpm, runs Vitest with a **95% JS line-coverage floor**, and
     builds the Astro + Starlight site in `site/` — all three green before any frontend code or docs
     content exists. `pnpm install && pnpm test && pnpm build` works from a clean clone.
+
   - Note: this lands in the first phase on purpose. `BRIEF.md`: Phase 0 exists to get every gate
     green on an empty package because *"turning gates on later never happens."* The JS floor is
     affordable specifically because the docs site brings Node into CI anyway.
 
 - [ ] **FOUND-05**: Six-layer architecture rules enforced from the first commit
   — signals spec §3; core spec §3 (amended 2026-07-26); STANDARDS §6 (amended 2026-07-26)
+
   - Acceptance: `pest-plugin-arch` encodes all six layers — `Gateway` → `hubspot/api-client`;
     `Registry` → `Gateway`; `Sync` → `Registry`, `Gateway`; `Webhooks` → `Registry`, `Gateway`;
     `Signals` → `Registry`, `Gateway`; `Frontend` → the public facade **only** — plus the two rules
     added with the new layers:
+
     1. **`Signals` may not depend on `Sync` or `Webhooks`.** It is a peer, not a consumer.
     2. **`Frontend` may not reference `HubSpot\*`, `Gateway`, `Registry`, `Sync`, `Webhooks` or
        `Signals`.**
@@ -88,25 +100,31 @@ REL-02.
 
 - [ ] **REL-01**: Local release plumbing
   — `REQ-release-publishing` part 1, **re-cut 2026-07-26** (STANDARDS §12, §12b; signals spec §15.1)
+
   - Acceptance: `composer validate --strict` is a required CI check, and release-please is configured
     to own versioning and `CHANGELOG.md` from Conventional Commits on `main`.
+
   - **Scope reduction, deliberate.** Claiming the Packagist name and wiring the GitHub↔Packagist
     integration were previously part of this requirement and have moved to REL-02. Packagist requires
     a public repository; `ReyemTech/laravel-hubspot` is private. This is not deferred work an agent
     should attempt — it **cannot** be done.
+
   - Note: `composer validate --strict` is required because an invalid `composer.json` otherwise fails
     at Packagist submission time, which is the worst moment to discover it.
 
 - [ ] **REL-02**: Packagist registration and first public release — **OWNER-GATED**
   — `REQ-release-publishing` part 2 (signals spec §15.1; STANDARDS §12 Releases)
+
   - Acceptance: the Packagist name `reyemtech/laravel-hubspot` is claimed, the GitHub↔Packagist
     App/webhook is wired, and publishing is verified end to end: tag → release-please → Packagist
     shows the version → `composer require reyemtech/laravel-hubspot` resolves in a clean throwaway
     project.
+
   - **Owner-gated, decided 2026-07-26.** The repository was created **private**. Registration, the
     integration and the first public release are deferred until the owner has reviewed the package.
     Publishing is not an autonomous step and will not be performed without explicit approval — and
     cannot happen at all while the repository is private.
+
   - Note: release-please does **not** publish. Without the integration, tags land and Packagist never
     notices — the package looks abandoned while `main` is green.
 
@@ -114,12 +132,14 @@ REL-02.
 
 - [ ] **GW-01**: Generic object core — every CRM object type through one set of classes
   — `REQ-generic-object-core` (core spec §2 goal 1, §1.2, §13 Phase 1)
+
   - Acceptance: One set of model classes serves any object type. `ObjectGateway` provides create /
     update / upsert / find / delete / search / batch over `crm()->objects()`. Adding a new object
     type requires no new hand-written service.
 
 - [ ] **GW-02**: Directional associations as a first-class concept
   — `REQ-directional-associations` (core spec §2 goal 2, §6, §13 Phase 1)
+
   - Acceptance: The primitive is a directed pair `AssociationPair(from, to)` — no API accepts two
     objects without an order. Declaration is directional by construction. Unlabelled associations use
     `createDefault()` and never touch the registry. A registry miss throws, naming the direction, and
@@ -128,20 +148,24 @@ REL-02.
 
 - [ ] **GW-03**: Typed exception hierarchy, no raw SDK exception to userland
   — `REQ-error-hierarchy` (core spec §9, §13 Phase 1; STANDARDS §9)
+
   - Acceptance: `ConfigurationException`, `AssociationTypeException`, `ObjectTypeException` and
     `ApiException` (wrapping the SDK's, preserving status, body and request id), rooted at a
     package-owned `HubspotException` interface. A raw `HubSpot\Client\...\ApiException` never reaches
     userland. Every message names the fix, not just the fault.
+
   - Note: signals spec §11 adds a fifth member, `SignalException`, in Phase 6 (SIG-05). The interface
     and the four core members ship here.
 
 - [ ] **GW-04**: `Hubspot::fake()` — a real test double with direction assertions
   — `REQ-test-double` (core spec §2 goal 4, §10, §13 Phase 1)
+
   - Acceptance: Installs a Guzzle `MockHandler` under the SDK so no HTTP occurs; supports canned
     responses per object type. Provides `assertSynced`, `assertAssociated($deal, $contact, label:)`
     asserting the **directional** typeId, `assertNothingSynced`, `assertRequestCount` and
     `assertWebhookHandled`. Deterministic by default — ids from a counter, timestamps from a frozen
     Carbon, no Faker in default fakes.
+
   - Note: the spec calls `assertAssociated` failing when the inverse typeId was used "the single most
     valuable test in the package". Signal assertions extend this surface in Phase 6 (SIG-08).
 
@@ -149,6 +173,7 @@ REL-02.
 
 - [ ] **REG-01**: Object type normalisation
   — `REQ-object-type-registry` (core spec §3, §13 Phase 2)
+
   - Acceptance: **absent in source** — the spec states the component's job (`HubspotObjectType`
     normalises `deals`, `line_items`, `p_custom` and resolves the local id column) but states no
     explicit acceptance criteria. Derive one during `/gsd-plan-phase`. Still absent after the
@@ -156,6 +181,7 @@ REL-02.
 
 - [ ] **REG-02**: Directional association type registry with cache and database stores
   — `REQ-association-registry` (core spec §6.2, §6.3, §13 Phase 2)
+
   - Acceptance: Schema carries `from_object_type`, `to_object_type`, `type_id`, `category`, `label`,
     `inverse_type_id` and `is_default`, with direction unique against `type_id`. `inverse_type_id` is
     recorded for traversal and verification and is **never used for writes**. Works offline and in
@@ -165,15 +191,18 @@ REL-02.
 
 - [ ] **REG-03**: Zero-migration install
   — `REQ-zero-migration-install` (core spec §2 goal 5, §6.3; STANDARDS §7)
+
   - Acceptance: The package works after `composer require` with no publish step and no `migrate`.
     `loadMigrationsFrom()` is called only when a database store is active, so migrations do not exist
     until asked for. `vendor:publish --tag=hubspot-migrations` remains available. A missing table
     throws a directed error naming the fix.
+
   - Note: this contract now has a second consumer — the signal buffer of SIG-01 is gated the same
     way, on `HUBSPOT_SIGNALS` rather than `HUBSPOT_STORE`.
 
 - [ ] **REG-04**: Diagnostic artisan commands
   — `REQ-diagnostics-commands` (core spec §6.3, §6.4, §7, §13 Phase 2)
+
   - Acceptance: `php artisan hubspot:doctor` reports which store each concern uses, when the registry
     was last synced, every bound model, whether it soft-deletes, and what its delete policy resolves
     to. `php artisan hubspot:associations:doctor` probes the portal, reports which directions
@@ -183,18 +212,21 @@ REL-02.
 
 - [ ] **SYNC-01**: Model bindings keyed by model, not by object type
   — `REQ-model-binding` (core spec §4)
+
   - Acceptance: Config expresses `Model::class => ['object' => ..., 'id_column' => ...]`. Three modes
     are supported — Attached (default), API-only (no local model or table), and Generated (scaffolds
     model plus migration). The originating app's three models mapping to `contacts` is expressible.
 
 - [ ] **SYNC-02**: `PropertyMapper` resolves `$hubspotMap`
   — `REQ-property-mapping` (core spec §5, §13 Phase 3)
+
   - Acceptance: `'dealname' => 'title'` resolves an attribute; `'dealstage' => 'stage.hubspot_id'`
     traverses a relation; `'close_date' => fn (Deal $d) => ...` computes. `$hubspotUpdateMap` narrows
     what is sent on update.
 
 - [ ] **SYNC-03**: One model trait, one observer, one queued job
   — `REQ-model-sync-trait` (core spec §3, §7, §13 Phase 3)
+
   - Acceptance: `SyncsToHubspot` replaces per-object traits entirely, backed by one queued job and one
     generic observer with the object type carried as data. The service provider reads `models` at boot
     and attaches the generic observer — nothing is required in the consumer's `AppServiceProvider`.
@@ -203,15 +235,18 @@ REL-02.
 
 - [ ] **SYNC-04**: Delete policy derived from the model, guarded by default
   — `REQ-delete-policy` (core spec §7)
+
   - Acceptance: `'deleted'` is opt-in in `auto_sync.on`; `hard_delete` defaults to `guard`, which skips
     and logs. A `SoftDeletes` model archives in HubSpot on soft delete. `restored` cannot be mirrored:
     log, keep the stored `hubspot_id` intact but flagged stale, **never null it**.
     `on_restore => 'recreate'` is opt-in because it forks CRM history.
+
   - Note: HubSpot's delete is `archive()` and there is **no unarchive endpoint**. The package can never
     programmatically undo one.
 
 - [ ] **SYNC-05**: Sync escape hatches
   — `REQ-sync-escape-hatches` (core spec §7)
+
   - Acceptance: `Hubspot::withoutSyncing(fn () => ...)` suppresses sync for seeders, imports and
     backfills — without it `migrate:fresh --seed` fires thousands of API calls. `HUBSPOT_DISABLED=true`
     kills everything and is on by default in the testing environment unless a fake is bound.
@@ -220,6 +255,7 @@ REL-02.
 
 - [ ] **HOOK-01**: Inbound webhooks — verification, batching, idempotency, typed events
   — `REQ-inbound-webhooks` (core spec §2 goal 3, §8, §13 Phase 4)
+
   - Acceptance: Signature verification delegates to `HubSpot\Utils\Signature::isValid()` and
     reconstructs the raw request URI rather than using `$request->fullUrl()`. Fails **closed** by
     default with a 300s tolerance. One delivery of N events responds `204` immediately with one queued
@@ -230,6 +266,7 @@ REL-02.
 
 - [ ] **HOOK-02**: `php artisan hubspot:webhooks:sync` declares subscriptions from config
   — `REQ-webhook-subscription-sync` (core spec §8, §13 Phase 4)
+
   - Acceptance: **absent in source** — the spec states the capability and notes "nobody in this
     ecosystem does this" but states no explicit acceptance criteria. Derive one during
     `/gsd-plan-phase`. Still absent after the 2026-07-26 spec review; do not invent criteria at
@@ -237,6 +274,7 @@ REL-02.
 
 - [ ] **HOOK-03**: Optional `hubspot_webhook_events` audit table
   — `REQ-webhook-audit-trail` (core spec §8)
+
   - Acceptance: Off by default, consistent with zero-migration install.
 
 ### Signals
@@ -246,18 +284,21 @@ of `Sync`, not a consumer of it: signals are event-shaped and have no local mode
 
 - [ ] **SIG-01**: Durable signal buffer, gated exactly like every other database store
   — signals spec §7, D6
+
   - Acceptance: A `hubspot_signals` table with `visitor_id` (indexed), `subject_type`, `subject_id`
     (both null until identity resolves), `signal_name`, `properties` (json), `occurred_at`,
     `flushed_at` and `reconciled_at`. The migration is loaded **only** when signals are enabled, so
     `composer require` plus a trait still works with no publish step and no `migrate`.
     `HUBSPOT_SIGNALS=true` with no table throws
     `ConfigurationException: HUBSPOT_SIGNALS=true but table 'hubspot_signals' does not exist — run 'php artisan migrate'.`
+
   - Note: a cache-backed buffer was **explicitly rejected**. Cache is evictable by definition, the
     `li_fat_id` case needs 90 days, and losing the buffer loses the attribution the feature exists to
     protect. Better explicitly off than silently lossy.
 
 - [ ] **SIG-02**: `Hubspot::signal()` records without ever calling the API
   — signals spec §4 (`SignalRecorder`), §5
+
   - Acceptance: `Hubspot::signal($name, $visitorId, array $properties, ?Carbon $occurredAt)` validates
     the signal against the map and writes **one** buffer row. It issues zero HTTP requests — provable
     with `assertRequestCount(0)` — so no API call ever occurs in a request lifecycle. The recorder
@@ -265,26 +306,31 @@ of `Sync`, not a consumer of it: signals are event-shaped and have no local mode
 
 - [ ] **SIG-03**: Declarative signal map with a closed merge vocabulary, validated at boot
   — signals spec §6, D8
+
   - Acceptance: `config('hubspot.signals.map')` maps a signal name to an object type plus a set of
     HubSpot property → merge-rule entries. The verb vocabulary is closed and has exactly four
     members: `first_wins:<field>`, `last_wins:<field>`, `increment`, `sum:<field>` — plus a closure
     receiving the subject's matching signals for cases the vocabulary does not cover. An unknown
     signal name or unknown merge verb throws `ConfigurationException` **naming the fix**, and the map
     is validated **at boot, not at flush**, so a typo fails fast rather than silently dropping data.
+
   - Note: an earlier draft listed `overwrite` and `last_wins` as separate verbs. They are the same
     operation. **Only `last_wins` exists.**
 
 - [ ] **SIG-04**: `RollUpCalculator` — a pure function, no dependencies at all
   — signals spec §4, §12
+
   - Acceptance: `(signals, map) → property array`. No I/O, no database, no HubSpot knowledge, no
     fake required to test it. Every merge verb — including `first_wins`, the subtlest behaviour in
     the feature — is provable in a unit test. Roll-ups are **absolute values computed from the
     buffer**, never read back from HubSpot.
+
   - Note: the zero-dependency shape is deliberate, and it is what makes `pest --mutate` meaningfully
     exercise the 80% MSI floor here rather than rubber-stamp it.
 
 - [ ] **SIG-05**: `Hubspot::identify()`, subject backfill, and `SignalException`
   — signals spec §4 (`IdentityResolver`), §5, §11
+
   - Acceptance: `Hubspot::identify($visitorId, $model)` binds a visitor id to a bound model and
     backfills `subject_type` / `subject_id` on every buffered row for that visitor, then dispatches
     the flush. Binding a visitor id that is already bound to a **different** subject throws
@@ -294,6 +340,7 @@ of `Sync`, not a consumer of it: signals are event-shaped and have no local mode
 
 - [ ] **SIG-06**: `FlushSignalsJob` — queued, batched, idempotent
   — signals spec §4, §5, §5.1
+
   - Acceptance: Queued and batched; dispatched on identify and on a schedule. Per flush it computes
     roll-ups, issues **one** batch property write to the contact/company/deal (not N — proven by
     `assertRequestCount`), appends the trail through the configured `SignalStore` driver, and marks
@@ -304,6 +351,7 @@ of `Sync`, not a consumer of it: signals are event-shaped and have no local mode
 
 - [ ] **SIG-07**: `SignalStore` contract and the `local` driver
   — signals spec §8, D4, D5
+
   - Acceptance: One driver contract for the event-history half, resolved from
     `HUBSPOT_SIGNAL_STORE`, mirroring the `cache`/`database` store pattern of core §6.3. The `local`
     driver ships in this phase and is the **default**, because it is the only one that works on any
@@ -312,6 +360,7 @@ of `Sync`, not a consumer of it: signals are event-shaped and have no local mode
 
 - [ ] **SIG-08**: Signal assertions on the fake
   — signals spec §12
+
   - Acceptance: Alongside core §10's assertions, the fake provides `assertSignalRecorded()`,
     `assertSignalFlushed()` and `assertPropertyRolledUp()`, and `assertRequestCount()` proves one
     batched write per flush. Determinism per STANDARDS §6: `occurred_at` from a frozen `Carbon`,
@@ -325,40 +374,48 @@ event trail goes.*
 
 - [ ] **STORE-01**: `custom_object` signal store driver
   — signals spec §8
+
   - Acceptance: Writes the event trail as associated records on the subject, reusing the generic
     objects API of core §1.2 and the **directional** associations of core §6 — so it needs no
     credential beyond the existing PAT. The consumer creates the object schema in their portal; the
     package documents what that schema must contain.
+
   - Note: nearly free given the architecture already built for it. If RES-01 finds custom objects are
     tier-gated above the tiers this package targets, the driver **ships with that requirement
     documented** rather than being quietly dropped.
 
 - [ ] **STORE-02**: `timeline` signal store driver
   — signals spec §8
+
   - Acceptance: Writes native timeline events on the contact via the Timeline Events API. This is a
     **third credential class** — an app id and a developer API key, distinct from both the PAT and the
     webhook client secret — and timeline event types are defined per HubSpot app, so each consuming
     application needs its own developer app. Missing or partial credentials throw
     `ConfigurationException` naming what is needed and where to get it, never a raw SDK failure.
+
   - Note: core §8 already warns that the webhook secret is the app's client secret and not the PAT.
     This is a third distinct thing, and the documentation must say so plainly.
 
 - [ ] **STORE-03**: `php artisan hubspot:signals:prune`
   — signals spec §7
+
   - Acceptance: Deletes flushed rows, and unidentified rows older than `retention_days` (default 90 —
     the window the `li_fat_id` case requires). Safe to schedule, reports what it deleted, and is
     idempotent.
+
   - Note: **garbage collection is not optional.** The table is fed at page-view grain and anonymous
     visitors who never identify accumulate forever.
 
 - [ ] **ATTR-01**: Attribution property-name convention and first-touch semantics
   — signals spec §9; candidate brief C2
+
   - Acceptance: A documented convention for attribution property names — `hs_first_touch_gclid`,
     `hs_first_touch_source`, `hs_first_touch_at`, `hs_first_landing_page` and the paid click ids
     (`gclid`, `gbraid`, `wbraid`, `fbclid`, `li_fat_id`) — so two applications do not invent
     `first_gclid` and `gclid_first` for the same field. `first_wins` semantics computed from the
     buffer, and therefore correct under concurrency: a first-touch value set before a later branded or
     direct visit is provably not overwritten by it.
+
   - Note: attribution is **not a separate subsystem**. A paid click id is a signal whose roll-up uses
     `first_wins`. Capture and persistence of the click ids and the visitor id are **app-side by
     design** — `li_fat_id`'s own cookie is 30 days, shorter than the 3–10 week sales cycle, so
@@ -366,9 +423,11 @@ event trail goes.*
 
 - [ ] **RES-01**: Four HubSpot capabilities verified against live documentation
   — signals spec §8.1; `CLAUDE.md` ("probe rather than guess")
+
   - Acceptance: Each of the following is answered **against live HubSpot documentation during Phase 7
     and not from model recall**, and recorded in the repository with its source URL and the date
     checked:
+
     1. Which HubSpot tiers permit custom objects.
     2. Which tiers permit custom behavioural events (relevant only if `timeline` proves insufficient).
     3. Current API rate limits per tier, both per-interval and daily.
@@ -383,26 +442,31 @@ event trail goes.*
 
 - [ ] **FE-01**: `<x-hubspot::meetings>` Blade component
   — signals spec §10.2; candidate brief C1
+
   - Acceptance: `<x-hubspot::meetings :url="$meetingEmbedUrl" :topic="$topic" />` renders the
     `meetings-iframe-container` markup and HubSpot's `MeetingsEmbedCode.js` loader, and works with no
     configuration beyond the URL.
 
 - [ ] **FE-02**: Origin-validating booking listener
   — signals spec §10.2, §12; STANDARDS §6 (JS floor)
+
   - Acceptance: The listener validates `event.origin` against `https://meetings.hubspot.com`
     **before trusting any payload**, and dispatches a `HubspotMeetingBooked` browser event carrying
     the topic only for messages that pass. A Vitest test sends a forged `meetingBookSucceeded` from a
     hostile origin and asserts no event fires. JS line coverage for the layer is ≥95%.
+
   - Acceptance (trust model): `meetingBookSucceeded` is treated as an **enhancement, never the source
     of truth** — a booking is confirmed server-side via the webhook path, and the two are
     deduplicated. The documentation states plainly that it is community-documented, not a versioned
     HubSpot API.
+
   - Note: omitting origin validation is a **real vulnerability** — any page can `postMessage`. This
     is the same class of trust problem as webhook signature verification, which is the reading on
     which the whole `Frontend` layer was admitted past the "CRM only" non-goal.
 
 - [ ] **FE-03**: CSP nonce support and a documented `frame-src` recipe
   — signals spec §10.2
+
   - Acceptance: The listener script carries `nonce="{{ app('csp-nonce') }}"` when the application
     provides one and degrades without error when it does not. The documentation ships the CSP
     `frame-src` allowlist snippet for `https://meetings.hubspot.com`, because every team otherwise
@@ -410,6 +474,7 @@ event trail goes.*
 
 - [ ] **FE-04**: Isolated, publishable frontend namespace
   — signals spec §10.2, D2; STANDARDS §2
+
   - Acceptance: Views register under the `hubspot::` namespace and the JavaScript is publishable via
     its own `vendor:publish` tag. `illuminate/view` is the seventh production require and is declared,
     not assumed. The isolation is machine-checked by FOUND-05's architecture rule, not merely
@@ -419,42 +484,51 @@ event trail goes.*
 
 - [ ] **SHIP-01**: Optional, idempotent `php artisan hubspot:install`
   — `REQ-installer` (core spec §11, §13 Phase 5)
+
   - Acceptance: Built on `laravel/prompts`. Install is **optional** — `composer require` plus
     `use SyncsToHubspot` must work with zero setup. Install is **idempotent** — re-running reconciles
     rather than duplicating, doubling as the upgrade path. Any flag skips all prompts. The installer
     scans `app/Models`, proposes candidates by name, asks which model(s) map to each object, and
     detects a model already using tapp's `HubspotContact` trait to offer the compat shim instead of a
     second binding.
+
   - Acceptance (extended 2026-07-26): the prompt set also covers enabling signals (and running the
     buffer migration), choosing a signal store driver, and publishing the frontend assets.
 
 - [ ] **SHIP-02**: One-line migration path for `tapp/laravel-hubspot` users
   — `REQ-tapp-migration-path` (core spec §2 goal 6, §12, §13 Phase 5)
+
   - Acceptance: `HubspotContact` / `HubspotCompany` traits forward to `SyncsToHubspot`; a
     `HubspotModelInterface` adapter is provided; `getHubspotCompanyRelation()` translates into a
     generic association. Isolated in `Compat\Tapp` (~150 lines), deprecated from day one, deleted in
     v2. tapp users migrate with a one-line composer change.
+
   - Note: compatibility is a shim, **never a design input**.
 
 - [ ] **SHIP-03**: Documentation set
   — `REQ-documentation` (STANDARDS §13; core spec §13 Phase 5)
+
   - Acceptance: README opens with a 60-second quickstart — install, one model, one sync. Every public
     method has a usage example, **including `signal()`, `identify()` and the Blade component**. The
     association direction table (279 vs 280, 19 vs 20, 201 vs 202) is documented prominently. Every
     `HUBSPOT_*` env var is listed with its default. `UPGRADE.md` exists. `CONTRIBUTING.md` states the
     standards and that CI enforces them.
+
   - Note: `CONTRIBUTING.md` is required by STANDARDS §13 and omitted by core spec §13 — ADR precedence.
 
 - [ ] **SHIP-04**: Astro + Starlight documentation site
   — signals spec §13, D10; STANDARDS *"Not standards, deliberately"* (amended 2026-07-26)
+
   - Acceptance: The site in `site/` builds on push to `main` and publishes to a `docs-pages` branch,
     which triggers the Pages deploy. The push uses a **PAT rather than `GITHUB_TOKEN`**, because
     Actions suppresses workflow triggers for commits authored by `GITHUB_TOKEN` and without that the
     Pages deploy silently never fires. Pattern proven in `ReyemTech/apps/stint`.
+
   - **Constraint:** GitHub Pages needs a **paid plan on private repositories**. While
     `ReyemTech/laravel-hubspot` is private, the site may build in CI and publish the `docs-pages`
     branch without the deploy being enabled. Deployment waits for the repository being made public or
     a plan that permits it — that is owner action, not executable work.
+
   - Note: this reverses a deliberate rejection, and the reversal is on the record. The rejection was
     explicitly conditional — *"README plus inline examples until there is enough surface to justify
     one"* — and adopting signals, attribution, a `Frontend` layer and a public `identify()` API is
@@ -534,8 +608,8 @@ Deferred. Tracked but not in the current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | Phase 1 | Pending |
-| FOUND-02 | Phase 1 | Pending |
+| FOUND-01 | Phase 1 | Complete |
+| FOUND-02 | Phase 1 | Complete |
 | FOUND-03 | Phase 1 | Pending — **blocked** (developer account token) |
 | FOUND-04 | Phase 1 | Pending |
 | FOUND-05 | Phase 1 | Pending |
@@ -580,6 +654,7 @@ Deferred. Tracked but not in the current roadmap.
 | REL-02 | Phase 9 | Pending — **owner-gated** (private repo) |
 
 **Coverage:**
+
 - v1 requirements: 44 total
 - Mapped to phases: 44
 - Unmapped: 0 ✓
