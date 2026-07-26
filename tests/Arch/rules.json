@@ -1,0 +1,81 @@
+{
+    "$comment": "Canonical manifest of the ten architecture rules (D-09 as amended by D-35, plus D-34 and D-19). Read by both scripts/ci/verify-arch-rules-fire.sh and tests/Arch/FiringHarnessTest.php, so the two never drift. Every rule id here MUST have a matching test in tests/Arch/LayerBoundariesTest.php, tests/Arch/StrictTypesTest.php or tests/Arch/SecretLoggingTest.php, and at least one fixture file under tests/Arch/Fixtures/<id>/.",
+    "rules": [
+        {
+            "id": "R1",
+            "description": "Gateway is the only layer that may reference HubSpot\\* SDK classes",
+            "fixtures": [
+                "R1/GatewayOnlyViolation.php"
+            ]
+        },
+        {
+            "id": "R2",
+            "description": "Registry may depend only on Gateway",
+            "fixtures": [
+                "R2/RegistryDependsOnSync.php",
+                "R2/SyncTarget.php"
+            ]
+        },
+        {
+            "id": "R3",
+            "description": "Sync may depend only on Registry and Gateway",
+            "fixtures": [
+                "R3/SyncDependsOnWebhooks.php",
+                "R3/WebhooksTarget.php"
+            ]
+        },
+        {
+            "id": "R4",
+            "description": "Webhooks may depend only on Registry and Gateway",
+            "fixtures": [
+                "R4/WebhooksDependsOnSync.php",
+                "R4/SyncTarget.php"
+            ]
+        },
+        {
+            "id": "R5",
+            "description": "Signals may depend only on Registry and Gateway",
+            "fixtures": [
+                "R5/SignalsDependsOnFrontend.php",
+                "R5/FrontendTarget.php"
+            ]
+        },
+        {
+            "id": "R6",
+            "description": "Frontend may depend only on the public facade",
+            "fixtures": [
+                "R6/FrontendDependsOnRegistry.php",
+                "R6/RegistryTarget.php"
+            ]
+        },
+        {
+            "id": "R7",
+            "description": "Signals may not depend on Sync or Webhooks (peer, not consumer)",
+            "fixtures": [
+                "R7/SignalsDependsOnSync.php",
+                "R7/SyncTarget.php"
+            ]
+        },
+        {
+            "id": "R8",
+            "description": "Frontend may not reference HubSpot\\* or any internal layer",
+            "fixtures": [
+                "R8/FrontendUsesSdkDirectly.php"
+            ]
+        },
+        {
+            "id": "R9",
+            "description": "Every PHP file declares strict_types=1",
+            "fixtures": [
+                "R9/MissingStrictTypes.php"
+            ]
+        },
+        {
+            "id": "R10",
+            "description": "Config keys holding tokens or secrets never appear in log calls",
+            "fixtures": [
+                "R10/LogsTheAccessToken.php"
+            ]
+        }
+    ]
+}
