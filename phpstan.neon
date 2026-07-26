@@ -1,0 +1,40 @@
+parameters:
+    # `max`, not a literal digit: STANDARDS §3 says "level 9 (max)", written
+    # before PHPStan 2.x raised the ceiling to level 10. Writing `max` keeps
+    # this tracking the pinned major's true ceiling instead of silently
+    # stopping being maximum at the next PHPStan bump. Resolved level, as of
+    # phpstan/phpstan 2.2.5 (installed): 10. See 01-05-SUMMARY.md.
+    level: max
+
+    # `src/` holds nothing but `.gitkeep` files until Phase 2. Analysing only
+    # `src/` would give PHPStan an empty path set and report green over
+    # nothing -- the same vacuity trap the architecture-rules harness (plan
+    # 04) closes for empty namespaces. Including `tests/` gives the analyser
+    # real files from day one, so this gate means something before any
+    # package code exists. Do NOT drop `tests/` to quiet a future error here;
+    # fix the error or suppress it per-line with a written reason instead
+    # (D-04 forbids a baseline for exactly this kind of "quiet the noise").
+    paths:
+        - src
+        - tests
+
+    checkModelProperties: true
+
+    # tests/Arch/Fixtures/ (plan 04, scripts/ci/verify-arch-rules-fire.sh) holds
+    # one deliberately rule-violating class per architecture rule -- headed
+    # "never production code" in their own doc comments. They exist to make
+    # pest-plugin-arch's suite go red on purpose and are never autoloaded into
+    # the package (outside the src/ PSR-4 root). Excluding them here is not
+    # the "drop tests/ to quiet the analyser" anti-pattern this file's `paths`
+    # comment warns against -- every other real file under tests/ is still
+    # analysed; only the known-and-labelled-broken fixtures are skipped.
+    excludePaths:
+        - tests/Arch/Fixtures/*
+
+# Larastan is registered via phpstan/extension-installer (composer.json
+# allow-plugins), not included here by hand -- including its extension.neon
+# explicitly as well would double-register it and PHPStan refuses to start.
+
+# No `baseline` key. Not now, not later, not "temporarily" (D-04). A
+# `phpstan-baseline.neon` file appearing anywhere in this repository fails
+# scripts/ci/verify-quality-gates-fire.sh --only=phpstan immediately.

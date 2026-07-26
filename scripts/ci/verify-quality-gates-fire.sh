@@ -55,8 +55,13 @@ check_phpstan() {
         failures+=("phpstan: a phpstan-baseline.neon file exists in the repository (D-04 forbids it)")
     fi
 
-    if [ -f "$ROOT/phpstan.neon" ] && grep -qi 'baseline' "$ROOT/phpstan.neon"; then
-        failures+=("phpstan: phpstan.neon references a baseline")
+    # Strip full-line comments before checking for a real `baseline:` key, so
+    # this doesn't self-trip on prose (in this very file's header comment,
+    # or phpstan.neon's own explanatory comments) that merely mentions the
+    # word "baseline" without configuring one.
+    if [ -f "$ROOT/phpstan.neon" ] \
+        && grep -v '^\s*#' "$ROOT/phpstan.neon" | grep -qiE '^\s*baseline\s*:'; then
+        failures+=("phpstan: phpstan.neon configures a baseline key")
     fi
 
     if [ ! -f "$ROOT/phpstan.neon" ]; then
