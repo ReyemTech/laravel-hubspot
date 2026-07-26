@@ -33,6 +33,16 @@ if [ ! -f ".github/CODEOWNERS" ]; then
     errors+=("CODEOWNERS: missing (.github/CODEOWNERS)")
 fi
 
+# --- PR template: must exist and carry exactly the seven Definition of Done boxes ---
+if [ ! -f ".github/PULL_REQUEST_TEMPLATE.md" ]; then
+    errors+=("PR template: missing (.github/PULL_REQUEST_TEMPLATE.md)")
+else
+    checkbox_count=$(grep -cE '^\s*-\s*\[ \]' ".github/PULL_REQUEST_TEMPLATE.md" || true)
+    if [ "${checkbox_count}" != "7" ]; then
+        errors+=("PR template: expected 7 Definition of Done checkboxes, found ${checkbox_count}")
+    fi
+fi
+
 if [ "${#errors[@]}" -gt 0 ]; then
     echo "Repository governance check FAILED:" >&2
     for e in "${errors[@]}"; do
