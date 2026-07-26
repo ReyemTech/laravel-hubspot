@@ -1,0 +1,5 @@
+# See https://docs.github.com/articles/about-codeowners for syntax.
+# Last matching pattern wins, so keep the catch-all first and add more specific
+# owners below it as the package grows.
+
+* @mariomeyer
