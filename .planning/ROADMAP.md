@@ -54,7 +54,8 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 **Depends on**: Nothing (first phase)
 **Requirements**: FOUND-01, FOUND-02, FOUND-03, FOUND-04, FOUND-05, REL-01
 **Success Criteria** (what must be TRUE):
-  1. A pull request against `main` cannot merge unless all eleven required checks pass on the empty package: tests across the **full 20-job matrix** (the ten valid PHP × Laravel combinations — L11 on PHP 8.2-8.4, L12 on 8.2-8.5, L13 on 8.3-8.5 — each on `prefer-stable` **and** `prefer-lowest`), Pint, PHPStan level 9 with no baseline, `pest --mutate`, architecture tests, Vitest, the docs-site build, `composer audit`, BC check, commitlint, and `composer validate --strict`.
+  1. A pull request against `main` cannot merge unless all eleven required checks pass on the empty package: tests across the **full 16-job matrix** (the eight valid PHP × Laravel combinations — L11 on PHP 8.3-8.4, L12 on 8.3-8.5, L13 on 8.3-8.5 — each on `prefer-stable` **and** `prefer-lowest`), Pint, PHPStan at the pinned major's maximum level with no baseline, `pest --mutate`, architecture tests, Vitest, the docs-site build, `composer audit`, BC check, commitlint, and `composer validate --strict`.
+     - **Amended during Phase 1 planning (2026-07-26)** to track `STANDARDS.md` §1, whose PHP floor was raised from `^8.2` to `^8.3` the same day so Pest 4 could be the only Pest. Eight combinations, not ten; 16 jobs, not 20. `.planning/REQUIREMENTS.md` FOUND-01 and `.planning/PROJECT.md` D-01 still carry the superseded numbers and need the same correction. Ten and twenty are stale copies of a superseded amendment, not a competing decision.
   2. The architecture tests encode all six layers and both new rules, and a deliberate violation fixture fails the build for each: `Signals` importing from `Sync` or `Webhooks` fails; `Frontend` importing `HubSpot\*`, `Gateway`, `Registry`, `Sync`, `Webhooks` or `Signals` fails; any layer outside `Gateway` naming `HubSpot\*` fails; a file without `declare(strict_types=1)` fails.
   3. `composer.json` declares exactly seven production requires — `php`, `hubspot/api-client`, `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `laravel/prompts`, `illuminate/view` — with the Illuminate constraint `^11.0|^12.0|^13.0`; `composer validate --strict` passes; and release-please is configured to derive the version bump and `CHANGELOG.md` from Conventional Commits on `main`.
   4. A developer can clone the repository, run `composer install` and `pnpm install`, then run `vendor/bin/pest`, `pnpm test` and `pnpm build` with no HubSpot credentials and no internet connection, and all three are green.
@@ -62,7 +63,16 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 **Blocked within this phase** (do not plan as executable):
   - **FOUND-03, the §6.4 association-inverse probe.** Requires a HubSpot developer account token the executing agent does not hold. It is an empirical probe with a prescribed procedure — run it when the token exists; do **not** reason to an answer. Everything else in Phase 1 proceeds without it, and `associate(..., verify: true)` plus `hubspot:associations:doctor` ship regardless: the probe sets a default, it does not block the design.
   - **Branch protection configuration.** Repository settings are owner action, and may additionally be limited by plan on a private repository. The required-check *definitions* are executable work; switching protection on is not.
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Package skeleton, Pest bootstrap, the 16-job matrix and `composer validate --strict`
+- [ ] 01-02-PLAN.md — `SECURITY.md`, Dependabot, `CODEOWNERS`, PR/issue templates and commitlint
+- [ ] 01-03-PLAN.md — Node/pnpm toolchain and the 95% Vitest coverage floor, proven to fail
+- [ ] 01-04-PLAN.md — The ten architecture rules and a permanent harness proving each one fires
+- [ ] 01-05-PLAN.md — PHPStan at max with no baseline, Pint, code shape, hygiene and the mutation floor
+- [ ] 01-06-PLAN.md — Astro + Starlight docs site building green, with the Phase 9 deploy recorded
+- [ ] 01-07-PLAN.md — release-please, `composer audit`, BC check, and the owner-gated handoff register
 
 ### Phase 2: Gateway Layer
 **Goal**: Any CRM object type and any *directed* association can be read and written through one generic core, with typed errors and a test double good enough that the rest of the package never needs the network.
