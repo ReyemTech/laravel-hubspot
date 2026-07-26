@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<ruleset name="ReyemTechHubspotCodeShape">
+    <description>
+        Code-shape gate (STANDARDS §6b): hard-fails a file over 500 lines, a
+        function over 150 lines, or a function at cyclomatic complexity
+        above 10. Review targets of 300/40/5 are deliberately not encoded
+        here as errors -- see 01-05-SUMMARY.md for how those are handled.
+    </description>
+
+    <arg name="extensions" value="php"/>
+    <arg value="ps"/>
+
+    <file>src</file>
+    <file>tests</file>
+
+    <!-- Deliberately rule-violating architecture fixtures (plan 04,
+         scripts/ci/verify-arch-rules-fire.sh): never production code, and
+         not held to the code-shape gate for the same reason phpstan.neon
+         excludes them (see phpstan.neon's own comment on this path). -->
+    <exclude-pattern>tests/Arch/Fixtures/*</exclude-pattern>
+
+    <rule ref="Generic.Metrics.CyclomaticComplexity">
+        <properties>
+            <property name="complexity" value="10"/>
+            <property name="absoluteComplexity" value="10"/>
+        </properties>
+    </rule>
+
+    <rule ref="SlevomatCodingStandard.Files.FileLength">
+        <properties>
+            <property name="maxLinesLength" value="500"/>
+        </properties>
+    </rule>
+
+    <rule ref="SlevomatCodingStandard.Functions.FunctionLength">
+        <properties>
+            <property name="maxLinesLength" value="150"/>
+        </properties>
+    </rule>
+</ruleset>
