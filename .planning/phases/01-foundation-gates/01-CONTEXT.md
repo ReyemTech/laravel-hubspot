@@ -32,21 +32,26 @@ does not apply to this package*. Pest was chosen because `pest --mutate` and `pe
 give two of this project's hard standards as first-class features. Pest runs on PHPUnit, so
 PHPUnit-style test classes are valid if preferred.
 
-### Support matrix (decision #1, signed 2026-07-26 against verified upstream data)
-PHP `^8.2`; Laravel `11.x`, `12.x`, `13.x`. Illuminate constraint `^11.0|^12.0|^13.0`.
+### Support matrix (decision #1 — PHP floor RAISED to `^8.3` on 2026-07-26 during this phase's research)
+PHP `^8.3`; Laravel `11.x`, `12.x`, `13.x`. Illuminate constraint `^11.0|^12.0|^13.0`.
 
-**The matrix is NOT rectangular.** Verified against laravel.com/docs/releases and
-php.net/supported-versions.php on 2026-07-26:
+**The floor was `^8.2` earlier the same day and was deliberately raised.** Pest 4,
+`pest-plugin-arch` 4.x and `pest-plugin-laravel` 4.x all require PHP `^8.3`. Keeping an 8.2 leg
+would force dual constraints (`^3.8|^4.0`), putting the unmaintained `pest-plugin-arch` 3.1.1
+(April 2025, no further releases) on those jobs — so architecture tests and mutation scoring, two
+of the three headline standards, would behave differently depending on which PHP version ran them.
+**Use Pest 4 only. Do not add a dual constraint to recover PHP 8.2.**
 
-| | PHP 8.2 | PHP 8.3 | PHP 8.4 | PHP 8.5 |
-|---|---|---|---|---|
-| Laravel 11 | yes | yes | yes | — |
-| Laravel 12 | yes | yes | yes | yes |
-| Laravel 13 | — | yes | yes | yes |
+**The matrix is still NOT rectangular.** Laravel 11 stops at PHP 8.4; Laravel 13 starts at 8.3:
 
-Ten valid combinations × `prefer-stable` and `prefer-lowest` = **20 CI jobs**. The excluded cells
-are real: Laravel 11 does not support PHP 8.5, and Laravel 13 requires PHP 8.3+. Generating the
-matrix as a plain cross-product will produce four jobs that cannot resolve.
+| | PHP 8.3 | PHP 8.4 | PHP 8.5 |
+|---|---|---|---|
+| Laravel 11 | yes | yes | — |
+| Laravel 12 | yes | yes | yes |
+| Laravel 13 | yes | yes | yes |
+
+Eight valid combinations × `prefer-stable` and `prefer-lowest` = **16 CI jobs**. The excluded cell
+is real: generating the matrix as a plain cross-product produces two jobs that cannot resolve.
 
 Laravel 11 reached end of security support 2026-03-12 and PHP 8.2 reaches it 2026-12-31. Both are
 supported anyway, deliberately, for migration reach — see STANDARDS §1. This is not an oversight;

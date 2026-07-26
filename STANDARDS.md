@@ -16,7 +16,7 @@ bar than an application nobody else has to integrate with.
 
 | | Standard | Rationale |
 |---|---|---|
-| PHP | `^8.2` | Laravel 11's floor. `apps/laravel` is `^8.3`, but excluding 8.2 would exclude a large share of the installs this package is trying to migrate |
+| PHP | `^8.3` | Pest 4 requires it — see the tooling note below. Raised from `^8.2` on 2026-07-26 |
 | Laravel | 11.x, 12.x, 13.x | Reach over tidiness — see the EOL note below |
 | HubSpot SDK | `hubspot/api-client:^14.1` | Matches what `apps/laravel` already runs |
 
@@ -31,17 +31,32 @@ This overrides the reasoning used to exclude Laravel 10 ("past EOL, supporting a
 unpaid work"). Laravel 10 stays excluded because it is eighteen months dead and no longer part of
 any realistic migration path — not merely because it is EOL.
 
-**Support matrix.** Version ranges do not overlap cleanly, so the matrix is not rectangular:
-Laravel 11 accepts PHP 8.2–8.4, Laravel 12 accepts 8.2–8.5, Laravel 13 requires 8.3+. Ten valid
-combinations:
+**PHP floor raised to `^8.3` on 2026-07-26, during Phase 1 research.** The `^8.2` floor was signed
+off earlier the same day and is deliberately reversed here, under the owner's standing instruction
+to change it *only if it hinders our ability to write better code*. It does:
 
-| | PHP 8.2 | PHP 8.3 | PHP 8.4 | PHP 8.5 |
-|---|---|---|---|---|
-| **Laravel 11** | ✓ | ✓ | ✓ | — |
-| **Laravel 12** | ✓ | ✓ | ✓ | ✓ |
-| **Laravel 13** | — | ✓ | ✓ | ✓ |
+> Pest 4 — and `pest-plugin-arch` 4.x and `pest-plugin-laravel` 4.x — require PHP `^8.3`. Keeping a
+> PHP 8.2 leg would mean dual constraints (`^3.8|^4.0`), so the 8.2 jobs would run
+> `pest-plugin-arch` 3.1.1, last released April 2025 and no longer maintained. Architecture tests
+> and mutation scoring are two of the three headline standards in this document. A gate that runs
+> on an unmaintained plugin on some CI legs and a current one on others is not a gate — it is two
+> different gates wearing one name.
 
-Every combination is in the CI matrix, run against both `prefer-stable` and `prefer-lowest` — 20
+The cost is small against the reason `^8.2` was chosen. That reason was migration reach, and reach
+is preserved: **all three Laravel majors survive**, because Laravel 11 supports PHP 8.2–8.4. Only
+installs pinned to PHP 8.2 specifically are excluded, and PHP 8.2 reaches end of security support
+on 31 December 2026 regardless.
+
+**Support matrix.** Still not rectangular — Laravel 11 stops at PHP 8.4, Laravel 13 starts at 8.3.
+Eight valid combinations:
+
+| | PHP 8.3 | PHP 8.4 | PHP 8.5 |
+|---|---|---|---|
+| **Laravel 11** | ✓ | ✓ | — |
+| **Laravel 12** | ✓ | ✓ | ✓ |
+| **Laravel 13** | ✓ | ✓ | ✓ |
+
+Every combination is in the CI matrix, run against both `prefer-stable` and `prefer-lowest` — 16
 jobs. A version we do not test is a version we do not support, and the README says so.
 
 **Consequence for the code:** the Illuminate constraint is `^11.0|^12.0|^13.0`, so no framework
