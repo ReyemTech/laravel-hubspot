@@ -24,28 +24,13 @@ chose all nine in v1 with the 6→9 phase cost stated (signals spec §15.1).
 
 ## Phase Numbering
 
-**The source documents number these phases 0-8. This roadmap numbers them 1-9.** The structure,
-contents and ordering are identical — only the label shifts, because GSD's roadmap parser silently
-drops a `### Phase 0:` header (verified 2026-07-26: a two-phase roadmap using Phase 0 and Phase 1
-returned `phase_count: 1` from `roadmap.analyze`, with Phase 0 absent from the phase list). Anywhere
-the core spec, the signals spec, `BRIEF.md`, `STANDARDS.md` or `.planning/intel/` says "Phase 0", read
-"Phase 1" here.
+**The source documents number these phases starting at zero; this roadmap starts at one.** Structure,
+contents and ordering are identical — only the label shifts.
 
-| Core spec §13 / intel | Signals spec §15 | This roadmap | Name |
-|---|---|---|---|
-| Phase 0 | Phase 1 | **Phase 1** | Foundation & Gates |
-| Phase 1 | Phase 2 | **Phase 2** | Gateway Layer |
-| Phase 2 | Phase 3 | **Phase 3** | Registry & Stores |
-| Phase 3 | Phase 4 | **Phase 4** | Model Sync |
-| Phase 4 | Phase 5 | **Phase 5** | Inbound Webhooks |
-| — | Phase 6 | **Phase 6** | Signals Core |
-| — | Phase 7 | **Phase 7** | Signal Stores & Attribution |
-| — | Phase 8 | **Phase 8** | Frontend & Meetings Embed |
-| Phase 5 | Phase 9 | **Phase 9** | Adoption & Release |
-
-Note the signals spec §15 table already uses 1-9 for phases 1-9, so it agrees with this roadmap
-everywhere except the label on the first phase, which it calls Phase 1 in the table and "Phase 0" in
-the prose of §15. Both mean the same phase: **Phase 1 here**.
+The full mapping and the reason for it are in **`.planning/PHASE-NUMBERING.md`**. It lives in a
+separate file deliberately: `init.milestone-op` counts phase references with a looser pattern than
+`roadmap.analyze`, so a zeroth-phase label written here inflates `phase_count` and breaks
+`all_phases_complete`. Do not reintroduce it into this file.
 
 Standard GSD numbering otherwise applies: integer phases are planned milestone work; decimal phases
 (e.g. 2.1) are urgent insertions and execute between their surrounding integers.
