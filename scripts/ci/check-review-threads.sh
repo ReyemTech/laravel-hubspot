@@ -31,10 +31,10 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-# The GraphQL document is deliberately single-quoted: its $owner/$name/$pr/
-# $cursor tokens are GraphQL variables resolved server-side via gh api
-# graphql's -f/-F flags below, not shell variables -- they must not expand
-# locally.
+# The GraphQL documents below are deliberately single-quoted: their
+# $owner/$name/$pr/$cursor/$id tokens are GraphQL variables resolved
+# server-side via gh api graphql's -f/-F flags, not shell variables -- they
+# must not expand locally.
 # shellcheck disable=SC2016
 REVIEW_THREADS_QUERY='
 query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
@@ -46,16 +46,46 @@ query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
           endCursor
         }
         nodes {
+          id
           isResolved
           path
           line
           comments(first: 50) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
             nodes {
               url
               author {
                 __typename
               }
             }
+          }
+        }
+      }
+    }
+  }
+}'
+
+# Follow-up query for one thread's *next* page of comments, addressed by
+# node id (reviewThreads itself has no "after" scoped to a single thread --
+# GraphQL's node(id:) interface is the standard way to resume pagination on
+# a nested connection). Used only when a thread's first page of comments
+# (above) reports comments.pageInfo.hasNextPage == true.
+# shellcheck disable=SC2016
+THREAD_COMMENTS_PAGE_QUERY='
+query($id: ID!, $cursor: String!) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(first: 50, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          author {
+            __typename
           }
         }
       }
@@ -154,6 +184,40 @@ resolve_repo() {
     gh repo view --json nameWithOwner --jq '.nameWithOwner'
 }
 
+# Collects every comment `author.__typename` for one thread (a single-line
+# JSON reviewThreads node), across as many comments(after:) pages as it
+# takes. A thread resolved with more than one page of comments would
+# otherwise be judged on only its first 50 comments -- if the only human
+# reply fell past that page, the thread would be misreported as a
+# violation despite being compliant. Short-circuits as soon as a human
+# reply is found: once thread_has_human_reply is satisfied, no further
+# page is worth the extra API call.
+thread_typenames() {
+    local line="$1"
+    local thread_id typenames has_next cursor
+
+    thread_id="$(jq -r '.id' <<< "$line")"
+    typenames="$(jq -r '.comments.nodes[].author.__typename // "null"' <<< "$line")"
+    has_next="$(jq -r '.comments.pageInfo.hasNextPage' <<< "$line")"
+    cursor="$(jq -r '.comments.pageInfo.endCursor // empty' <<< "$line")"
+
+    while [ "$has_next" = "true" ] && ! thread_has_human_reply "$typenames"; do
+        local page more_typenames
+        page="$(gh api graphql \
+            -f query="$THREAD_COMMENTS_PAGE_QUERY" \
+            -f id="$thread_id" \
+            -f cursor="$cursor")"
+
+        more_typenames="$(jq -r '.data.node.comments.nodes[].author.__typename // "null"' <<< "$page")"
+        typenames="$(printf '%s\n%s' "$typenames" "$more_typenames")"
+
+        has_next="$(jq -r '.data.node.comments.pageInfo.hasNextPage' <<< "$page")"
+        cursor="$(jq -r '.data.node.comments.pageInfo.endCursor // empty' <<< "$page")"
+    done
+
+    printf '%s\n' "$typenames"
+}
+
 # Evaluates one thread (a single-line JSON reviewThreads node) against
 # thread_is_violation. On a violation, echoes a one-line, human-readable
 # description of it and returns 0; on a pass, prints nothing and returns 1.
@@ -162,7 +226,16 @@ evaluate_thread_line() {
     local is_resolved typenames
 
     is_resolved="$(jq -r '.isResolved' <<< "$line")"
-    typenames="$(jq -r '.comments.nodes[].author.__typename // "null"' <<< "$line")"
+
+    # Every page beyond the first costs a GraphQL round trip, so only pay
+    # for it on resolved threads -- an unresolved thread is never a
+    # violation regardless of how many comments it has (thread_is_violation
+    # short-circuits on is_resolved before even looking at typenames).
+    if [ "$is_resolved" != "true" ]; then
+        return 1
+    fi
+
+    typenames="$(thread_typenames "$line")"
 
     if ! thread_is_violation "$is_resolved" "$typenames"; then
         return 1
