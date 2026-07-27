@@ -1,0 +1,13 @@
+name: scratch-probe
+on:
+  pull_request:
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "github.sha=${{ github.sha }}"
+          echo "pr.head.sha=${{ github.event.pull_request.head.sha }}"
