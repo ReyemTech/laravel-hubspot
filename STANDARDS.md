@@ -17,23 +17,27 @@ bar than an application nobody else has to integrate with.
 | | Standard | Rationale |
 |---|---|---|
 | PHP | `^8.3` | Pest 4 requires it — see the tooling note below. Raised from `^8.2` on 2026-07-26 |
-| Laravel | 11.x, 12.x, 13.x | Reach over tidiness — see the EOL note below |
+| Laravel | 12.x, 13.x | Laravel 11 dropped 2026-07-27 — see the EOL note below |
 | HubSpot SDK | `hubspot/api-client:^14.1` | Matches what `apps/laravel` already runs |
 
-**Signed off 2026-07-26, against verified upstream data.** Laravel 11 reached end of security
-support on 12 March 2026 and PHP 8.2 reaches it on 31 December 2026, so both are formally dead or
-dying. They are supported anyway, deliberately, for one nameable reason: design spec goal #6 is a
-one-line migration path for `tapp/laravel-hubspot`'s installed base, and a package that will not
-install alongside what those users are running cannot offer them one. Reach is the point; this is
-not an oversight.
+**Laravel 11 dropped 2026-07-27, reversing the 2026-07-26 "reach over tidiness" sign-off.** Every
+published Laravel `11.x` release is blocked by live security advisories — `PKSA-m5cs-t1y6-qpcs`,
+`PKSA-3r5d-mb8f-1qw9`, `PKSA-mdq4-51ck-6kdq` — and Laravel 11 reached end of security support on
+12 March 2026, so none of them will ever be patched. §12c makes `composer audit` fail the build on
+any advisory, with no escape hatch; keeping Laravel 11 in the support matrix put that rule in
+direct conflict with the migration-reach rationale that originally justified supporting an EOL
+framework major. The owner chose to drop Laravel 11 rather than suppress the advisories or weaken
+the audit gate. Advisories are not suppressed anywhere in this repository.
 
-This overrides the reasoning used to exclude Laravel 10 ("past EOL, supporting a dead branch is
-unpaid work"). Laravel 10 stays excluded because it is eighteen months dead and no longer part of
-any realistic migration path — not merely because it is EOL.
+This is the same reasoning already used to exclude Laravel 10 ("past EOL, supporting a dead branch
+is unpaid work"), now applied to Laravel 11 for the additional, sharper reason that its EOL status
+is no longer merely dead — it is actively unpatchable. A package cannot responsibly bless a
+framework version with open, unfixable CVEs, migration reach notwithstanding.
 
-**PHP floor raised to `^8.3` on 2026-07-26, during Phase 1 research.** The `^8.2` floor was signed
-off earlier the same day and is deliberately reversed here, under the owner's standing instruction
-to change it *only if it hinders our ability to write better code*. It does:
+**PHP floor raised to `^8.3` on 2026-07-26, during Phase 1 research** (unaffected by the Laravel 11
+drop). The `^8.2` floor was signed off earlier the same day and is deliberately reversed here,
+under the owner's standing instruction to change it *only if it hinders our ability to write
+better code*. It does:
 
 > Pest 4 — and `pest-plugin-arch` 4.x and `pest-plugin-laravel` 4.x — require PHP `^8.3`. Keeping a
 > PHP 8.2 leg would mean dual constraints (`^3.8|^4.0`), so the 8.2 jobs would run
@@ -42,25 +46,21 @@ to change it *only if it hinders our ability to write better code*. It does:
 > on an unmaintained plugin on some CI legs and a current one on others is not a gate — it is two
 > different gates wearing one name.
 
-The cost is small against the reason `^8.2` was chosen. That reason was migration reach, and reach
-is preserved: **all three Laravel majors survive**, because Laravel 11 supports PHP 8.2–8.4. Only
-installs pinned to PHP 8.2 specifically are excluded, and PHP 8.2 reaches end of security support
-on 31 December 2026 regardless.
-
-**Support matrix.** Still not rectangular — Laravel 11 stops at PHP 8.4, Laravel 13 starts at 8.3.
-Eight valid combinations:
+**Support matrix.** Rectangular for the first time: PHP `8.2` was never part of the matrix and
+Laravel 11 — the one major that stopped at PHP 8.4 — is gone, so every remaining PHP version
+supports every remaining Laravel major.
 
 | | PHP 8.3 | PHP 8.4 | PHP 8.5 |
 |---|---|---|---|
-| **Laravel 11** | ✓ | ✓ | — |
 | **Laravel 12** | ✓ | ✓ | ✓ |
 | **Laravel 13** | ✓ | ✓ | ✓ |
 
-Every combination is in the CI matrix, run against both `prefer-stable` and `prefer-lowest` — 16
-jobs. A version we do not test is a version we do not support, and the README says so.
+Six valid combinations, each run against both `prefer-stable` and `prefer-lowest` — **12 jobs, no
+`exclude:` entries needed.** A version we do not test is a version we do not support, and the
+README says so.
 
-**Consequence for the code:** the Illuminate constraint is `^11.0|^12.0|^13.0`, so no framework
-API introduced in 12 or 13 may be used without a compatibility shim. Review checks this.
+**Consequence for the code:** the Illuminate constraint is `^12.0|^13.0`, so no framework API
+introduced in 13 may be used without a compatibility shim. Review checks this.
 
 ## 2. Runtime dependencies are near-frozen
 
@@ -410,6 +410,10 @@ flagged rather than assumed:
 1. **~~PHP floor `^8.2`, not `^8.3`~~ — SIGNED OFF 2026-07-26.** `^8.2` confirmed, and the Laravel
    range widened to 11.x/12.x/13.x, after verifying support dates against laravel.com and php.net.
    Both ends of the range are EOL or near it; kept deliberately for migration reach. See §1.
+   **Superseded 2026-07-27:** Laravel 11 was dropped outright — every published `11.x` release
+   carries unpatchable security advisories (`PKSA-m5cs-t1y6-qpcs`, `PKSA-3r5d-mb8f-1qw9`,
+   `PKSA-mdq4-51ck-6kdq`), which put the migration-reach rationale in direct conflict with §12c's
+   zero-tolerance `composer audit` gate. Migration reach lost. See §1 for the current matrix.
 2. **Test framework: Pest.** `apps/laravel`'s CLAUDE.md mandates PHPUnit and says to convert
    Pest to PHPUnit — that rule is app-scoped and does not carry here.
 

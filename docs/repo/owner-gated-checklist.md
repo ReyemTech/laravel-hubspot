@@ -39,7 +39,8 @@ here no longer exists, or if a job exists and is missing from here.
 **`.github/workflows/ci.yml`** — the full support-matrix test run, `composer validate --strict`,
 and the manifest-shape lock:
 
-- `tests` — the 16-job PHP × Laravel × stability matrix (STANDARDS §1), coverage floor `--min=95`
+- `tests` — the 12-job PHP × Laravel × stability matrix (STANDARDS §1, Laravel 11 dropped
+  2026-07-27), coverage floor `--min=95`
 - `composer-validate` — `composer validate --strict`
 - `manifest` — locks the manifest to exactly seven production requires (`tests/Ci/ComposerManifestTest.php`)
 

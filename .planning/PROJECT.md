@@ -58,7 +58,7 @@ two design specs, one candidate brief, and no code.)
 
 ### Active
 
-- [ ] **Foundation (FOUND-01..05)** — repository, the full 16-job CI matrix, branch protection with
+- [ ] **Foundation (FOUND-01..05)** — repository, the full 12-job CI matrix, branch protection with
       every standards gate green on an empty package; `SECURITY.md` from day one; the Node/pnpm
       toolchain with the Vitest floor and docs build; six-layer architecture rules; the §6.4
       association-inverse empirical probe
@@ -176,17 +176,20 @@ is the superseded candidate brief, kept for provenance. Ingest artefacts: `.plan
 
 **Intel staleness.** `.planning/intel/` was extracted before the signals spec existed. It is reliable
 for Phase 2-5 content and wrong on: the layer count (says four, now six), the dependency count (six,
-now seven), the support matrix (11/12, now 11/12/13), the required-check list (no Vitest, no docs
+now seven), the support matrix (11/12, now 12/13 — Laravel 11 dropped 2026-07-27), the required-check list (no Vitest, no docs
 build), the docs-site rejection (now adopted), and publishing (now owner-gated).
 
 ## Constraints
 
-- **Tech stack**: PHP `^8.3`; Laravel 11.x, 12.x and 13.x; `hubspot/api-client:^14.1`. The matrix is
-  **not rectangular** — L11 accepts PHP 8.3-8.4, L12 accepts 8.3-8.5, L13 requires 8.3+ — giving eight
-  valid combinations, each run on `prefer-stable` and `prefer-lowest` for 16 CI jobs. A version not
-  tested is not supported, and the README says so.
-- **Framework API ceiling**: the Illuminate constraint is `^11.0|^12.0|^13.0`, so **no framework API
-  introduced in Laravel 12 or 13 may be used without a compatibility shim.** Review checks this.
+- **Tech stack**: PHP `^8.3`; Laravel 12.x and 13.x — **Laravel 11 dropped 2026-07-27** (every
+  published `11.x` release carries unpatchable security advisories: `PKSA-m5cs-t1y6-qpcs`,
+  `PKSA-3r5d-mb8f-1qw9`, `PKSA-mdq4-51ck-6kdq`; Laravel 11 reached EOSS 2026-03-12); plus
+  `hubspot/api-client:^14.1`. The matrix is **rectangular for the first time** — every PHP version
+  supports every remaining Laravel major — giving six valid combinations, each run on
+  `prefer-stable` and `prefer-lowest` for **12 CI jobs**. A version not tested is not supported,
+  and the README says so.
+- **Framework API ceiling**: the Illuminate constraint is `^12.0|^13.0`, so **no framework API
+  introduced in Laravel 13 may be used without a compatibility shim.** Review checks this.
 - **Tooling**: Standalone public package — **not** part of the ReyemTech Laravel application. No Sail,
   no Docker. Run `vendor/bin/pest`, `vendor/bin/pint`, `vendor/bin/phpstan` directly; test the matrix
   via `orchestra/testbench`. Node and pnpm are in CI for Vitest and the docs site.
@@ -237,7 +240,7 @@ key. D-34 onward postdate the intel files and have no key.
 
 ### Support matrix and dependencies
 
-- **D-01:** **Signed off 2026-07-26 against verified upstream data (laravel.com, php.net); PHP floor amended the same day during Phase 1 research.** PHP floor `^8.3`; Laravel 11.x, 12.x and 13.x; `hubspot/api-client:^14.1`. The matrix is **not rectangular** — L11 accepts PHP 8.2-8.4, L12 accepts 8.2-8.5, L13 requires 8.3+ — giving **eight** valid combinations, each run on both `prefer-stable` and `prefer-lowest`, for **16 CI jobs**. Laravel 11 reached end of security support on 12 March 2026 and is supported anyway, deliberately, because goal #6 is a one-line migration path for tapp's installed base and a package that will not install alongside what those users run cannot offer one. **The PHP floor was raised from `^8.2` to `^8.3` on 2026-07-26** because Pest 4, `pest-plugin-arch` 4.x and `pest-plugin-laravel` 4.x all require 8.3, and keeping an 8.2 leg would have put the unmaintained `pest-plugin-arch` 3.1.1 on those jobs — making architecture tests and mutation scoring behave differently depending on which PHP version ran them. Migration reach is untouched: all three Laravel majors survive, since Laravel 11 supports PHP 8.2-8.4. Laravel 10 stays excluded because it is eighteen months dead, not merely because it is EOL. **Consequence:** the Illuminate constraint is `^11.0|^12.0|^13.0`, so no framework API introduced in 12 or 13 may be used without a shim. A version not tested is not supported and the README says so. (DEC-support-matrix)
+- **D-01:** **Signed off 2026-07-26 against verified upstream data (laravel.com, php.net); PHP floor amended the same day during Phase 1 research; Laravel 11 dropped 2026-07-27.** PHP floor `^8.3`; Laravel 12.x and 13.x; `hubspot/api-client:^14.1`. The matrix is **rectangular for the first time** — every PHP version (8.3, 8.4, 8.5) supports every remaining Laravel major — giving **six** valid combinations, each run on both `prefer-stable` and `prefer-lowest`, for **12 CI jobs**, no `exclude:` entries needed. **The PHP floor was raised from `^8.2` to `^8.3` on 2026-07-26** because Pest 4, `pest-plugin-arch` 4.x and `pest-plugin-laravel` 4.x all require 8.3, and keeping an 8.2 leg would have put the unmaintained `pest-plugin-arch` 3.1.1 on those jobs — making architecture tests and mutation scoring behave differently depending on which PHP version ran them. **Laravel 11 was dropped outright on 2026-07-27**: every published `11.x` release is blocked by live security advisories (`PKSA-m5cs-t1y6-qpcs`, `PKSA-3r5d-mb8f-1qw9`, `PKSA-mdq4-51ck-6kdq`), Laravel 11 reached end of security support on 12 March 2026, and none of those advisories will ever be patched. STANDARDS §12c fails the build on any `composer audit` advisory with no escape hatch, which put the original migration-reach rationale for keeping Laravel 11 in direct conflict with that gate — the owner chose to drop Laravel 11 rather than suppress the advisories or weaken the audit. Laravel 10 stays excluded because it is eighteen months dead, not merely because it is EOL. **Consequence:** the Illuminate constraint is `^12.0|^13.0`, so no framework API introduced in 13 may be used without a shim. A version not tested is not supported and the README says so. (DEC-support-matrix)
 - **D-02:** **Amended 2026-07-26.** Production `require` is exactly **seven** packages — `php`, `hubspot/api-client`, `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `laravel/prompts`, `illuminate/view`. An eighth requires written justification in the PR description; the reviewer's default answer is no. The rule being encoded is *no third-party runtime dependencies* and it is **unchanged** — the Illuminate packages are first-party Laravel that this package calls directly, declared rather than assumed. (DEC-runtime-dependencies)
 - **D-03:** Three packages are excluded deliberately — `spatie/laravel-package-tools` (hand-roll the service provider instead), `spatie/laravel-webhook-client` (forces its `webhook_calls` migration on every consumer), and `fakerphp/faker` from production (`require-dev` only, every call site guarded by `class_exists()`). (DEC-excluded-dependencies)
 
@@ -323,7 +326,7 @@ key. D-34 onward postdate the intel files and have no key.
 
 **One remains.** Six of the seven `STANDARDS.md` decisions were signed off on 2026-07-26 and are now
 in the `<decisions>` block above: #0 merge commits + mandatory commitlint (D-25), #1 PHP `^8.3` and
-Laravel 11/12/13 (D-01), #2 Pest (D-08), #3 `strict_types` (D-34), #4 coverage and MSI floors (D-43),
+Laravel 12/13 (D-01, Laravel 11 dropped 2026-07-27), #2 Pest (D-08), #3 `strict_types` (D-34), #4 coverage and MSI floors (D-43),
 #6 code shape limits (D-06).
 
 | # | Item | Working default | Why it is still open | When it bites |
@@ -350,7 +353,7 @@ Laravel 11/12/13 (D-01), #2 Pest (D-08), #3 `strict_types` (D-34), #4 coverage a
 | Associations modelled as a directed pair, registry miss throws | Directional type ids differ per direction; a silent inverse fallback is how 202 gets written where 201 belongs, and nobody notices for months. | — Pending validation |
 | Merge commits, not squash; commitlint mandatory (D-25) | Only merge commits preserve the RED→GREEN sequence into `main`, which is the point of D-13. | ✓ Signed off 2026-07-26 |
 | Pest, not PHPUnit (D-08) | `pest --mutate` + `pest-plugin-arch` deliver the mutation floor and layer-boundary tests in one runner; PHPUnit needs four tools. | ✓ Settled |
-| PHP `^8.3`, Laravel 11/12/13, 16-job matrix (D-01) | Verified against laravel.com and php.net. Both ends of the range are EOL or near it and kept deliberately for migration reach — a package that will not install alongside what tapp's users run cannot offer them a migration path. | ✓ Signed off 2026-07-26 |
+| PHP `^8.3`, Laravel 12/13, 12-job matrix (D-01) | Verified against laravel.com and php.net. Laravel 11 was kept initially (2026-07-26) for migration reach, then dropped outright (2026-07-27) once verified as blocked by unpatchable security advisories that conflict with the zero-tolerance `composer audit` gate. | ✓ Signed off 2026-07-26; amended 2026-07-27 |
 | Signals as a peer layer, not part of `Sync` (D-35) | Signals are event-shaped and have no local model; `Sync` is model-shaped. Merging them blurs the largest boundary in the package. | ✓ Approved in the signals spec |
 | Buffer-first, one batch write per flush (D-40) | A `dataLayer` push cannot map 1:1 to a HubSpot write: HubSpot has hard rate limits, needs a contact to exist first, and stores property bags rather than event streams. Buffering also makes the flush idempotent and removes the read-then-write concurrency hazard. | ✓ Approved in the signals spec |
 | Database-backed buffer, cache explicitly rejected (D-38) | The pre-identity window is where attribution value lives, and cache is evictable by definition. Better explicitly off than silently lossy. | ✓ Approved in the signals spec |

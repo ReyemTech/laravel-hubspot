@@ -32,8 +32,8 @@ does not apply to this package*. Pest was chosen because `pest --mutate` and `pe
 give two of this project's hard standards as first-class features. Pest runs on PHPUnit, so
 PHPUnit-style test classes are valid if preferred.
 
-### Support matrix (decision #1 — PHP floor RAISED to `^8.3` on 2026-07-26 during this phase's research)
-PHP `^8.3`; Laravel `11.x`, `12.x`, `13.x`. Illuminate constraint `^11.0|^12.0|^13.0`.
+### Support matrix (decision #1 — PHP floor RAISED to `^8.3` on 2026-07-26 during this phase's research; Laravel 11 DROPPED on 2026-07-27)
+PHP `^8.3`; Laravel `12.x`, `13.x`. Illuminate constraint `^12.0|^13.0`.
 
 **The floor was `^8.2` earlier the same day and was deliberately raised.** Pest 4,
 `pest-plugin-arch` 4.x and `pest-plugin-laravel` 4.x all require PHP `^8.3`. Keeping an 8.2 leg
@@ -42,22 +42,26 @@ would force dual constraints (`^3.8|^4.0`), putting the unmaintained `pest-plugi
 of the three headline standards, would behave differently depending on which PHP version ran them.
 **Use Pest 4 only. Do not add a dual constraint to recover PHP 8.2.**
 
-**The matrix is still NOT rectangular.** Laravel 11 stops at PHP 8.4; Laravel 13 starts at 8.3:
+**Laravel 11 was dropped outright on 2026-07-27**, reversing the "reach over tidiness" call made
+the day before. Every published Laravel `11.x` release is blocked by live security advisories
+(`PKSA-m5cs-t1y6-qpcs`, `PKSA-3r5d-mb8f-1qw9`, `PKSA-mdq4-51ck-6kdq`) and Laravel 11 reached end of
+security support on 2026-03-12, so none of them will ever be patched. STANDARDS §12c fails the
+build on any `composer audit` advisory with no escape hatch — keeping Laravel 11 for migration
+reach put that rule in direct conflict with itself. The owner chose to drop Laravel 11 rather than
+suppress the advisories or weaken the gate.
+
+**The matrix is rectangular for the first time.** Every PHP version supports every remaining
+Laravel major:
 
 | | PHP 8.3 | PHP 8.4 | PHP 8.5 |
 |---|---|---|---|
-| Laravel 11 | yes | yes | — |
 | Laravel 12 | yes | yes | yes |
 | Laravel 13 | yes | yes | yes |
 
-Eight valid combinations × `prefer-stable` and `prefer-lowest` = **16 CI jobs**. The excluded cell
-is real: generating the matrix as a plain cross-product produces two jobs that cannot resolve.
+Six valid combinations × `prefer-stable` and `prefer-lowest` = **12 CI jobs**, no `exclude:` entries
+needed.
 
-Laravel 11 reached end of security support 2026-03-12 and PHP 8.2 reaches it 2026-12-31. Both are
-supported anyway, deliberately, for migration reach — see STANDARDS §1. This is not an oversight;
-do not "fix" it by narrowing the matrix.
-
-**Consequence for code:** no framework API introduced in Laravel 12 or 13 may be used without a
+**Consequence for code:** no framework API introduced in Laravel 13 may be used without a
 compatibility shim.
 
 ### Production dependencies — exactly seven
@@ -114,7 +118,7 @@ architecture test over an empty namespace is what makes the boundary real before
 violate it.
 
 ### Required checks (all must be green on the empty package)
-tests (full 20-job matrix), Pint (`laravel` preset, committed `pint.json`, `pint --test` fails on
+tests (full 12-job matrix), Pint (`laravel` preset, committed `pint.json`, `pint --test` fails on
 any diff), PHPStan, `pest --mutate`, architecture tests, `composer audit`, BC check
 (`roave/backward-compatibility-check`), **commitlint**, **`composer validate --strict`**, the JS
 coverage floor, and a code-shape script. Also: CI greps for `TODO`/`FIXME` and fails — they never
