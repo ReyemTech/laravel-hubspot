@@ -56,7 +56,7 @@ REL-02.
 
   - Note: core spec §13 schedules this in its Phase 5. ADR precedence moves it to the first phase.
 
-- [ ] **FOUND-03**: Association-inverse empirical probe — **BLOCKED**
+- [x] **FOUND-03**: Association-inverse empirical probe — **BLOCKED**
   — `REQ-association-inverse-probe` (core spec §6.4, §13 Phase 0; BRIEF.md)
 
   - Acceptance: Against a HubSpot **developer test account** (never a production portal): create a
