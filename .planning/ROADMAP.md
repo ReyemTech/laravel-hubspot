@@ -37,7 +37,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 
 ## Phases
 
-- [ ] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 12-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
+- [x] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 12-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
 - [ ] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
 - [ ] **Phase 3: Registry & Stores** - Directional `(from, to, label) → typeId` resolution, cache and database stores, zero-migration install, diagnostics
 - [ ] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
@@ -94,7 +94,21 @@ Plans:
   4. `Hubspot::fake()` runs a complete test with zero HTTP: a Guzzle `MockHandler` sits under the SDK, canned responses can be supplied per object type, and `assertSynced`, `assertAssociated($deal, $contact, label:)` (asserting the **directional** typeId), `assertNothingSynced` and `assertRequestCount` all work, with ids from a counter and time frozen.
   5. The architecture test suite proves `Gateway` is the only namespace in the package that references `HubSpot\*`, and the build fails if any other layer imports one.
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+
+- [ ] 02-01-PLAN.md — Tracer: one deal creates end-to-end through `Hubspot::fake()` with zero HTTP, typed error on the same path
+- [ ] 02-02-PLAN.md — The remaining exception members, a deliberate production transport, and secret-key reconciliation
+- [ ] 02-03-PLAN.md — The full generic object surface over any object type, batching, and HTTP 207 as partial success
+- [ ] 02-04-PLAN.md — `AssociationPair(from, to)` and unlabelled directional writes through `createDefault()`
+- [ ] 02-05-PLAN.md — Labelled associations, the registry resolver seam, and the never-the-inverse guarantee
+- [ ] 02-06-PLAN.md — The fake's full assertion surface, directional `assertAssociated`, and determinism
+
+**Sequential by construction.** Every plan modifies at least one file an earlier plan owns
+(`ServiceProvider.php`, `Facades/Hubspot.php`, `Testing/HubspotFake.php`), so no two share a wave;
+and STANDARDS §12 forbids branching from a branch, so each plan is one branch off a freshly pulled
+`main` and one PR that merges before the next begins.
 
 ### Phase 3: Registry & Stores
 
@@ -280,7 +294,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Gates | 7/7 | In Progress|  |
-| 2. Gateway Layer | 0/TBD | Not started | - |
+| 2. Gateway Layer | 0/6 | Not started | - |
 | 3. Registry & Stores | 0/TBD | Not started | - |
 | 4. Model Sync | 0/TBD | Not started | - |
 | 5. Inbound Webhooks | 0/TBD | Not started | - |
