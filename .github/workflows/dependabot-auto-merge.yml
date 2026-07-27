@@ -1,0 +1,51 @@
+name: dependabot-auto-merge
+
+# Auto-merges Dependabot pull requests, but only inside the boundary STANDARDS.md Sec.12c
+# sets: patch and minor bumps to *development* dependencies only, on green. Production
+# dependency bumps -- the locked seven-package `require` list -- and any major bump always
+# require a human, and this job never touches either.
+#
+# Triggers on `pull_request` (not `pull_request_target`): Dependabot opens its PRs from
+# branches inside this repository, never from a fork, so the default GITHUB_TOKEN already
+# carries write permissions here without reaching for pull_request_target's broader (and
+# for a fork-facing workflow, riskier) trust model. Matches packages/sail's existing
+# `on: pull_request` convention.
+#
+# Deliberately excluded from tests/Ci/RequiredChecksTest.php's required-checks comparison,
+# via that test's explicit allowlist (see requiredChecksAllowlistedWorkflowFiles()) -- this
+# job is PR-triggered automation gated on `github.actor == 'dependabot[bot]'`, not a status
+# check every contributor's own PR needs to pass.
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Dependabot auto-merge (patch/minor dev-dependencies only)
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Boundary, deliberately conservative: semver-patch or semver-minor AND
+      # direct:development only. Never `direct:production` (the locked seven-package
+      # require list), never `indirect` (could be a transitive of a production
+      # dependency, so it does not get the same free pass), never semver-major.
+      - name: Auto-merge eligible Dependabot PRs
+        if: |
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-minor') &&
+          steps.metadata.outputs.dependency-type == 'direct:development'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        # Merge commit only: squash and rebase merges are disabled at the repository
+        # level (D-25 preserves the RED->GREEN commit history), so `--squash`/`--rebase`
+        # would simply fail here.
+        run: gh pr merge --auto --merge "${PR_URL}"
