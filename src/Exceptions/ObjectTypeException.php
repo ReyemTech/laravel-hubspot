@@ -86,11 +86,13 @@ final class ObjectTypeException extends InvalidArgumentException implements Hubs
      * arriving through the one door strict types cannot close.
      *
      * `$side` is prose ("object type" or "object id") so the message names which of the two
-     * arguments was wrong without the caller counting positions.
+     * arguments was wrong without the caller counting positions. Both begin with a vowel sound, so
+     * the message's article is a fixed "an" rather than something computed — asserted in the test,
+     * because a message that names the fix (D-18) should be able to manage its own grammar.
      */
     public static function nonStringObjectReference(string $side, mixed $received): self
     {
-        return new self(sprintf('A HubSpot object reference was built with a %s of type %s. Pass it as a string — an id held as an integer is cast at the call site with "(string) $id", never coerced. This is validated here rather than by the parameter type because declare(strict_types=1) binds at the calling file, not at this package\'s: in a file without it, 0 would have arrived as "0" and true as "1", addressing a record nobody meant.', $side, get_debug_type($received)));
+        return new self(sprintf('A HubSpot object reference was built with an %s of type %s. Pass it as a string — an id held as an integer is cast at the call site with "(string) $id", never coerced. This is validated here rather than by the parameter type because declare(strict_types=1) binds at the calling file, not at this package\'s: in a file without it, 0 would have arrived as "0" and true as "1", addressing a record nobody meant.', $side, get_debug_type($received)));
     }
 
     /**
