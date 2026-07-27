@@ -39,11 +39,22 @@ jobs:
           php-version: ${{ matrix.php }}
           coverage: pcov
 
+      # composer.lock is gitignored (correct for a library -- see .gitignore),
+      # so each matrix cell must resolve its own dependency set from scratch.
+      # A *partial* update (naming packages as positional arguments) requires
+      # a preexisting lock to diff against and fails hard without one:
+      # "Cannot update only a partial set of packages without a lock file
+      # present." --with instead temporarily overrides each package's
+      # resolved constraint for this run, inside a *full* update, which needs
+      # no lock at all.
       - name: Install dependencies
         run: >
           composer update
-          laravel/framework:${{ matrix.laravel }}
-          orchestra/testbench:${{ matrix.testbench }}
+          --with illuminate/contracts:${{ matrix.laravel }}
+          --with illuminate/support:${{ matrix.laravel }}
+          --with illuminate/database:${{ matrix.laravel }}
+          --with illuminate/view:${{ matrix.laravel }}
+          --with orchestra/testbench:${{ matrix.testbench }}
           --${{ matrix.stability }}
           --prefer-dist
           --no-interaction
