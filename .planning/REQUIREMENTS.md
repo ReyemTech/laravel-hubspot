@@ -148,17 +148,21 @@ REL-02.
 
 ### Gateway
 
-- [ ] **GW-01**: Generic object core — every CRM object type through one set of classes
+- [x] **GW-01**: Generic object core — every CRM object type through one set of classes
   — `REQ-generic-object-core` (core spec §2 goal 1, §1.2, §13 Phase 1)
 
   - Acceptance: One set of model classes serves any object type. `ObjectGateway` provides create /
     update / upsert / find / delete / search / batch over `crm()->objects()`. Adding a new object
     type requires no new hand-written service.
 
-  - Progress: 02-01 (tracer) ships `create()` only, over the generic `crm()->objects()` core with
-    zero object-type-specific branching — proving the pattern, not yet the full surface.
-    update/upsert/find/delete/search/batch are still pending; do not mark complete until all are
-    shipped and the "no new hand-written service" acceptance line is actually true.
+  - Progress: **complete as of 02-03.** `ObjectGateway` ships create / find / update / upsert /
+    archive / search / batch over `crm()->objects()`, with zero object-type-specific branching.
+    Proven in both directions: one dataset drives eight object types including a custom `p_*` one
+    through a single gateway instance, and `tests/Arch/NoPerTypeServiceTest.php` fails the build if
+    any class under `src/` is named for an individual object type — so the "adding a new object
+    type requires no new hand-written service" acceptance line is now enforced, not merely true.
+    Note the delete capability is named `archive()`, because HubSpot's delete IS an archive and the
+    API exposes no unarchive endpoint (see 02-03-SUMMARY.md).
 
 - [ ] **GW-02**: Directional associations as a first-class concept
   — `REQ-directional-associations` (core spec §2 goal 2, §6, §13 Phase 1)
@@ -650,7 +654,7 @@ Deferred. Tracked but not in the current roadmap.
 | FOUND-04 | Phase 1 | Complete |
 | FOUND-05 | Phase 1 | Complete |
 | REL-01 | Phase 1 | Complete |
-| GW-01 | Phase 2 | Pending — In progress, 02-01 tracer ships `create()` only |
+| GW-01 | Phase 2 | Complete — 02-03 ships the full generic object surface incl. batch and HTTP 207 |
 | GW-02 | Phase 2 | Pending |
 | GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
 | GW-04 | Phase 2 | Pending — In progress, 02-01 ships the fake transport + `assertRequestCount` only |
