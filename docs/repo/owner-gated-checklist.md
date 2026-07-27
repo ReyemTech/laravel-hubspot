@@ -124,13 +124,29 @@ What Phase 9 (SHIP, REL-02) needs from the owner once both blockers clear:
 
 ## GitHub Pages deploy
 
-The documentation site (`site/`, plan 06) builds green in CI (`docs.yml`'s `build` job) but is not
-deployed anywhere yet. GitHub Pages on a **private** repository requires a **paid GitHub plan** —
-free-tier private repositories cannot serve Pages at all. The full deploy procedure (two-workflow
-split, PAT-vs-`GITHUB_TOKEN` rationale, the `docs-pages` branch preserve-list mechanism, and the
-`RELEASE_TOKEN` secret this needs) is already written and ready to execute:
-**`docs/repo/docs-site-deploy.md`** (plan 06). Nothing further needs deciding here — only the plan
-upgrade (or making the repository public) and creating the `RELEASE_TOKEN` secret.
+The documentation site (`site/`, plan 06) builds green in CI (`docs.yml`'s `build` job).
+`.github/workflows/deploy-docs.yml` and `.github/workflows/deploy-pages.yml` now ship the deploy
+procedure itself (the two-workflow split, the PAT-vs-`GITHUB_TOKEN` rationale, and the
+`docs-pages` branch preserve-list mechanism — all recorded in **`docs/repo/docs-site-deploy.md`**,
+plan 06), shipped ahead of the rest of Phase 9 with explicit owner approval to prepare it now.
+Both workflows are guarded to stay inert (a loud warning, not a red X) until the two things below
+are true. Nothing further needs deciding — only these two owner actions remain:
+
+1. **Create the `RELEASE_TOKEN` repository secret** — a personal access token with permission to
+   push to this repository, added at **Settings → Secrets and variables → Actions**. Without it,
+   `deploy-docs.yml` still runs and still succeeds (it falls back to `GITHUB_TOKEN`), but
+   `deploy-pages.yml` never fires automatically from that push — see
+   `docs/repo/docs-site-deploy.md` for why.
+2. **Enable GitHub Pages** at **Settings → Pages**, source set to the `docs-pages` branch. The
+   organization is on the **Team** plan, so Pages *is* available from a private repository (the
+   free tier is the one that blocks this, not Team) — but the plan does not make the published
+   site private: **once Pages is enabled, the built documentation site is publicly visible at its
+   default URL even while the repository itself stays private.** Worth the owner seeing that
+   stated plainly before flipping the switch, not discovering it after.
+
+The `docs-pages` branch itself has not been bootstrapped yet either (the one-time orphan-branch
+creation in `docs/repo/docs-site-deploy.md`'s "Reference commands" section) — `deploy-docs.yml`
+also skips cleanly, not noisily, until that exists.
 
 ## Confirm the `security@reyem.tech` mailbox
 

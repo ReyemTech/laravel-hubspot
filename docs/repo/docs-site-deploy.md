@@ -1,13 +1,14 @@
 # Docs site deploy procedure — SHIP-04 (Phase 9)
 
-**Status: not executable in this phase.** This document records a ready-to-run procedure for
-Phase 9's SHIP-04, written while `ReyemTech/apps/stint`'s working reference implementation
-(`.github/workflows/deploy-docs.yml`, `deploy-pages.yml`, `scripts/release/publish-docs.sh`) was
-being read for Plan 06, so Phase 9 is a wiring job rather than a rediscovery. Nothing here should
-be built in Phase 1 — the phase's own scope is `site/` building green in CI
-(`.github/workflows/docs.yml`), not deploying it.
+**Status: shipped, but inert until the owner acts.** The three files this document originally
+recorded as a ready-to-run-but-not-yet-built procedure now exist:
+`.github/workflows/deploy-docs.yml`, `.github/workflows/deploy-pages.yml`, and
+`scripts/release/publish-docs.sh` — built directly from `ReyemTech/apps/stint`'s working
+reference implementation while it was being read for Plan 06, and shipped ahead of the rest of
+Phase 9 with explicit owner approval ("we can prepare it now .. we're going to open up the repo
+later"). Everything below is now the as-built record, not a plan.
 
-Two things are blocked on the repository owner (D-47), not on anything technical:
+Two things are still blocked on the repository owner (D-47), not on anything technical:
 
 1. **GitHub Pages needs a paid plan on private repositories.** `ReyemTech/laravel-hubspot` is
    private. Unblocked by either upgrading the plan or making the repository public.
@@ -127,18 +128,29 @@ git push origin docs-pages
 gh workflow run deploy-pages.yml --ref docs-pages
 ```
 
-## Files this procedure will create in Phase 9 (not created here)
+## Files this procedure created (owner-gated setup, ahead of Phase 9)
 
 - `.github/workflows/deploy-docs.yml` — build-and-publish, `push: main` path-filtered on
   `site/**`, `permissions: contents: write` (needed to push to `docs-pages`).
 - `.github/workflows/deploy-pages.yml` — the Pages deploy itself, `push: docs-pages`,
-  `permissions: contents: read, pages: write, id-token: write`. This file must exist **on the
-  `docs-pages` branch itself**, not only on `main` — GitHub reads workflow files from the ref
-  being pushed to for branch-triggered workflows.
+  `permissions: contents: read, pages: write, id-token: write`, gated behind a
+  `check-pages-enabled` job that skips the deploy cleanly (a loud warning, not a red X) until
+  GitHub Pages is actually enabled. This file must also exist **on the `docs-pages` branch
+  itself**, not only on `main` — GitHub reads workflow files from the ref being pushed to for
+  branch-triggered workflows; `publish-docs.sh`'s preserve-list keeps it there across every
+  publish.
 - `scripts/release/publish-docs.sh` — the preserve-list-aware publish script, adapted from
-  `apps/stint`'s script with this package's own (shorter) preserve-list.
+  `apps/stint`'s script with this package's own (shorter) preserve-list (`.github` only — no
+  `install.sh`/`CNAME`). Guards, loudly rather than silently, against each of the three
+  not-yet-ready conditions in order: missing build output, a not-yet-bootstrapped `docs-pages`
+  branch, and a missing `RELEASE_TOKEN` secret (falls back to `GITHUB_TOKEN`).
 
-None of the three are created by Plan 06. Creating them now would ship a workflow that has never
-once run — on a private repository with GitHub Pages unavailable, that is indistinguishable from a
-broken one, and the required-checks reconciliation in Plan 07 would have nothing to point at it
-until the owner clears both blockers above.
+Neither workflow triggers on `pull_request`, so neither needed an entry in
+`tests/Ci/RequiredChecksTest.php`'s required-checks comparison or its explicit exclusion
+allowlist — confirmed via `vendor/bin/pest tests/Ci/` before and after these files were added.
+
+These files ship a workflow that has never once run end-to-end — on a private repository with
+GitHub Pages not yet enabled and the `RELEASE_TOKEN` secret not yet created, that is expected, not
+a defect. Every not-yet-ready condition is guarded to skip cleanly rather than fail noisily (see
+each workflow file's own comments and `publish-docs.sh`'s guards); the two remaining owner actions
+are recorded in `docs/repo/owner-gated-checklist.md`'s "GitHub Pages deploy" section.
