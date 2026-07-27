@@ -139,6 +139,11 @@ REL-02.
     update / upsert / find / delete / search / batch over `crm()->objects()`. Adding a new object
     type requires no new hand-written service.
 
+  - Progress: 02-01 (tracer) ships `create()` only, over the generic `crm()->objects()` core with
+    zero object-type-specific branching — proving the pattern, not yet the full surface.
+    update/upsert/find/delete/search/batch are still pending; do not mark complete until all are
+    shipped and the "no new hand-written service" acceptance line is actually true.
+
 - [ ] **GW-02**: Directional associations as a first-class concept
   — `REQ-directional-associations` (core spec §2 goal 2, §6, §13 Phase 1)
 
@@ -159,6 +164,12 @@ REL-02.
   - Note: signals spec §11 adds a fifth member, `SignalException`, in Phase 6 (SIG-05). The interface
     and the four core members ship here.
 
+  - Progress: 02-01 ships `HubspotException` (the interface) and `ApiException` (wrapping the SDK's,
+    preserving status/body/correlation id; no raw SDK exception reaches userland on the `create()`
+    path). `ConfigurationException`, `AssociationTypeException` and `ObjectTypeException` are still
+    pending (plan 02-02 adds `ConfigurationException`) — do not mark complete until all four members
+    ship.
+
 - [ ] **GW-04**: `Hubspot::fake()` — a real test double with direction assertions
   — `REQ-test-double` (core spec §2 goal 4, §10, §13 Phase 1)
 
@@ -170,6 +181,12 @@ REL-02.
 
   - Note: the spec calls `assertAssociated` failing when the inverse typeId was used "the single most
     valuable test in the package". Signal assertions extend this surface in Phase 6 (SIG-08).
+
+  - Progress: 02-01 ships the `MockHandler`-backed fake transport itself, object-type-keyed canned
+    responses routed per request, and `assertRequestCount`. `assertSynced`, `assertAssociated`,
+    `assertNothingSynced` and `assertWebhookHandled` are still pending (the latter deliberately
+    deferred to Phase 5 per 02-RESEARCH.md Open Question 2) — do not mark complete until the full
+    assertion surface ships.
 
 ### Registry
 
@@ -616,10 +633,10 @@ Deferred. Tracked but not in the current roadmap.
 | FOUND-04 | Phase 1 | Complete |
 | FOUND-05 | Phase 1 | Complete |
 | REL-01 | Phase 1 | Complete |
-| GW-01 | Phase 2 | Pending |
+| GW-01 | Phase 2 | Pending — In progress, 02-01 tracer ships `create()` only |
 | GW-02 | Phase 2 | Pending |
-| GW-03 | Phase 2 | Pending |
-| GW-04 | Phase 2 | Pending |
+| GW-03 | Phase 2 | Pending — In progress, 02-01 ships `HubspotException`/`ApiException` only |
+| GW-04 | Phase 2 | Pending — In progress, 02-01 ships the fake transport + `assertRequestCount` only |
 | REG-01 | Phase 3 | Pending — acceptance absent in source |
 | REG-02 | Phase 3 | Pending |
 | REG-03 | Phase 3 | Pending |

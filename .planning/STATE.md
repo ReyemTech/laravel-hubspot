@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 1
-current_phase_name: Foundation & Gates
+current_phase: 2
+current_phase_name: Gateway Layer
 status: executing
-stopped_at: Completed 01-07-PLAN.md (Phase 1 complete)
-last_updated: "2026-07-27T02:02:19.848Z"
+stopped_at: Completed 02-01-PLAN.md (Gateway tracer)
+last_updated: "2026-07-27T04:56:29.196Z"
 last_activity: 2026-07-26
 last_activity_desc: roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 13
+  completed_plans: 8
 ---
 
 # Project State
@@ -27,16 +27,16 @@ HubSpot CRM object type — with no per-type code, no migration step, and no cha
 association backwards. Extended 2026-07-26: …and records intent signals against an anonymous visitor
 that become attributed contact properties the moment an email appears, with no API call in the
 request lifecycle.
-**Current focus:** Phase 1 — Foundation & Gates
+**Current focus:** Phase 2 — Gateway Layer
 
 ## Current Position
 
-Phase: 1 of 9 (Foundation & Gates)
-Plan: 7 of 7 in current phase
-Status: Ready to execute
-Last activity: 2026-07-26 — roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
+Phase: 2 of 9 (Gateway Layer)
+Plan: 1 of 6 in current phase
+Status: Plan 02-01 (Gateway tracer) complete — PR #8 open, 28/28 required checks green, not yet merged. 5 plans remain in Phase 2 (02-02..02-06).
+Last activity: 2026-07-27 — executed 02-01-PLAN.md (Gateway tracer): `ObjectGateway::create()` end-to-end through `Hubspot::fake()`, the typed exception hierarchy's first member (`ApiException`), and the R1 non-vacuity architecture proof. GW-01/GW-03/GW-04 are **partially** delivered by this plan only — see `.planning/REQUIREMENTS.md`'s Progress notes; do not treat them as complete until their remaining plans (02-02..02-06) ship.
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 62%
 
 ## Performance Metrics
 
@@ -69,6 +69,7 @@ Progress: [██████████] 100%
 | Phase 01 P03 | 20min | 2 tasks | 7 files |
 | Phase 01-foundation-gates P06 | ~35min | 2 tasks | 11 files |
 | Phase 01 P07 | 30min | 4 tasks | 12 files |
+| Phase 02 P01 | 45min | 3 tasks | 18 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: release-please configured (release-type: simple, version.txt, no publish); confirmed A4
 - [Phase ?]: roave/backward-compatibility-check installed per-CI-job only (not composer.json), 8.21.0, PHP 8.4, requires --with-all-dependencies
 - [Phase ?]: Required-checks list (17 jobs) machine-checked bidirectionally against docs/repo/owner-gated-checklist.md
+- [Phase ?]: MockHandler callable-per-request routing (self-appending queue entry, inspecting the request's own object-type path) correctly serves per-object-type canned responses regardless of call order — retires 02-RESEARCH.md's one unverified finding
+- [Phase ?]: ObjectGatewayContract bound non-shared (transient), not singleton — lets Hubspot::fake() swap the HubspotClientFactory instance without needing Container::forgetInstance(), which isn't on the Illuminate Container contract this package is typed against
 
 ### Pending Todos
 
@@ -190,6 +193,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-27T02:02:19.806Z
-Stopped at: Completed 01-07-PLAN.md (Phase 1 complete)
+Last session: 2026-07-27T04:56:29.175Z
+Stopped at: Completed 02-01-PLAN.md (Gateway tracer)
 Resume file: None
