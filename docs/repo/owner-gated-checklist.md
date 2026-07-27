@@ -137,12 +137,20 @@ are true. Nothing further needs deciding — only these two owner actions remain
    `deploy-docs.yml` still runs and still succeeds (it falls back to `GITHUB_TOKEN`), but
    `deploy-pages.yml` never fires automatically from that push — see
    `docs/repo/docs-site-deploy.md` for why.
-2. **Enable GitHub Pages** at **Settings → Pages**, source set to the `docs-pages` branch. The
-   organization is on the **Team** plan, so Pages *is* available from a private repository (the
-   free tier is the one that blocks this, not Team) — but the plan does not make the published
-   site private: **once Pages is enabled, the built documentation site is publicly visible at its
-   default URL even while the repository itself stays private.** Worth the owner seeing that
-   stated plainly before flipping the switch, not discovering it after.
+2. **Enable GitHub Pages** at **Settings → Pages**, source set to **GitHub Actions** — not
+   "Deploy from a branch". `deploy-pages.yml` deploys via `actions/configure-pages`,
+   `actions/upload-pages-artifact` and `actions/deploy-pages`, which requires the Actions
+   publishing source; per GitHub's docs, using a custom Actions workflow to publish "requires you
+   to first enable them for your current repository" via that source setting. Selecting "Deploy
+   from a branch" configures the legacy Jekyll-or-static branch-based build instead, which
+   `actions/deploy-pages` cannot drive — the custom workflow would not operate as designed. The
+   `docs-pages` branch stays relevant only as `deploy-pages.yml`'s own `push` trigger (see
+   `docs/repo/docs-site-deploy.md`); it is not the Pages source setting. The organization is on the
+   **Team** plan, so Pages *is* available from a private repository (the free tier is the one that
+   blocks this, not Team) — but the plan does not make the published site private: **once Pages is
+   enabled, the built documentation site is publicly visible at its default URL even while the
+   repository itself stays private.** Worth the owner seeing that stated plainly before flipping
+   the switch, not discovering it after.
 
 The `docs-pages` branch itself has not been bootstrapped yet either (the one-time orphan-branch
 creation in `docs/repo/docs-site-deploy.md`'s "Reference commands" section) — `deploy-docs.yml`
