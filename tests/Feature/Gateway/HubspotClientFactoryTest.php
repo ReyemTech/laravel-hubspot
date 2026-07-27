@@ -8,11 +8,13 @@ use GuzzleHttp\Client;
 use GuzzleHttp\HandlerStack;
 use HubSpot\Discovery\Discovery;
 use ReflectionClass;
+use ReflectionMethod;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Tests\TestCase;
+use RuntimeException;
 
 /**
  * Task 2 (02-02): the production transport — explicit timeout/connect timeout, the SDK's own
@@ -140,5 +142,59 @@ final class HubspotClientFactoryTest extends TestCase
         self::assertSame(10.0, config('hubspot.transport.timeout'));
         self::assertSame(5.0, config('hubspot.transport.connect_timeout'));
         self::assertTrue(config('hubspot.transport.retries'));
+    }
+
+    /**
+     * `RetryMiddlewareFactory::create*Middleware()` always returns a real callable in practice
+     * (it is the SDK's own, already-tested code) -- this guard is unreachable through normal
+     * `fromConfig()` usage, exactly like `ObjectGateway::create()`'s own `Model|Error` narrowing
+     * guard (02-RESEARCH.md Pitfall 3). Reached here the same way that one is: directly, via
+     * reflection into the private method, with a contrived non-callable-returning factory --
+     * proving the guard actually fires rather than leaving it untested dead code.
+     */
+    public function test_guzzle_middleware_throws_when_the_retry_middleware_factory_returns_a_non_callable(): void
+    {
+        $method = new ReflectionMethod(HubspotClientFactory::class, 'guzzleMiddleware');
+        $method->setAccessible(true);
+
+        try {
+            $method->invoke(null, static fn (): string => 'not-a-callable');
+            self::fail('Expected a non-callable middleware factory result to throw.');
+        } catch (RuntimeException $exception) {
+            self::assertStringContainsString('did not return a callable middleware', $exception->getMessage());
+        }
+    }
+
+    public function test_guzzle_middleware_throws_when_the_wrapped_middleware_produces_a_non_callable_handler(): void
+    {
+        $method = new ReflectionMethod(HubspotClientFactory::class, 'guzzleMiddleware');
+        $method->setAccessible(true);
+
+        /** @var callable(callable): callable $wrapper */
+        $wrapper = $method->invoke(null, static fn (): callable => static fn (callable $handler): string => 'not-a-callable');
+
+        try {
+            $wrapper(static fn (): null => null);
+            self::fail('Expected a non-callable wrapped handler to throw.');
+        } catch (RuntimeException $exception) {
+            self::assertStringContainsString('produced a non-callable request handler', $exception->getMessage());
+        }
+    }
+
+    public function test_guzzle_middleware_returns_the_wrapped_middlewares_result_when_it_is_callable(): void
+    {
+        $method = new ReflectionMethod(HubspotClientFactory::class, 'guzzleMiddleware');
+        $method->setAccessible(true);
+
+        $innerHandler = static fn (): string => 'next-handler-response';
+
+        // A middleware that simply hands the inner handler back unchanged -- the shape every
+        // real Guzzle middleware honours on the "let this request through" path.
+        /** @var callable(callable): callable $wrapper */
+        $wrapper = $method->invoke(null, static fn (): callable => static fn (callable $handler): callable => $handler);
+
+        $result = $wrapper($innerHandler);
+
+        self::assertSame($innerHandler, $result);
     }
 }
