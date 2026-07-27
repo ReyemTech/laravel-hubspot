@@ -173,15 +173,29 @@ REL-02.
     **never** falls back to the inverse id. `associate($from, $to, label:, bidirectional:)` is the
     surface.
 
-  - Progress: **first half shipped in 02-04.** `ObjectRef` and `AssociationPair(from, to)` exist as
-    validated readonly value objects; the pair's parameter names and order are pinned by a reflection
-    test, no accessor hands both sides back unordered, and every method on
-    `AssociationGatewayContract` takes the pair first — so no API in the package accepts two objects
-    without an order. The unlabelled path (`associate()`) goes through `createDefault()` and sends no
+    **Surface amended 2026-07-27, on measured evidence.** `bidirectional:` survives on the
+    *unlabelled* `associate()` only. The two labelled writes take the reverse direction's own labels
+    instead — `associateWithLabel(..., ?string $inverseLabel = null)` and
+    `associateWithLabels(..., array $inverseLabels = [])`. FOUND-03 run 2 measured a paired HubSpot
+    label carrying a different **name** in each direction (`Deals` forward, `People` inverse, with
+    typeIds 1 and 2), so a boolean could only resolve the reversed pair under the *forward* label —
+    which is the label-level form of falling back to the inverse typeId, the one thing this
+    requirement forbids. A reverse write is therefore inexpressible without naming that direction's
+    labels: the mistake is unrepresentable rather than merely rejected. Raised by Codex review on
+    PR #19; see `docs/probes/association-inverse-probe.md` and `02-05-SUMMARY.md`.
+
+  - Progress: **complete across 02-04 and 02-05.** 02-04 shipped `ObjectRef` and
+    `AssociationPair(from, to)` as validated readonly value objects; the pair's parameter names and
+    order are pinned by a reflection test, no accessor hands both sides back unordered, and every
+    method on `AssociationGatewayContract` takes the pair first — so no API in the package accepts
+    two objects without an order. The unlabelled path goes through `createDefault()` and sends no
     request body at all, so it cannot resolve or send any type id, and a test proves reversing the
-    pair changes the recorded request URI. **Still pending in 02-05:** the labelled write, the
-    resolver seam, the `bidirectional` option, and the guarantee that an unresolvable direction throws
-    rather than falling back to the inverse id. Do not mark complete until that lands.
+    pair changes the recorded request URI. 02-05 shipped `AssociationType`, the
+    `AssociationTypeResolver` seam (in `Gateway`, so Phase 3 can implement it without breaking R2),
+    `UnresolvedAssociationTypeResolver` as the honest default that throws, the labelled writes, and
+    `NeverTheInverseTest` — a resolver that knows only the opposite direction causes a throw and
+    zero requests, never a write. Two-direction writes resolve every direction before issuing any
+    request, so an unresolvable reverse writes nothing and a retry is safe.
 
 - [x] **GW-03**: Typed exception hierarchy, no raw SDK exception to userland
   — `REQ-error-hierarchy` (core spec §9, §13 Phase 1; STANDARDS §9)
