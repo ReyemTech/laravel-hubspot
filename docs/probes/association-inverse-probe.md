@@ -184,12 +184,22 @@ Three findings the probe produced that the design did not ask about, all load-be
    `typeId 1`, yet the forward read returned *both* `typeId 1` (the label) and `typeId 3` (the
    default). Labelling is additive on top of the default association, not a replacement for it.
 
-3. **An association read returns a LIST of `associationTypes` per related record, not one type.**
-   This is a direct constraint on `Hubspot::assertAssociated($deal, $contact, label: 'buyer')` in
-   plan 02-06: the assertion must search that list for the expected directional type, and must
-   still fail when only the *inverse* id is present. Matching "the first type" or "the only type"
-   would pass on run 2's output regardless of which id was written, i.e. for the wrong reason —
-   which would defeat the single most valuable test in the package (design spec §10).
+3. **An association READ returns a LIST of `associationTypes` per related record, not one type** —
+   and after a labelled write that list contains both the label and the default, in an order that
+   is not guaranteed (run 2's inverse read put `USER_DEFINED` first; the forward read put
+   `HUBSPOT_DEFINED` first).
+
+   This constrains the components that parse a **read response**: `associate(..., verify: true)`
+   and `php artisan hubspot:associations:doctor`. Both must search the list for the expected
+   directional id, and neither may take "the first" or "the only" type — on this output that would
+   succeed regardless of which id was written, i.e. for the wrong reason.
+
+   It does **not** constrain `Hubspot::assertAssociated()`, despite the surface similarity. Per
+   `02-06-PLAN.md` Task 2 that assertion parses the recorded *outgoing request* — the path segments
+   for direction, and the decoded request body for the type id — so it never sees a read response
+   at all. The write body is its own list (`[{associationCategory, associationTypeId}]`) and needs
+   its own search, but for a different reason and against a different payload. Conflating the two
+   would send the fake's implementation looking for a field that is not in the payload it reads.
 
 ### What this settles, and what it does not
 

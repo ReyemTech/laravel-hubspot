@@ -145,9 +145,10 @@ None yet.
   2026-07-27** — owner supplied a developer test account Service Key and the probe was run. The
   inverse IS automatic and carries its own distinct typeId (`3 → 4` unlabelled, `1 → 2` labelled),
   so `associate()` is one write and `inverse_type_id` stays read/verification-only. Full results in
-  `docs/probes/association-inverse-probe.md`. Note for 02-06: an association read returns a **list**
-  of `associationTypes`, so `assertAssociated()` must search it for the expected directional id and
-  still fail when only the inverse is present
+  `docs/probes/association-inverse-probe.md`. Note for Phase 3+: an association **read** returns a
+  *list* of `associationTypes` in no guaranteed order, so the read-response parsers
+  (`associate(..., verify: true)`, `hubspot:associations:doctor`) must search it rather than take
+  the first entry. This does NOT apply to `assertAssociated()`, which parses the outgoing request
 
 - **Branch protection configuration (Phase 1).** Owner action; may be limited by plan on a private
   repository. Defining the required checks is executable; switching protection on is not

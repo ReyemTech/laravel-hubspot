@@ -28,10 +28,16 @@ final class ConfigurationException extends LogicException implements HubspotExce
      */
     public static function missingToken(): self
     {
+        // Names Service Keys, matching config/hubspot.php's own comment. HubSpot classifies
+        // Private Apps as legacy, and an error that sends the reader to a different settings page
+        // than the documentation costs them a trip to a deprecated screen before they discover the
+        // mismatch. The legacy path is still acknowledged in one clause, because tokens already in
+        // production keep working and a message implying otherwise would send people to rotate a
+        // credential that is fine.
         return new self(
-            'HUBSPOT_TOKEN is not set. Create a HubSpot Private App access token (HubSpot '
-            .'account settings -> Integrations -> Private Apps) and set HUBSPOT_TOKEN in your '
-            .'.env file before making any Gateway call.',
+            'HUBSPOT_TOKEN is not set. Create a HubSpot Service Key (HubSpot account settings '
+            .'-> Integrations -> Service Keys) and set HUBSPOT_TOKEN in your .env file before '
+            .'making any Gateway call. A legacy Private App token also works.',
         );
     }
 

@@ -78,10 +78,12 @@ REL-02.
     `bidirectional:` parameter defaults to **not** issuing a second write.
 
     Two findings beyond the question, both binding on later phases: a labelled write *also*
-    materialises the unlabelled default association, and an association read returns a **list** of
-    `associationTypes` per related record. The latter constrains `assertAssociated()` in plan 02-06
-    — it must search that list for the expected directional id and still fail when only the inverse
-    is present, or the package's single most valuable test passes for the wrong reason.
+    materialises the unlabelled default association, and an association **read** returns a *list* of
+    `associationTypes` per related record, in no guaranteed order. The latter constrains the
+    read-response parsers — `associate(..., verify: true)` and `hubspot:associations:doctor` — which
+    must search that list rather than taking the first or only entry. It does **not** constrain
+    `assertAssociated()`, which per 02-06-PLAN.md Task 2 parses the recorded *outgoing request*, not
+    a read response.
 
     Raw output and the full results table: `docs/probes/association-inverse-probe.md`.
 

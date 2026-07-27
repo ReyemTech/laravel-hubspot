@@ -67,11 +67,19 @@ cleanup() {
 trap cleanup EXIT
 
 echo "--- Step 1: create a disposable test contact ---"
+# Per-run unique address. Archiving a contact DOES release its email for re-creation -- observed
+# directly on 2026-07-27, where two consecutive runs reused one address successfully -- so this is
+# not what makes the happy path work. It is insurance against the UNhappy path: cleanup() is
+# best-effort by design (it warns and continues rather than failing the run) and does not run at
+# all if the process is killed, and a single surviving live contact would then block every
+# subsequent run with a dedup error that looks nothing like its cause.
+PROBE_EMAIL="found-03-probe-$(date +%s)-$$@example.com"
+echo "  Using ${PROBE_EMAIL}"
 CONTACT_RESPONSE=$(curl --silent --show-error --request POST \
   --url "${HUBSPOT_API_BASE}/crm/v3/objects/contacts" \
   --header "Authorization: Bearer ${HUBSPOT_PROBE_TOKEN}" \
   --header "Content-Type: application/json" \
-  --data '{"properties":{"email":"found-03-probe@example.com","firstname":"FOUND-03","lastname":"Probe"}}')
+  --data "{\"properties\":{\"email\":\"${PROBE_EMAIL}\",\"firstname\":\"FOUND-03\",\"lastname\":\"Probe\"}}")
 CONTACT_ID=$(echo "$CONTACT_RESPONSE" | jq -r '.id // empty')
 [ -n "$CONTACT_ID" ] || fail "Could not create test contact. Response: ${CONTACT_RESPONSE}"
 echo "  Created contact ${CONTACT_ID}"
