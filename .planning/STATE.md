@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: Gateway Layer
 status: executing
-stopped_at: Completed 02-04-PLAN.md (the directed pair and the unlabelled association path)
-last_updated: "2026-07-27T20:02:51.533Z"
+stopped_at: Completed 02-05-PLAN.md
+last_updated: "2026-07-27T21:32:06.614Z"
 last_activity: 2026-07-27
 last_activity_desc: "executed 02-04-PLAN.md (the directed pair and the unlabelled association path): `ObjectRef`, `AssociationPair(from, to)` with its names and order pinned by reflection, the unlabelled `createDefault()` write that sends no body and therefore no type id, dissociate, and a read that emits one row per reported association type. GW-02 is **half** delivered; 02-05 owns the labelled write and the never-the-inverse throw. GW-04 remains **partially** delivered until 02-06."
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State
@@ -32,11 +32,11 @@ request lifecycle.
 ## Current Position
 
 Phase: 2 of 9 (Gateway Layer)
-Plan: 5 of 6 in current phase
+Plan: 6 of 6 in current phase
 Status: Plans 02-01, 02-02 and 02-03 merged (PRs #8, #14, #15). Plan 02-04 (the directed pair and the unlabelled association path) complete on branch `feat/02-04-directed-pair-unlabelled-associations` — PR open, awaiting GitHub checks. 2 plans remain in Phase 2 (02-05, 02-06).
 Last activity: 2026-07-27 — executed 02-04-PLAN.md (the directed pair and the unlabelled association path): `ObjectRef`, `AssociationPair(from, to)` with its names and order pinned by reflection, the unlabelled `createDefault()` write that sends no body and therefore no type id, dissociate, and a read that emits one row per reported association type. GW-02 is **half** delivered; 02-05 owns the labelled write and the never-the-inverse throw. GW-04 remains **partially** delivered until 02-06.
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Progress: [█████████░] 85%
 | Phase 02 P01 | 45min | 3 tasks | 18 files |
 | Phase 02 P02 | 22min | 3 tasks | 13 files |
 | Phase 02 P04 | ~20min | 2 tasks | 19 files |
+| Phase 02 P05 | ~75min | 3 tasks | 19 files |
 
 ## Accumulated Context
 
@@ -136,6 +137,11 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: An association read emits one AssociationRow per reported association TYPE, not per related record — FOUND-03 observed one record carrying both a USER_DEFINED label and the HUBSPOT_DEFINED default in a non-guaranteed order, so "the first type" would pass regardless of which id was written
 - [Phase ?]: ExceptionTranslator gained a shared static unexpectedResponseShape(); ObjectGateway's private helper delegates to it, so the message has one implementation across both gateways (STANDARDS §6b)
 - [Phase ?]: config/hubspot.php transport defaults: 10s timeout, 5s connect timeout, retries enabled -- honest for a queued job, unbounded default explicitly rejected in the inline comment
+- [Phase ?]: The association category is a backed enum, not a validated string: an enum case makes the invalid value unrepresentable past construction, so no consumer downstream re-checks or trusts a string
+- [Phase ?]: Four association categories, not three — the enum's case set is asserted equal to the pinned SDK major's own allow-list at runtime, so narrower cannot reject a valid category and wider cannot leak a raw SDK exception
+- [Phase ?]: The labelled write is its own pair of methods rather than associate($pair, ?string $label = null): a nullable label would make the HTTP route and whether a type id is resolved at all depend on a parameter default
+- [Phase ?]: bidirectional ships as a plain non-nullable bool defaulting to false — FOUND-03's measured answer, pinned by reflection so reverting to ?bool cannot happen quietly
+- [Phase ?]: Bidirectional writes resolve every direction before issuing any request, so an unresolvable reverse direction writes nothing and a caller's retry is safe
 
 ### Pending Todos
 
@@ -195,6 +201,7 @@ None yet.
 
 - Mutation required check (quality.yml) will report red for the remainder of Phase 1: pest --mutate --min=80 over the deliberately-empty src/ triggers PHPUnit's failOnPhpunitWarning path (WARN + exit 1, no score computed), mirroring plan 01's already-flagged coverage-floor gap. Resolves automatically once Phase 2 adds the first mutable file under src/.
 - Git-history attribution defect: commit 022b9e6 (plan 05) accidentally includes three of plan 04's task-2 files (tests/Arch/LayerBoundariesTest.php, SecretLoggingTest.php, StrictTypesTest.php) due to concurrent git staging in a shared (non-worktree) working directory. Content is correct and both plans are green; plan 04 lacks a dedicated GREEN commit for its rule implementations in git log. See 01-05-SUMMARY.md Issues Encountered.
+- Phase 3 blocker found during 02-05: architecture rules R2-R5 forbid a non-Gateway layer from naming ReyemTech\Hubspot\Exceptions, which Phase 3's registry must do to throw AssociationTypeException. Reproduced with a throwaway fixture; logged in 02-gateway-layer/deferred-items.md. Fix is one allow-list entry per rule plus a violation fixture each.
 
 ## Deferred Items
 
@@ -207,6 +214,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-27T20:05:00.000Z
-Stopped at: Completed 02-04-PLAN.md (the directed pair and the unlabelled association path)
+Last session: 2026-07-27T21:31:51.128Z
+Stopped at: Completed 02-05-PLAN.md
 Resume file: None
