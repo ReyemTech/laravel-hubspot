@@ -43,65 +43,92 @@ function governanceCommitlintJob(): array
     return $commitlintJob;
 }
 
-it('grants the commitlint job pull-requests: read so it can enumerate every commit in the PR', function (): void {
-    $job = governanceCommitlintJob();
-
-    $permissions = $job['permissions'] ?? null;
-
-    expect($permissions)->toBeArray('Expected the "commitlint" job to declare its own "permissions".');
-    expect($permissions)->toHaveKey('pull-requests');
-    expect($permissions['pull-requests'])->toBe('read');
-});
-
-it('still lints every commit in the PR, not just the head commit or title', function (): void {
-    $job = governanceCommitlintJob();
-
+/**
+ * @param  array<string, mixed>  $job
+ * @return list<array<string, mixed>>
+ */
+function governanceJobSteps(array $job): array
+{
     $steps = $job['steps'] ?? null;
 
     if (! is_array($steps)) {
         throw new RuntimeException('Expected the "commitlint" job to declare "steps".');
     }
 
-    $checkoutStep = null;
+    $result = [];
 
     foreach ($steps as $step) {
         if (! is_array($step)) {
-            continue;
+            throw new RuntimeException('Expected every step to be an associative array.');
         }
 
-        if (($step['uses'] ?? null) !== null && str_starts_with((string) $step['uses'], 'actions/checkout@')) {
-            $checkoutStep = $step;
-
-            break;
-        }
+        /** @var array<string, mixed> $step */
+        $result[] = $step;
     }
 
-    expect($checkoutStep)->not->toBeNull('Expected the "commitlint" job to check out the repository.');
+    return $result;
+}
 
-    $with = $checkoutStep['with'] ?? null;
-
-    expect($with)->toBeArray();
-    expect($with['fetch-depth'] ?? null)->toBe(0);
-
-    $commitlintStep = null;
-
+/**
+ * @param  list<array<string, mixed>>  $steps
+ * @return array<string, mixed>
+ */
+function governanceFindStepUsing(array $steps, string $actionPrefix, string $context): array
+{
     foreach ($steps as $step) {
-        if (! is_array($step)) {
-            continue;
-        }
+        $uses = $step['uses'] ?? null;
 
-        if (($step['uses'] ?? null) !== null && str_starts_with((string) $step['uses'], 'wagoid/commitlint-github-action@')) {
-            $commitlintStep = $step;
-
-            break;
+        if (is_string($uses) && str_starts_with($uses, $actionPrefix)) {
+            return $step;
         }
     }
 
-    expect($commitlintStep)->not->toBeNull('Expected the "commitlint" job to run wagoid/commitlint-github-action.');
+    throw new RuntimeException("Expected the \"commitlint\" job to declare a step using \"{$actionPrefix}\" ({$context}).");
+}
+
+/**
+ * @param  array<string, mixed>  $step
+ * @return array<string, mixed>
+ */
+function governanceStepWith(array $step): array
+{
+    $with = $step['with'] ?? [];
+
+    if (! is_array($with)) {
+        throw new RuntimeException('Expected the step\'s "with" to be an associative array.');
+    }
+
+    /** @var array<string, mixed> $with */
+    return $with;
+}
+
+it('grants the commitlint job pull-requests: read so it can enumerate every commit in the PR', function (): void {
+    $job = governanceCommitlintJob();
+
+    $permissions = $job['permissions'] ?? null;
+
+    if (! is_array($permissions)) {
+        throw new RuntimeException('Expected the "commitlint" job to declare its own "permissions".');
+    }
+
+    expect($permissions)->toHaveKey('pull-requests');
+    expect($permissions['pull-requests'])->toBe('read');
+});
+
+it('still lints every commit in the PR, not just the head commit or title', function (): void {
+    $steps = governanceJobSteps(governanceCommitlintJob());
+
+    $checkoutWith = governanceStepWith(
+        governanceFindStepUsing($steps, 'actions/checkout@', 'checking out the repository')
+    );
+
+    expect($checkoutWith['fetch-depth'] ?? null)->toBe(0);
 
     // commit-depth deliberately unset (D-25, D-26): omitting it means the
     // action lints every commit reachable from the PR head, not just one.
-    $with = $commitlintStep['with'] ?? [];
+    $commitlintWith = governanceStepWith(
+        governanceFindStepUsing($steps, 'wagoid/commitlint-github-action@', 'running commitlint')
+    );
 
-    expect($with)->not->toHaveKey('commit-depth');
+    expect($commitlintWith)->not->toHaveKey('commit-depth');
 });

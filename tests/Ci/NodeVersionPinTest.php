@@ -17,9 +17,9 @@ use Symfony\Component\Yaml\Yaml;
  * Vitest, and (per docs.yml) Astro's floor of >=22.12.0, so every
  * Node-consuming job is locked to Node >=22 here.
  *
- * @return array<string, mixed>
+ * @return list<array<string, mixed>>
  */
-function nodeSetupStepWithForWorkflowJob(string $workflowFile, string $jobId): array
+function nodeWorkflowJobSteps(string $workflowFile, string $jobId): array
 {
     $workflowPath = dirname(__DIR__, 2)."/.github/workflows/{$workflowFile}";
 
@@ -49,38 +49,75 @@ function nodeSetupStepWithForWorkflowJob(string $workflowFile, string $jobId): a
         throw new RuntimeException("Expected the \"{$jobId}\" job to declare \"steps\".");
     }
 
+    $result = [];
+
     foreach ($steps as $step) {
         if (! is_array($step)) {
+            throw new RuntimeException("Expected every step in the \"{$jobId}\" job to be an associative array.");
+        }
+
+        /** @var array<string, mixed> $step */
+        $result[] = $step;
+    }
+
+    return $result;
+}
+
+/**
+ * @param  array<string, mixed>  $step
+ */
+function nodeStepUsesSetupNode(array $step): bool
+{
+    $uses = $step['uses'] ?? null;
+
+    return is_string($uses) && str_starts_with($uses, 'actions/setup-node@');
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function nodeSetupStepWithForWorkflowJob(string $workflowFile, string $jobId): array
+{
+    foreach (nodeWorkflowJobSteps($workflowFile, $jobId) as $step) {
+        if (! nodeStepUsesSetupNode($step)) {
             continue;
         }
 
-        if (($step['uses'] ?? null) !== null && str_starts_with((string) $step['uses'], 'actions/setup-node@')) {
-            $with = $step['with'] ?? null;
+        $with = $step['with'] ?? null;
 
-            if (! is_array($with)) {
-                throw new RuntimeException("Expected the \"{$jobId}\" job's setup-node step to declare \"with\".");
-            }
-
-            /** @var array<string, mixed> $with */
-            return $with;
+        if (! is_array($with)) {
+            throw new RuntimeException("Expected the \"{$jobId}\" job's setup-node step to declare \"with\".");
         }
+
+        /** @var array<string, mixed> $with */
+        return $with;
     }
 
     throw new RuntimeException("Expected the \"{$jobId}\" job to declare an actions/setup-node step.");
 }
 
+/**
+ * @param  array<string, mixed>  $with
+ */
+function nodeVersionMajor(array $with): int
+{
+    $nodeVersion = $with['node-version'] ?? null;
+
+    if (! is_string($nodeVersion) && ! is_int($nodeVersion)) {
+        throw new RuntimeException('Expected "node-version" to be a string or int.');
+    }
+
+    return (int) $nodeVersion;
+}
+
 it('pins js.yml\'s coverage job to Node >=22, satisfying pnpm 11.17\'s own >=22.13 engines floor', function (): void {
     $with = nodeSetupStepWithForWorkflowJob('js.yml', 'coverage');
 
-    $nodeVersion = (string) ($with['node-version'] ?? '');
-
-    expect((int) $nodeVersion)->toBeGreaterThanOrEqual(22);
+    expect(nodeVersionMajor($with))->toBeGreaterThanOrEqual(22);
 });
 
 it('keeps docs.yml\'s build job pinned to Node >=22, matching Astro\'s >=22.12.0 floor', function (): void {
     $with = nodeSetupStepWithForWorkflowJob('docs.yml', 'build');
 
-    $nodeVersion = (string) ($with['node-version'] ?? '');
-
-    expect((int) $nodeVersion)->toBeGreaterThanOrEqual(22);
+    expect(nodeVersionMajor($with))->toBeGreaterThanOrEqual(22);
 });
