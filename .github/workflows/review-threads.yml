@@ -43,7 +43,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check this PR's resolved review threads for a human reply
         run: bash scripts/ci/check-review-threads.sh
       - name: Prove the violation rule fires
