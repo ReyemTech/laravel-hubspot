@@ -220,4 +220,48 @@ final class ExceptionTranslationTest extends TestCase
         self::assertNull($result->correlationId());
         self::assertSame('raw body', $result->body());
     }
+
+    /**
+     * `Throwable::getCode()` is not actually guaranteed to return `int` -- the interface itself
+     * declares no return type, `Exception::getCode()` is `final` (confirmed via
+     * `ReflectionMethod::isFinal()`), yet a real Throwable can still surface a non-int code: PHP
+     * internals construct `PDOException` with the SQLSTATE written directly into the protected
+     * `$code` property, bypassing the typed constructor entirely. Reproduced here the same way,
+     * via `ReflectionProperty`, rather than trusting that every Throwable's code is always an
+     * int -- the `(int)` cast on the "unrecognised namespace" path exists precisely so a
+     * non-int code degrades to a safe int status instead of a `TypeError` when it later reaches
+     * `ApiException::httpError()`'s strictly-typed `int $status` parameter.
+     */
+    public function test_an_unrecognised_throwable_with_a_non_int_code_degrades_to_a_safe_int_status(): void
+    {
+        $exception = new \RuntimeException('some unrelated failure');
+
+        $codeProperty = new \ReflectionProperty(\RuntimeException::class, 'code');
+        $codeProperty->setAccessible(true);
+        $codeProperty->setValue($exception, 'not-an-int');
+
+        $translator = new ExceptionTranslator;
+        $result = $translator->translate($exception);
+
+        self::assertSame(0, $result->status());
+    }
+
+    /**
+     * The recognised-namespace path's own `(int)` cast (`translateRecognised()`) guards the same
+     * theoretical non-int-code case, independently of the unrecognised-namespace path above --
+     * both casts are separate lines and either could be dropped without the other catching it.
+     */
+    public function test_a_recognised_sdk_exception_with_a_non_int_code_degrades_to_a_safe_int_status(): void
+    {
+        $sdkException = new SdkObjectsApiException('boom', 502, [], 'raw body');
+
+        $codeProperty = new \ReflectionProperty(SdkObjectsApiException::class, 'code');
+        $codeProperty->setAccessible(true);
+        $codeProperty->setValue($sdkException, 'not-an-int');
+
+        $translator = new ExceptionTranslator;
+        $result = $translator->translate($sdkException);
+
+        self::assertSame(0, $result->status());
+    }
 }

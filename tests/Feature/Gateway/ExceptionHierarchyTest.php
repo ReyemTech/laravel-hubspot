@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Gateway;
 
 use Composer\Autoload\ClassLoader;
+use HubSpot\Client\Crm\Associations\V4\Model\Error;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
@@ -135,45 +136,65 @@ final class ExceptionHierarchyTest extends TestCase
     {
         $exception = ConfigurationException::missingToken();
 
-        self::assertStringContainsString('HUBSPOT_TOKEN', $exception->getMessage());
-        self::assertStringContainsString('Private App', $exception->getMessage());
+        // Exact text, not merely a substring -- the message is built from three concatenated
+        // fragments, and a substring check alone would not notice the fragments being reordered
+        // or dropped (a common surviving-mutant shape for concatenated named-constructor
+        // messages, per this plan's own <verification> guidance).
+        self::assertSame(
+            'HUBSPOT_TOKEN is not set. Create a HubSpot Private App access token (HubSpot '
+            .'account settings -> Integrations -> Private Apps) and set HUBSPOT_TOKEN in your '
+            .'.env file before making any Gateway call.',
+            $exception->getMessage(),
+        );
     }
 
     public function test_configuration_exception_unknown_store_names_the_valid_store_values(): void
     {
         $exception = ConfigurationException::unknownStore('redis', ['cache', 'database']);
 
-        self::assertStringContainsString('redis', $exception->getMessage());
-        self::assertStringContainsString('cache', $exception->getMessage());
-        self::assertStringContainsString('database', $exception->getMessage());
-        self::assertStringContainsString('HUBSPOT_STORE', $exception->getMessage());
+        self::assertSame(
+            'HUBSPOT_STORE is set to "redis", which is not a supported store. Set it to one of: cache, database.',
+            $exception->getMessage(),
+        );
     }
 
     public function test_object_type_exception_unmappable_names_the_offending_type_and_the_fix(): void
     {
         $exception = ObjectTypeException::unmappable('p_widgetz');
 
-        self::assertStringContainsString('p_widgetz', $exception->getMessage());
-        self::assertStringContainsString('contacts', $exception->getMessage());
+        self::assertSame(
+            'Object type "p_widgetz" has no known mapping. Confirm the spelling matches a '
+            .'HubSpot object type (for example "contacts" or "deals") or your custom object\'s '
+            .'fully-qualified type (for example "p12345_my_object"), then map the local model '
+            .'that should sync to it before retrying.',
+            $exception->getMessage(),
+        );
     }
 
     public function test_association_type_exception_direction_not_resolvable_states_the_failed_direction_only(): void
     {
         $exception = AssociationTypeException::directionNotResolvable('contacts', 'companies');
 
-        self::assertStringContainsString('contacts -> companies', $exception->getMessage());
-        // Names the inverse only to say it is never substituted -- proves the message does not
-        // read as though 'companies -> contacts' were itself a usable fallback.
-        self::assertStringContainsString('companies -> contacts', $exception->getMessage());
-        self::assertStringContainsString('never substituted', $exception->getMessage());
+        self::assertSame(
+            'No association type is registered for the direction contacts -> companies. Register '
+            .'this direction -- the inverse companies -> contacts is a different, unrelated '
+            .'typeId and is never substituted automatically -- before associating these object '
+            .'types.',
+            $exception->getMessage(),
+        );
     }
 
     public function test_association_type_exception_direction_not_resolvable_names_the_label_when_given(): void
     {
         $exception = AssociationTypeException::directionNotResolvable('contacts', 'companies', 'buyer');
 
-        self::assertStringContainsString('contacts -> companies', $exception->getMessage());
-        self::assertStringContainsString('buyer', $exception->getMessage());
+        self::assertSame(
+            'No association type is registered for the direction contacts -> companies labelled '
+            .'"buyer". Register this direction -- the inverse companies -> contacts is a '
+            .'different, unrelated typeId and is never substituted automatically -- before '
+            .'associating these object types.',
+            $exception->getMessage(),
+        );
     }
 
     public function test_a_canned_associations_v4_error_translates_to_the_package_api_exception(): void
@@ -197,5 +218,29 @@ final class ExceptionHierarchyTest extends TestCase
         self::assertSame(404, $result->status());
         self::assertSame('raw associations body', $result->body());
         self::assertSame($sdkException, $result->getPrevious());
+    }
+
+    public function test_a_canned_associations_v4_error_with_a_deserialised_response_object_preserves_its_correlation_id(): void
+    {
+        // Distinguishes this from the test above -- that one leaves getResponseObject() at its
+        // default null (never calling setResponseObject()), so the Objects-shaped and
+        // Associations\V4-shaped `instanceof` branches in ExceptionTranslator::translate() are
+        // equally untested past the null case. This exercises the v4 Model\Error branch for
+        // real, the same way tests/Feature/Gateway/ExceptionTranslationTest.php already does for
+        // the Objects namespace.
+        $sdkException = new \HubSpot\Client\Crm\Associations\V4\ApiException(
+            'association not found',
+            404,
+            [],
+            'raw associations body',
+        );
+        $sdkException->setResponseObject(new Error([
+            'correlation_id' => 'corr-assoc-404',
+        ]));
+
+        $translator = new ExceptionTranslator;
+        $result = $translator->translate($sdkException);
+
+        self::assertSame('corr-assoc-404', $result->correlationId());
     }
 }
