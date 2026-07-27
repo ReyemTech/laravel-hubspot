@@ -5,6 +5,11 @@
 composer.lock
 .DS_Store
 
+# Agent tooling scratch. `.claude/` reached `main` once via a careless `git add -A`; ignoring it
+# means a repeat is not possible rather than merely unlikely. Nothing in here is part of the
+# package, and `.planning/` is deliberately NOT ignored -- the planning corpus is committed.
+/.claude/
+
 # JavaScript (resources/js/, site/) -- pnpm-lock.yaml IS committed; this is application-shaped
 # JS, not a published library, so --frozen-lockfile in CI depends on the lockfile existing.
 node_modules/
