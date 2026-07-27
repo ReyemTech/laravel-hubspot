@@ -474,21 +474,56 @@ final class AssociationGatewayTest extends TestCase
 
     /**
      * Rule 2 again, this time as a shape assertion rather than a payload one: there is no way to
-     * hand a type id to the unlabelled path, because no method on this contract accepts one. The
-     * labelled path is a different method, arriving in plan 02-05.
+     * hand a type id to any method on this contract, and no way to hand a LABEL to the unlabelled
+     * ones.
+     *
+     * **Narrowed in plan 02-05, deliberately and only as far as necessary.** This test previously
+     * forbade `label` on every method, which was correct while the contract was unlabelled-only; the
+     * labelled path landed as its own pair of methods (`associateWithLabel`,
+     * `associateWithLabels`), so `label` is now permitted on exactly those two and still forbidden
+     * everywhere else. `typeId`, `category` and `spec` remain forbidden on every method without
+     * exception — a type id reaches this package only from a resolver that was asked about a stated
+     * direction, never from a caller, who has no way to know whether they are holding 279 or 280.
+     *
+     * `associate()` in particular must never grow a label parameter. It calls `createDefault()`,
+     * which sends no body at all, so a label there could only be silently ignored — a caller
+     * believing they had written a labelled association when they had written the default one.
      */
-    public function test_no_contract_method_accepts_a_type_id(): void
+    public function test_no_contract_method_accepts_a_type_id_and_only_the_labelled_writes_accept_a_label(): void
     {
+        $mayAcceptALabel = ['associateWithLabel', 'associateWithLabels'];
+
+        $sawALabelledMethod = false;
+
         foreach ((new ReflectionClass(AssociationGatewayContract::class))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+            $labelIsAllowed = in_array($method->getName(), $mayAcceptALabel, true);
+            $sawALabelledMethod = $sawALabelledMethod || $labelIsAllowed;
+
             foreach ($method->getParameters() as $parameter) {
                 self::assertDoesNotMatchRegularExpression(
-                    '/type_?id|label|category/i',
+                    '/type_?id|category|spec/i',
+                    $parameter->getName(),
+                    "AssociationGatewayContract::{$method->getName()}() accepts \${$parameter->getName()}. A type id "
+                    .'reaches this package only from a resolver asked about a stated direction.',
+                );
+
+                if ($labelIsAllowed) {
+                    continue;
+                }
+
+                self::assertDoesNotMatchRegularExpression(
+                    '/label/i',
                     $parameter->getName(),
                     "AssociationGatewayContract::{$method->getName()}() accepts \${$parameter->getName()}. The "
-                    .'unlabelled path resolves and sends no type id at all, which is precisely why it cannot send '
-                    .'the inverse one.',
+                    .'unlabelled path sends no body at all, so a label there could only be silently ignored.',
                 );
             }
         }
+
+        self::assertTrue(
+            $sawALabelledMethod,
+            'The allow-list names no method that exists, so this test is vacuous — the labelled methods were '
+            .'renamed and the label prohibition now applies to nothing.',
+        );
     }
 }
