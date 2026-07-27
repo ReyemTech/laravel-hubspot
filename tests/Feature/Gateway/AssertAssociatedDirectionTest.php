@@ -372,6 +372,37 @@ final class AssertAssociatedDirectionTest extends TestCase
     }
 
     /**
+     * **A read is not an association write, and the failure message must not offer one as evidence.**
+     *
+     * Association reads and object reads are both GETs, and the association read's path differs from the
+     * labelled write's only by the absence of the to-side id — so a classification that looked at the path
+     * alone would list a read among the "association writes recorded" and send the reader to a request
+     * that changed nothing. Asserted through the exact message, since the whole point is what the list
+     * does NOT contain.
+     */
+    public function test_a_read_never_appears_among_the_association_writes_a_failure_reports(): void
+    {
+        Hubspot::fake();
+        self::bindResolverKnowingBothDirections('notes', 'contacts', 'Attached note', 202, 201);
+
+        Hubspot::objects()->find('deals', '7');
+        Hubspot::associations()->associate(self::pair('notes', 'contacts'));
+        Hubspot::associations()->read(self::pair('notes', 'contacts'));
+
+        Hubspot::assertRequestCount(3);
+
+        self::assertSame(
+            'Expected HubSpot to have associated notes:10 -> contacts:20 '
+            ."under label 'Attached note', which the bound resolver resolves to association type id 202 for that direction, "
+            .'but no such write was recorded. Association writes recorded: '
+            .'PUT /crm/v4/objects/notes/10/associations/default/contacts/20.',
+            FailedAssertion::messageOf(
+                static fn () => Hubspot::assertAssociated(self::pair('notes', 'contacts'), label: 'Attached note'),
+            ),
+        );
+    }
+
+    /**
      * An unresolvable direction propagates the resolver's own throw. The reader learns that the registry
      * has no row for this direction — with the container key that would fix it — rather than being told
      * the association is missing, which would be true of the assertion and false of the package.

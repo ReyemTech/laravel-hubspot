@@ -85,6 +85,28 @@ final class HubspotFakeTest extends TestCase
     }
 
     /**
+     * A batch write submits several records in **one** request, and a property assertion has to be able
+     * to find its record in any of them. An implementation that read only the top-level `properties`
+     * key — the shape a single create sends — would report every batch-written property as absent, which
+     * is the assertion failing for precisely the request shape STANDARDS §11 requires the package to use.
+     */
+    public function test_assert_synced_finds_a_property_in_any_record_of_a_batch_write(): void
+    {
+        Hubspot::fake();
+
+        Hubspot::objects()->createMany('deals', [['dealname' => 'One'], ['dealname' => 'Two']]);
+
+        Hubspot::assertSynced('deals', ['dealname' => 'One']);
+        Hubspot::assertSynced('deals', ['dealname' => 'Two']);
+
+        self::assertSame(
+            "Expected HubSpot to have synced object type 'deals' with property 'dealname' => \"Three\" (string), "
+            .'but the value(s) recorded for it were: "One" (string), "Two" (string).',
+            FailedAssertion::messageOf(static fn () => Hubspot::assertSynced('deals', ['dealname' => 'Three'])),
+        );
+    }
+
+    /**
      * The object type is matched on a path BOUNDARY, not as a prefix: a write to `deals` must not
      * satisfy an assertion about `deal`, and a write to `line_items` must not satisfy one about `line`.
      * A prefix match here would make the assertion pass for a record of a type nobody wrote.
@@ -298,8 +320,15 @@ final class HubspotFakeTest extends TestCase
         );
 
         // And an archive of `deals` IS a sync of `deals` for the purposes of assertSynced: the record
-        // was written to. Asserting a property against it finds none, which is the honest answer.
+        // was written to. Asserting a property against it finds none, which is the honest answer — a
+        // write with no body at all reports "not written" rather than raising on the absent payload.
         Hubspot::assertSynced('deals');
+
+        self::assertSame(
+            "Expected HubSpot to have synced object type 'deals' with property 'dealname' => \"Acme\" (string), "
+            .'but the value(s) recorded for it were: not written.',
+            FailedAssertion::messageOf(static fn () => Hubspot::assertSynced('deals', ['dealname' => 'Acme'])),
+        );
     }
 
     /**

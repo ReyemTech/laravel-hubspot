@@ -158,8 +158,11 @@ final readonly class RecordedRequest
      * an ordinary answer here rather than a failure: an unlabelled association genuinely has no type id
      * to report, and that is the strongest available form of "it cannot have sent the inverse one".
      *
-     * Harmless on any other request: an object write's body is a JSON *object*, and `array_column`
-     * finds no such key in it.
+     * **Only meaningful for an association write, and the callers check that first.** The spec list is
+     * read by array access rather than with `array_column`, which is not a stylistic choice: the
+     * associative flag on `json_decode` is what makes the elements arrays at all, and `array_column`
+     * happens to accept objects too — so a mutation of that flag produced identical output and survived,
+     * leaving the decode shape pinned by nothing. Array access makes the flag load-bearing.
      *
      * @return list<int>
      */
@@ -172,29 +175,40 @@ final readonly class RecordedRequest
             return [];
         }
 
-        return array_column($specs, 'associationTypeId');
+        $typeIds = [];
+
+        foreach ($specs as $spec) {
+            $typeIds[] = $spec['associationTypeId'];
+        }
+
+        return $typeIds;
     }
 
     /**
      * Whether this request associated `$pair`'s stated direction — and, when `$typeId` is given, whether
      * it carried that exact association type id.
      *
-     * The three conditions are separate returns rather than one `&&` chain, so that each of them is
+     * The conditions are separate returns rather than one `&&` chain, so that each of them is
      * independently killable by a mutation: a chain collapses into a single expression whose operators can
      * be rewritten into an equivalent, and on this seam an equivalent mutant is a hole in the one
      * assertion the design spec calls the most valuable in the package.
      *
      * `$typeId === null` asks about HubSpot's **default** association, which is a different relationship
      * from a labelled one rather than a laxer version of it — hence the route check rather than "no id
-     * required". A DELETE satisfies neither branch: it archives an association, so it carries no id and
-     * never takes the `default` route.
+     * required".
+     *
+     * **There is deliberately no `isWrite()` guard here, and the reason is worth stating rather than
+     * rediscovering.** Each of the two terminal branches is satisfiable only by its own write route: the
+     * `default` segment appears on no other route the SDK calls, and an association type id appears in no
+     * other request body. So a read cannot satisfy either branch — an association read's path carries no
+     * to-side id and cannot match the anchored direction pattern at all — and neither can the DELETE that
+     * archives an association, which is on the labelled path shape with no body. A guard for those cases
+     * would be a line no test could distinguish from its own absence, which is how a mutation score stops
+     * meaning anything. What proves it instead is a test:
+     * `AssertAssociatedDirectionTest::test_a_dissociate_never_satisfies_assert_associated`.
      */
     public function associated(AssociationPair $pair, ?int $typeId): bool
     {
-        if (! $this->isAssociationWrite()) {
-            return false;
-        }
-
         if (! $this->matchesDirection($pair)) {
             return false;
         }

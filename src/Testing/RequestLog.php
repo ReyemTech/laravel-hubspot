@@ -51,7 +51,14 @@ final readonly class RequestLog
     private const NOTHING_RECORDED = 'No request was recorded at all.';
 
     /**
-     * @param  list<RecordedRequest>  $requests
+     * Keys are not renumbered anywhere in this class, so every collection here is `array<int, ...>`
+     * rather than `list<...>`. Nothing reads a position: the assertions ask whether a filtered set is
+     * empty and the messages implode its values. An `array_values()` call to satisfy a narrower docblock
+     * would be a line no test could distinguish from its own absence — five of them survived the mutation
+     * run that first flagged this, and a surviving mutant on a line that exists only to please the type
+     * checker is a line to delete rather than a test to write.
+     *
+     * @param  array<int, RecordedRequest>  $requests
      */
     private function __construct(
         private array $requests,
@@ -72,7 +79,7 @@ final readonly class RequestLog
         return new self(
             array_map(
                 static fn (array $entry): RecordedRequest => RecordedRequest::fromPsr($entry['request']),
-                array_values($history),
+                $history,
             ),
             $typeResolver,
         );
@@ -110,10 +117,10 @@ final readonly class RequestLog
      */
     public function assertSynced(string $objectType, array $properties = []): void
     {
-        $writes = array_values(array_filter(
+        $writes = array_filter(
             $this->requests,
             static fn (RecordedRequest $request): bool => $request->isObjectWriteOf($objectType),
-        ));
+        );
 
         PHPUnitAssert::assertNotSame(
             [],
@@ -198,10 +205,10 @@ final readonly class RequestLog
 
         PHPUnitAssert::assertNotSame(
             [],
-            array_values(array_filter(
+            array_filter(
                 $this->requests,
                 static fn (RecordedRequest $request): bool => $request->associated($pair, $expectedTypeId),
-            )),
+            ),
             sprintf(
                 'Expected HubSpot to have associated %s:%s -> %s:%s %s, but no such write was recorded. %s',
                 $pair->from->objectType,
@@ -234,10 +241,10 @@ final readonly class RequestLog
 
     private function associationSummary(): string
     {
-        $associationWrites = array_values(array_filter(
+        $associationWrites = array_filter(
             $this->requests,
             static fn (RecordedRequest $request): bool => $request->isAssociationWrite(),
-        ));
+        );
 
         if ($associationWrites === []) {
             return 'No association write was recorded at all.';
@@ -247,7 +254,7 @@ final readonly class RequestLog
     }
 
     /**
-     * @param  list<RecordedRequest>  $writes
+     * @param  array<int, RecordedRequest>  $writes
      * @return list<mixed>
      */
     private function valuesRecordedFor(array $writes, string $name): array
@@ -268,14 +275,14 @@ final readonly class RequestLog
     }
 
     /**
-     * @return list<RecordedRequest>
+     * @return array<int, RecordedRequest>
      */
     private function writes(): array
     {
-        return array_values(array_filter(
+        return array_filter(
             $this->requests,
             static fn (RecordedRequest $request): bool => $request->isWrite(),
-        ));
+        );
     }
 
     /**
@@ -308,7 +315,7 @@ final readonly class RequestLog
     }
 
     /**
-     * @param  list<RecordedRequest>  $requests
+     * @param  array<int, RecordedRequest>  $requests
      */
     private static function describeAll(array $requests): string
     {
