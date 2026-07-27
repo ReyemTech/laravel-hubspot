@@ -1,0 +1,31 @@
+name: release-please
+
+# Push-to-main only, deliberately: this workflow cuts the tag and opens/updates the release PR
+# from Conventional Commits on `main` (release-type: simple, version.txt as the version source —
+# see release-please-config.json). It has no pull_request trigger and is therefore excluded from
+# tests/Ci/RequiredChecksTest.php's required-checks comparison via an explicit allowlist, not a
+# name-pattern guess.
+#
+# It cuts the tag and the GitHub release. It does NOT publish anywhere else. D-28/D-47: a
+# separate, owner-gated registry integration (see docs/repo/owner-gated-checklist.md) is what
+# turns a tag into an installable version, and that integration is impossible while this
+# repository is private. Without it, tags land here and the public registry never notices -- the
+# package looks abandoned while `main` is green. Do not add a publish step, a registry API call,
+# or a webhook call to this file.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: release-please (cuts tags, opens the release PR -- never publishes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
