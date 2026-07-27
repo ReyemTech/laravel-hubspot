@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 1
 current_phase_name: Foundation & Gates
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-07-27T01:18:20.779Z"
+stopped_at: Completed 01-06-PLAN.md
+last_updated: "2026-07-27T01:38:59.250Z"
 last_activity: 2026-07-26
 last_activity_desc: roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 7
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -32,11 +32,11 @@ request lifecycle.
 ## Current Position
 
 Phase: 1 of 9 (Foundation & Gates)
-Plan: 5 of 7 in current phase
+Plan: 6 of 7 in current phase
 Status: Ready to execute
 Last activity: 2026-07-26 — roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
 
-Progress: [███████░░░] 71%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [███████░░░] 71%
 | Phase 01 P04 | 29min | 3 tasks | 23 files |
 | Phase 01 P05 | 40min | 3 tasks | 9 files |
 | Phase 01 P03 | 20min | 2 tasks | 7 files |
+| Phase 01-foundation-gates P06 | ~35min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: pnpm installed locally via npm --prefix (corepack shim crashed on this machine's Node 22.22.1 + corepack 0.24.0); CI uses pnpm/action-setup@v4 and is unaffected
 - [Phase ?]: JS coverage floor (95%, Vitest) scoped to resources/js/ workspace only, proven to reject a build at 23.07% coverage before being wired as a required CI check (js.yml)
 - [Phase ?]: CI Node major pinned to 20, read from installed vitest 4.1.10's own engines field (^20.0.0 || ^22.0.0 || >=24.0.0), not copied from the stint reference
+- [Phase ?]: pnpm-workspace.yaml gained allowBuilds: esbuild: true (pnpm 11's only mechanism to approve astro's transitive esbuild postinstall) — packages: list untouched
+- [Phase ?]: js.yml install re-scoped to --filter './resources/js...' since astro's engines.node >=22.12.0 would otherwise break that job's Node 20 pin once site/ became real
+- [Phase ?]: docs.yml pinned to Node 22 (astro's own engines floor), decoupled from js.yml's Node 20 via filtered installs on both sides
 
 ### Pending Todos
 
@@ -182,6 +186,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-27T01:18:20.757Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-07-27T01:38:59.228Z
+Stopped at: Completed 01-06-PLAN.md
 Resume file: None
