@@ -382,4 +382,282 @@ final class LabelledAssociationTest extends TestCase
             'associateWithLabels' => ['associateWithLabels'],
         ];
     }
+
+    /**
+     * **The `bidirectional` default is measured, and its TYPE records that.**
+     *
+     * This parameter spent most of the design as an open question: design spec §6.4 said HubSpot's
+     * docs do not state whether writing one direction makes the other readable, and the plan for this
+     * work originally specified a nullable boolean defaulting to `null` precisely so that the package
+     * would not ship a guess. FOUND-03's probe ran on 2026-07-27 against a developer test account and
+     * answered it — HubSpot maintains the inverse itself, with its own distinct type id — so the
+     * default is now `false`, as a plain non-nullable `bool`.
+     *
+     * A `?bool` here would be a claim that the question is still open, which would be false as of
+     * 2026-07-27. This test exists so that reverting to one cannot happen quietly: it is asserting a
+     * recorded measurement, not a coding style.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function associateMethodProvider(): array
+    {
+        return [
+            'associate' => ['associate'],
+            'associateWithLabel' => ['associateWithLabel'],
+            'associateWithLabels' => ['associateWithLabels'],
+        ];
+    }
+
+    #[DataProvider('associateMethodProvider')]
+    public function test_bidirectional_is_a_non_nullable_bool_defaulting_to_false_on_every_write(string $method): void
+    {
+        $parameters = (new ReflectionMethod(AssociationGatewayContract::class, $method))->getParameters();
+
+        $bidirectional = null;
+
+        foreach ($parameters as $parameter) {
+            if ($parameter->getName() === 'bidirectional') {
+                $bidirectional = $parameter;
+            }
+        }
+
+        self::assertNotNull(
+            $bidirectional,
+            "AssociationGatewayContract::{$method}() has no \$bidirectional parameter. It ships as a parameter even "
+            .'though FOUND-03 measured the default as false, because adding one to an interface method later is a '
+            .'breaking change for implementers, and interfaces are this package\'s documented extension point.',
+        );
+
+        $type = $bidirectional->getType();
+
+        self::assertInstanceOf(ReflectionNamedType::class, $type);
+        self::assertSame('bool', $type->getName());
+        self::assertFalse(
+            $type->allowsNull(),
+            'A nullable bidirectional would state that the §6.4 question is still open. It was answered on '
+            .'2026-07-27 — see docs/probes/association-inverse-probe.md.',
+        );
+
+        self::assertTrue($bidirectional->isDefaultValueAvailable());
+        self::assertFalse(
+            $bidirectional->getDefaultValue(),
+            'The default is false because HubSpot was OBSERVED to maintain the inverse direction itself, so a second '
+            .'write is redundant. Not because one write is cheaper.',
+        );
+    }
+
+    /**
+     * **Two independently resolved directed writes**, which is the only shape this parameter is
+     * allowed to have. The proof is that the two requests carry *different* type ids: 202 for
+     * Note -> Contact and 201 for Contact -> Note. A single resolution reused for both directions
+     * could only produce one id, and an implementation that derived the second from the first would
+     * have to know something about the inverse — which nothing in this package does, deliberately
+     * (02-CONTEXT.md rule 4: the inverse is stored, never assumed).
+     */
+    public function test_requesting_both_directions_resolves_twice_and_writes_each_directions_own_id(): void
+    {
+        $fake = Hubspot::fake();
+
+        app()->instance(
+            AssociationTypeResolver::class,
+            DirectedMapResolver::knowing('notes', 'contacts', 'Attached note', 202)
+                ->alsoKnowing('contacts', 'notes', 'Attached note', 201),
+        );
+
+        Hubspot::associations()->associateWithLabel(
+            self::notePair(),
+            label: 'Attached note',
+            bidirectional: true,
+        );
+
+        Hubspot::assertRequestCount(2);
+
+        $requests = $fake->recordedRequests();
+
+        self::assertSame(
+            [
+                '/crm/v4/objects/notes/10/associations/contacts/20',
+                '/crm/v4/objects/contacts/20/associations/notes/10',
+            ],
+            array_map(
+                static fn (array $entry): string => $entry['request']->getUri()->getPath(),
+                $requests,
+            ),
+            'The two writes must address two different directions, so their recorded URIs differ.',
+        );
+
+        /** @var list<array{associationCategory: string, associationTypeId: int}> $forward */
+        $forward = json_decode((string) $requests[0]['request']->getBody(), true);
+        /** @var list<array{associationCategory: string, associationTypeId: int}> $reverse */
+        $reverse = json_decode((string) $requests[1]['request']->getBody(), true);
+
+        self::assertSame(202, $forward[0]['associationTypeId']);
+        self::assertSame(201, $reverse[0]['associationTypeId']);
+        self::assertNotSame(
+            $forward[0]['associationTypeId'],
+            $reverse[0]['associationTypeId'],
+            'Two directions, two independently resolved ids. If these matched, the second write reused the first '
+            .'direction\'s id — which is the inverse-fallback bug wearing a different hat.',
+        );
+    }
+
+    /**
+     * The failure mode that makes the fail-before-writing ordering worth having. The forward
+     * direction resolves perfectly; the reverse does not. The call throws naming the direction that
+     * failed, and — because every direction resolves before the first request is built — **neither**
+     * write happens.
+     *
+     * Writing the forward direction and then throwing would be defensible on the grounds that HubSpot
+     * has no transaction, and it is still the wrong answer: the caller asked for both directions, got
+     * an exception, and has no way to know that half of it landed. A retry would then double-write the
+     * forward direction. Failing before anything leaves the process makes the retry safe.
+     */
+    public function test_an_unresolvable_reverse_direction_throws_naming_it_and_writes_neither_direction(): void
+    {
+        $fake = Hubspot::fake();
+
+        // Knows the forward direction only. Contact -> Note is deliberately absent.
+        self::bindResolverKnowingNoteToContact();
+
+        try {
+            Hubspot::associations()->associateWithLabel(
+                self::notePair(),
+                label: 'Attached note',
+                bidirectional: true,
+            );
+            self::fail('Expected an unresolvable reverse direction to throw rather than reuse the forward id.');
+        } catch (AssociationTypeException $exception) {
+            self::assertStringContainsString(
+                'contacts -> notes',
+                $exception->getMessage(),
+                'The message must name the REVERSE direction, which is the one that failed.',
+            );
+            self::assertStringContainsString('Attached note', $exception->getMessage());
+        }
+
+        Hubspot::assertRequestCount(0);
+        self::assertSame(
+            [],
+            $fake->recordedRequests(),
+            'The forward write must not land either: a caller who gets an exception has no way to learn that half '
+            .'of their request succeeded, and their retry would double-write it.',
+        );
+    }
+
+    /**
+     * The reverse direction never inherits the forward direction's id, stated as an absence over the
+     * whole outgoing traffic. Registered here with the forward direction resolvable and the reverse
+     * not, so 202 is sitting in the resolver's map when the reverse lookup misses.
+     */
+    public function test_the_reverse_write_never_borrows_the_forward_directions_type_id(): void
+    {
+        $fake = Hubspot::fake();
+        self::bindResolverKnowingNoteToContact();
+
+        try {
+            Hubspot::associations()->associateWithLabel(
+                self::notePair(),
+                label: 'Attached note',
+                bidirectional: true,
+            );
+        } catch (AssociationTypeException) {
+            // Asserted in full above; here the throw is only the precondition.
+        }
+
+        $outgoing = implode("\n", array_map(
+            static fn (array $entry): string => sprintf(
+                '%s %s %s',
+                $entry['request']->getMethod(),
+                $entry['request']->getUri(),
+                $entry['request']->getBody(),
+            ),
+            $fake->recordedRequests(),
+        ));
+
+        self::assertStringNotContainsString('202', $outgoing);
+    }
+
+    /**
+     * `bidirectional` belongs to the parameter, not to the labelled path, so it works on the
+     * unlabelled write too — and there it resolves nothing in either direction, because
+     * `createDefault()` sends no body at all. Two requests, two directions, zero type ids: the
+     * safest write this package can make, performed twice.
+     *
+     * This unlabelled case lives in this file rather than in `AssociationGatewayTest` because the
+     * subject under test is the parameter, and splitting one parameter's behaviour across two files
+     * by which route it happens to take would hide the symmetry.
+     */
+    public function test_requesting_both_directions_for_an_unlabelled_pair_writes_two_defaults_with_no_type_id(): void
+    {
+        $fake = Hubspot::fake();
+
+        Hubspot::associations()->associate(self::notePair(), bidirectional: true);
+
+        Hubspot::assertRequestCount(2);
+
+        $requests = $fake->recordedRequests();
+
+        self::assertSame(
+            [
+                '/crm/v4/objects/notes/10/associations/default/contacts/20',
+                '/crm/v4/objects/contacts/20/associations/default/notes/10',
+            ],
+            array_map(
+                static fn (array $entry): string => $entry['request']->getUri()->getPath(),
+                $requests,
+            ),
+        );
+
+        foreach ($requests as $index => $entry) {
+            $raw = (string) $entry['request']->getBody();
+
+            self::assertNull(json_decode($raw, true), "Request {$index} has no body to decode.");
+            self::assertSame('', $raw, "Request {$index} must carry no payload, so it cannot carry a type id.");
+        }
+    }
+
+    /**
+     * Leaving the parameter at its default changes nothing about the behaviour that shipped before it
+     * existed: one write, one direction. Asserted for all three write methods, because a
+     * `bidirectional` that defaulted to `true` — or an `if` written with the wrong sense — would
+     * double every association write in every consumer's application, silently, and both writes would
+     * succeed.
+     *
+     * @return array<string, array{callable(): void, string}>
+     */
+    public static function singleDirectionByDefaultProvider(): array
+    {
+        return [
+            'associate' => [
+                static function (): void {
+                    Hubspot::associations()->associate(self::notePair());
+                },
+                '/crm/v4/objects/notes/10/associations/default/contacts/20',
+            ],
+            'associateWithLabel' => [
+                static function (): void {
+                    Hubspot::associations()->associateWithLabel(self::notePair(), label: 'Attached note');
+                },
+                '/crm/v4/objects/notes/10/associations/contacts/20',
+            ],
+            'associateWithLabels' => [
+                static function (): void {
+                    Hubspot::associations()->associateWithLabels(self::notePair(), labels: ['Attached note']);
+                },
+                '/crm/v4/objects/notes/10/associations/contacts/20',
+            ],
+        ];
+    }
+
+    #[DataProvider('singleDirectionByDefaultProvider')]
+    public function test_leaving_bidirectional_at_its_default_writes_exactly_one_direction(callable $call, string $expectedPath): void
+    {
+        $fake = Hubspot::fake();
+        self::bindResolverKnowingNoteToContact();
+
+        $call();
+
+        Hubspot::assertRequestCount(1);
+        self::assertSame($expectedPath, $fake->recordedRequests()[0]['request']->getUri()->getPath());
+    }
 }
