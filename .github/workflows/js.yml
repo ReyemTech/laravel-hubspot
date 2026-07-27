@@ -1,0 +1,40 @@
+name: js
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    # Node major pinned to the lowest version resources/js/node_modules/vitest's own
+    # package.json "engines" field permits: '^20.0.0 || ^22.0.0 || >=24.0.0' (read via
+    # `npm view vitest engines` against the installed 4.1.10, not copied from the stint
+    # reference, which pins Node 20 for an older Vitest major).
+    name: js coverage (95% floor, resources/js only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.17.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # No advisory escape hatch on this step: if this is red, it is red. The 95% floor guards
+      # the Phase 8 origin-validating listener and must never be optional.
+      - name: Run the frontend coverage gate
+        run: pnpm --filter './resources/js' exec vitest run --coverage
