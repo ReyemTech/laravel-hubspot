@@ -42,6 +42,15 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * the exception surfaces. Resolution therefore happens before any request is built, and this file
  * proves it from the outside.
  *
+ * ## The guarantee has a label-level twin
+ *
+ * The inverse direction's *label* differs from the forward one too, not only its type id: FOUND-03
+ * run 2 wrote `deals -> contacts` under the name `Deals` and read the inverse direction back as the
+ * name `People` — one paired label, two names, two ids. So a reverse write resolved under the forward
+ * direction's label is the same substitution wearing different clothes, and it is forbidden here for
+ * the same reason. That is why the labelled write takes the reverse direction's own labels rather than
+ * a boolean, and why the reverse direction is never asked for under `$labels`.
+ *
  * ## Why the type id is read from the recorded request body
  *
  * The positive tests decode the recorded outgoing payload rather than inspecting the resolver's
@@ -292,6 +301,61 @@ final class NeverTheInverseTest extends TestCase
     }
 
     /**
+     * **The label-level form of the same guarantee, and the regression test for the defect this file
+     * did not originally catch.**
+     *
+     * A paired HubSpot label is asymmetric in its NAME as well as in its type id: FOUND-03 run 2 wrote
+     * `deals -> contacts` as `Deals` and read the inverse back as `People`. So a reverse write must be
+     * resolved under the label the CALLER named for that direction, never under the forward direction's
+     * label — reusing the forward label is the same class of substitution as reusing the forward type
+     * id, and it produces exactly the same silent wrong write.
+     *
+     * The resolver double here is arranged so that the wrong implementation succeeds visibly: the
+     * reversed pair IS registered, under the FORWARD label, mapped to the inverse id 201. An
+     * implementation that resolved the reversed pair with `$labels` would find 201, send it, and this
+     * test's request count would be 2. The caller named `Attached to` for that direction, which is not
+     * registered, so the only correct outcome is a throw and zero requests.
+     */
+    public function test_a_reverse_write_never_resolves_the_reversed_pair_under_the_forward_label(): void
+    {
+        $fake = Hubspot::fake();
+
+        app()->instance(
+            AssociationTypeResolver::class,
+            DirectedMapResolver::knowing('notes', 'contacts', 'Attached note', 202)
+                // The reversed pair, under the FORWARD label. One lookup away, correctly typed.
+                ->alsoKnowing('contacts', 'notes', 'Attached note', 201),
+        );
+
+        try {
+            Hubspot::associations()->associateWithLabel(
+                self::pair('notes', 'contacts'),
+                label: 'Attached note',
+                inverseLabel: 'Attached to',
+            );
+            self::fail(
+                'Expected the reverse direction to throw for the label the caller named. If this line is reached, '
+                .'the package resolved the reversed pair under the FORWARD label and wrote type id 201 under a '
+                .'label the portal calls something else.',
+            );
+        } catch (AssociationTypeException $exception) {
+            self::assertStringContainsString('contacts -> notes', $exception->getMessage());
+            self::assertStringContainsString(
+                'Attached to',
+                $exception->getMessage(),
+                'The message must name the label the caller gave for the failing direction, not the forward one.',
+            );
+        }
+
+        Hubspot::assertRequestCount(0);
+        self::assertSame(
+            [],
+            $fake->recordedRequests(),
+            'Neither direction may be written: the forward direction resolved, but the call as a whole did not.',
+        );
+    }
+
+    /**
      * The shipped default, which is the state every consumer is in until Phase 3's registry exists.
      * With nothing resolvable, a labelled write is a throw and zero requests — not a guessed type id,
      * and not HubSpot's default association quietly substituted for the label that was asked for.
@@ -313,11 +377,11 @@ final class NeverTheInverseTest extends TestCase
             'associateWithLabels' => static function (): void {
                 Hubspot::associations()->associateWithLabels(self::pair('notes', 'contacts'), labels: ['Attached note']);
             },
-            'associateWithLabel, bidirectional' => static function (): void {
+            'associateWithLabel, with an inverse label' => static function (): void {
                 Hubspot::associations()->associateWithLabel(
                     self::pair('notes', 'contacts'),
                     label: 'Attached note',
-                    bidirectional: true,
+                    inverseLabel: 'Attached to',
                 );
             },
         ];

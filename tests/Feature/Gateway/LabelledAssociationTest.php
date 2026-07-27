@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
+use ReflectionParameter;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
 use ReyemTech\Hubspot\Facades\Hubspot;
@@ -24,7 +25,7 @@ use Throwable;
 
 /**
  * The mechanics of the labelled write path: the route, the payload, the response-shape guard, and the
- * `bidirectional` option implemented as two independently resolved directed writes.
+ * reverse-direction write as a second, independently resolved directed write.
  *
  * The never-the-inverse guarantee itself lives in `NeverTheInverseTest.php` and is not restated here.
  * This file covers everything else that has to hold for that guarantee to be worth anything — that the
@@ -32,11 +33,28 @@ use Throwable;
  * one on the wire, that a HubSpot response describing no association is rejected rather than reported
  * as success, and that asking for both directions resolves twice rather than assuming once.
  *
- * `bidirectional` defaults to `false`, and that default is **measured, not reasoned to**: FOUND-03's
- * probe ran on 2026-07-27 against a developer test account and observed that writing one directed
- * association makes the inverse direction readable immediately, with its own distinct type id
- * (`docs/probes/association-inverse-probe.md`). HubSpot maintains the other direction itself, so a
- * second write is redundant by default.
+ * ## Why the labelled path takes inverse LABELS and not a boolean
+ *
+ * **A paired HubSpot label is asymmetric in its NAME, not merely in its type id.** FOUND-03's run 2
+ * (`docs/probes/association-inverse-probe.md`) wrote `deals -> contacts` under the label `Deals` and
+ * read the inverse direction back as the label `People` — one paired label, two different names, two
+ * different ids (`1` forward, `2` inverse). A `bool $bidirectional` on the labelled path would
+ * therefore have to resolve the reversed pair under the FORWARD direction's label text, which a
+ * correctly populated directional registry does not hold: `(contacts -> deals, "Deals")` is not a row
+ * in any portal that uses the paired label the probe used. Reusing the forward label for the reverse
+ * direction is the label-level form of falling back to the inverse type id.
+ *
+ * So the reverse write is requested by naming that direction's own labels — `inverseLabel` on the
+ * singular method, `inverseLabels` on the plural one — and there is no signature through which a
+ * caller can ask for a reverse write without naming them. The mistake is unrepresentable rather than
+ * validated.
+ *
+ * `associate()`, the unlabelled path, keeps `bidirectional: bool = false`, and that default is
+ * **measured, not reasoned to**: the same probe observed that writing one directed association makes
+ * the inverse direction readable immediately with its own distinct type id, so HubSpot maintains the
+ * other direction itself and a second write is redundant by default. `createDefault()` sends no body
+ * at all, so there are no labels there and nothing to resolve in either direction — which is exactly
+ * why a boolean is the right shape on that method and the wrong shape on the labelled ones.
  */
 mutates(
     AssociationGateway::class,
@@ -384,7 +402,8 @@ final class LabelledAssociationTest extends TestCase
     }
 
     /**
-     * **The `bidirectional` default is measured, and its TYPE records that.**
+     * **`bidirectional` is measured, its TYPE records that, and it belongs to the UNLABELLED write
+     * alone.**
      *
      * This parameter spent most of the design as an open question: design spec §6.4 said HubSpot's
      * docs do not state whether writing one direction makes the other readable, and the plan for this
@@ -397,21 +416,14 @@ final class LabelledAssociationTest extends TestCase
      * 2026-07-27. This test exists so that reverting to one cannot happen quietly: it is asserting a
      * recorded measurement, not a coding style.
      *
-     * @return array<string, array{string}>
+     * It survives on `associate()` and nowhere else because `createDefault()` sends no body: there is
+     * no label to carry, no type id to resolve, and therefore nothing about the reverse direction a
+     * caller could get wrong by asking for it with a boolean. The two labelled methods are covered by
+     * the two tests below, which assert the opposite shape for the opposite reason.
      */
-    public static function associateMethodProvider(): array
+    public function test_bidirectional_on_the_unlabelled_write_is_a_non_nullable_bool_defaulting_to_false(): void
     {
-        return [
-            'associate' => ['associate'],
-            'associateWithLabel' => ['associateWithLabel'],
-            'associateWithLabels' => ['associateWithLabels'],
-        ];
-    }
-
-    #[DataProvider('associateMethodProvider')]
-    public function test_bidirectional_is_a_non_nullable_bool_defaulting_to_false_on_every_write(string $method): void
-    {
-        $parameters = (new ReflectionMethod(AssociationGatewayContract::class, $method))->getParameters();
+        $parameters = (new ReflectionMethod(AssociationGatewayContract::class, 'associate'))->getParameters();
 
         $bidirectional = null;
 
@@ -423,7 +435,7 @@ final class LabelledAssociationTest extends TestCase
 
         self::assertNotNull(
             $bidirectional,
-            "AssociationGatewayContract::{$method}() has no \$bidirectional parameter. It ships as a parameter even "
+            'AssociationGatewayContract::associate() has no $bidirectional parameter. It ships as a parameter even '
             .'though FOUND-03 measured the default as false, because adding one to an interface method later is a '
             .'breaking change for implementers, and interfaces are this package\'s documented extension point.',
         );
@@ -447,27 +459,136 @@ final class LabelledAssociationTest extends TestCase
     }
 
     /**
-     * **Two independently resolved directed writes**, which is the only shape this parameter is
-     * allowed to have. The proof is that the two requests carry *different* type ids: 202 for
-     * Note -> Contact and 201 for Contact -> Note. A single resolution reused for both directions
-     * could only produce one id, and an implementation that derived the second from the first would
-     * have to know something about the inverse — which nothing in this package does, deliberately
-     * (02-CONTEXT.md rule 4: the inverse is stored, never assumed).
+     * **On the labelled path there is no way to request a reverse write without naming that
+     * direction's label.** The parameter IS the request, so the two cannot come apart.
+     *
+     * A `bool $bidirectional` here would have had to resolve the reversed pair under the forward
+     * direction's label text, and FOUND-03 run 2 measured that a paired HubSpot label carries a
+     * different NAME in each direction — `Deals` one way, `People` the other. A directional registry
+     * populated from that portal holds no `(contacts -> deals, "Deals")` row at all, so the boolean's
+     * only two outcomes were "throw for every asymmetric paired label" (the normal case) or "quietly
+     * reuse the forward label", which is the label-level form of falling back to the inverse type id.
+     *
+     * Asserted on the parameter list rather than on behaviour because behaviour cannot prove an
+     * absence: no test can enumerate the calls a boolean would have permitted. This one states that
+     * the boolean is not there and that its replacement carries a direction's labels.
      */
-    public function test_requesting_both_directions_resolves_twice_and_writes_each_directions_own_id(): void
+    public function test_the_singular_labelled_write_requests_the_reverse_direction_only_by_naming_its_label(): void
+    {
+        $parameters = (new ReflectionMethod(AssociationGatewayContract::class, 'associateWithLabel'))->getParameters();
+
+        self::assertSame(
+            ['pair', 'label', 'inverseLabel'],
+            array_map(static fn (ReflectionParameter $parameter): string => $parameter->getName(), $parameters),
+            'The third parameter names the REVERSE direction\'s label. A bool there could only reuse the forward '
+            .'label, which a paired label\'s inverse direction is not called.',
+        );
+
+        $inverseLabel = $parameters[2];
+        $type = $inverseLabel->getType();
+
+        self::assertInstanceOf(ReflectionNamedType::class, $type);
+        self::assertSame('string', $type->getName());
+        self::assertTrue(
+            $type->allowsNull(),
+            'Null is how "do not write the reverse direction" is expressed, and it is the only way to express it.',
+        );
+
+        self::assertTrue($inverseLabel->isDefaultValueAvailable());
+        self::assertNull(
+            $inverseLabel->getDefaultValue(),
+            'The reverse write is opt-in: FOUND-03 observed HubSpot materialising the inverse itself.',
+        );
+
+        self::assertNoBooleanParameter($parameters, 'associateWithLabel');
+    }
+
+    /**
+     * The plural method's form of the same guarantee: an empty inverse-label list means "forward only",
+     * and a non-empty one names the labels the reversed pair is resolved under. Nothing else can ask
+     * for a second write.
+     */
+    public function test_the_plural_labelled_write_requests_the_reverse_direction_only_by_naming_its_labels(): void
+    {
+        $parameters = (new ReflectionMethod(AssociationGatewayContract::class, 'associateWithLabels'))->getParameters();
+
+        self::assertSame(
+            ['pair', 'labels', 'inverseLabels'],
+            array_map(static fn (ReflectionParameter $parameter): string => $parameter->getName(), $parameters),
+        );
+
+        $inverseLabels = $parameters[2];
+        $type = $inverseLabels->getType();
+
+        self::assertInstanceOf(ReflectionNamedType::class, $type);
+        self::assertSame('array', $type->getName());
+        self::assertFalse(
+            $type->allowsNull(),
+            'An empty list already means "no reverse write", so a nullable array would give one intent two spellings.',
+        );
+
+        self::assertTrue($inverseLabels->isDefaultValueAvailable());
+        self::assertSame(
+            [],
+            $inverseLabels->getDefaultValue(),
+            'The reverse write is opt-in: FOUND-03 observed HubSpot materialising the inverse itself.',
+        );
+
+        self::assertNoBooleanParameter($parameters, 'associateWithLabels');
+    }
+
+    /**
+     * A labelled write must not be able to take a flag of any kind, not merely one named
+     * `bidirectional`: renaming the boolean would restore the defect and keep a name-based assertion
+     * green.
+     *
+     * @param  list<ReflectionParameter>  $parameters
+     */
+    private static function assertNoBooleanParameter(array $parameters, string $method): void
+    {
+        foreach ($parameters as $parameter) {
+            $type = $parameter->getType();
+
+            if (! $type instanceof ReflectionNamedType) {
+                continue;
+            }
+
+            self::assertNotSame(
+                'bool',
+                $type->getName(),
+                "AssociationGatewayContract::{$method}() accepts a bool \${$parameter->getName()}. A flag on the "
+                .'labelled path can only mean "write the reverse direction under labels I did not name", and a '
+                .'paired label has a different name in each direction (FOUND-03 run 2: Deals / People).',
+            );
+        }
+    }
+
+    /**
+     * **The reverse write resolves the REVERSED pair under the INVERSE labels**, which is the only
+     * shape this request is allowed to have.
+     *
+     * The resolver double here knows exactly two rows, and neither is reachable from the other's
+     * arguments: `notes -> contacts` under `Attached note` (202), and `contacts -> notes` under
+     * `Attached to` (201). An implementation that resolved the reversed pair with the forward label —
+     * the defect this fix removes — would ask for `(contacts -> notes, "Attached note")`, which is
+     * absent, and throw before writing anything; an implementation that reused the forward pair would
+     * send the same URI twice. Both are visible in the recorded traffic, which is why the assertion
+     * reads the two URIs and both decoded bodies rather than the resolver's return values.
+     */
+    public function test_the_reverse_write_resolves_the_reversed_pair_under_the_inverse_label(): void
     {
         $fake = Hubspot::fake();
 
         app()->instance(
             AssociationTypeResolver::class,
             DirectedMapResolver::knowing('notes', 'contacts', 'Attached note', 202)
-                ->alsoKnowing('contacts', 'notes', 'Attached note', 201),
+                ->alsoKnowing('contacts', 'notes', 'Attached to', 201),
         );
 
         Hubspot::associations()->associateWithLabel(
             self::notePair(),
             label: 'Attached note',
-            bidirectional: true,
+            inverseLabel: 'Attached to',
         );
 
         Hubspot::assertRequestCount(2);
@@ -491,14 +612,187 @@ final class LabelledAssociationTest extends TestCase
         /** @var list<array{associationCategory: string, associationTypeId: int}> $reverse */
         $reverse = json_decode((string) $requests[1]['request']->getBody(), true);
 
-        self::assertSame(202, $forward[0]['associationTypeId']);
-        self::assertSame(201, $reverse[0]['associationTypeId']);
+        self::assertSame([['associationCategory' => 'USER_DEFINED', 'associationTypeId' => 202]], $forward);
+        self::assertSame([['associationCategory' => 'USER_DEFINED', 'associationTypeId' => 201]], $reverse);
         self::assertNotSame(
             $forward[0]['associationTypeId'],
             $reverse[0]['associationTypeId'],
             'Two directions, two independently resolved ids. If these matched, the second write reused the first '
             .'direction\'s id — which is the inverse-fallback bug wearing a different hat.',
         );
+    }
+
+    /**
+     * **The same guarantee against the probe's own measured data**, rather than against ids invented
+     * for a test.
+     *
+     * FOUND-03 run 2 (`docs/probes/association-inverse-probe.md`) created a paired user-defined label
+     * in a developer test account, wrote `deals -> contacts` under the name `Deals` (typeId 1,
+     * `USER_DEFINED`) and read the inverse direction back as the name `People` (typeId 2,
+     * `USER_DEFINED`). One paired label; two names; two ids. That measurement is the whole reason the
+     * reverse write takes its own label: a registry populated from that portal has no
+     * `(contacts -> deals, "Deals")` row, so an implementation that reused the forward label would
+     * throw before either write for every asymmetric paired label — which is to say, normally.
+     *
+     * The resolver double is therefore registered exactly as the probe observed the portal, and the
+     * test reads both directions off the wire.
+     */
+    public function test_the_probes_own_paired_label_writes_deals_forward_and_people_in_reverse(): void
+    {
+        $fake = Hubspot::fake();
+
+        app()->instance(
+            AssociationTypeResolver::class,
+            DirectedMapResolver::knowing('deals', 'contacts', 'Deals', 1)
+                ->alsoKnowing('contacts', 'deals', 'People', 2),
+        );
+
+        $dealToContact = new AssociationPair(
+            from: new ObjectRef('deals', '338960291537'),
+            to: new ObjectRef('contacts', '527152015051'),
+        );
+
+        Hubspot::associations()->associateWithLabel(
+            $dealToContact,
+            label: 'Deals',
+            inverseLabel: 'People',
+        );
+
+        Hubspot::assertRequestCount(2);
+
+        $requests = $fake->recordedRequests();
+
+        self::assertSame(
+            [
+                '/crm/v4/objects/deals/338960291537/associations/contacts/527152015051',
+                '/crm/v4/objects/contacts/527152015051/associations/deals/338960291537',
+            ],
+            array_map(
+                static fn (array $entry): string => $entry['request']->getUri()->getPath(),
+                $requests,
+            ),
+        );
+
+        /** @var list<array{associationCategory: string, associationTypeId: int}> $forward */
+        $forward = json_decode((string) $requests[0]['request']->getBody(), true);
+        /** @var list<array{associationCategory: string, associationTypeId: int}> $reverse */
+        $reverse = json_decode((string) $requests[1]['request']->getBody(), true);
+
+        self::assertSame(
+            [['associationCategory' => 'USER_DEFINED', 'associationTypeId' => 1]],
+            $forward,
+            'The forward direction carries the id the probe recorded for the label named Deals.',
+        );
+        self::assertSame(
+            [['associationCategory' => 'USER_DEFINED', 'associationTypeId' => 2]],
+            $reverse,
+            'The reverse direction carries the id the probe recorded for the label named People — the SAME paired '
+            .'label, under the name that direction actually has.',
+        );
+    }
+
+    /**
+     * Several inverse labels are one reverse request with one spec each, exactly as several forward
+     * labels are one forward request: the reverse direction is resolved on its own terms, and "its own
+     * terms" includes carrying more than one type at once (FOUND-03 finding 2). Two requests total, not
+     * four.
+     */
+    public function test_several_inverse_labels_write_one_reverse_request_with_one_spec_each(): void
+    {
+        $fake = Hubspot::fake();
+
+        app()->instance(
+            AssociationTypeResolver::class,
+            DirectedMapResolver::knowing('notes', 'contacts', 'Attached note', 202)
+                ->alsoKnowing('contacts', 'notes', 'Attached to', 201)
+                ->alsoKnowing('contacts', 'notes', 'Mentioned in', 205, 'INTEGRATOR_DEFINED'),
+        );
+
+        Hubspot::associations()->associateWithLabels(
+            self::notePair(),
+            labels: ['Attached note'],
+            inverseLabels: ['Attached to', 'Mentioned in'],
+        );
+
+        Hubspot::assertRequestCount(2);
+
+        $requests = $fake->recordedRequests();
+
+        /** @var list<array{associationCategory: string, associationTypeId: int}> $reverse */
+        $reverse = json_decode((string) $requests[1]['request']->getBody(), true);
+
+        self::assertSame('/crm/v4/objects/contacts/20/associations/notes/10', $requests[1]['request']->getUri()->getPath());
+        self::assertSame(
+            [
+                ['associationCategory' => 'USER_DEFINED', 'associationTypeId' => 201],
+                ['associationCategory' => 'INTEGRATOR_DEFINED', 'associationTypeId' => 205],
+            ],
+            $reverse,
+            'One spec per inverse label, in the order the caller listed them.',
+        );
+    }
+
+    /**
+     * An empty inverse-label list is the plural method's way of saying "forward only", and it is the
+     * shipped default. Asserted with the list passed explicitly as well as omitted (below), because
+     * these are two different call shapes reaching the same branch.
+     */
+    public function test_an_explicitly_empty_inverse_label_list_writes_the_forward_direction_only(): void
+    {
+        $fake = Hubspot::fake();
+        self::bindResolverKnowingNoteToContact();
+
+        Hubspot::associations()->associateWithLabels(
+            self::notePair(),
+            labels: ['Attached note'],
+            inverseLabels: [],
+        );
+
+        Hubspot::assertRequestCount(1);
+        self::assertSame(
+            '/crm/v4/objects/notes/10/associations/contacts/20',
+            $fake->recordedRequests()[0]['request']->getUri()->getPath(),
+        );
+    }
+
+    /**
+     * The singular method's `inverseLabel` is the plural method's one-entry `inverseLabels`, so there
+     * is one implementation of the reverse write as well as of the forward one. Asserted by outcome:
+     * both forms must produce byte-identical payloads on identical routes, in the same order.
+     */
+    public function test_the_single_inverse_label_is_the_inverse_list_with_one_entry(): void
+    {
+        $fake = Hubspot::fake();
+
+        app()->instance(
+            AssociationTypeResolver::class,
+            DirectedMapResolver::knowing('notes', 'contacts', 'Attached note', 202)
+                ->alsoKnowing('contacts', 'notes', 'Attached to', 201),
+        );
+
+        Hubspot::associations()->associateWithLabel(
+            self::notePair(),
+            label: 'Attached note',
+            inverseLabel: 'Attached to',
+        );
+        Hubspot::associations()->associateWithLabels(
+            self::notePair(),
+            labels: ['Attached note'],
+            inverseLabels: ['Attached to'],
+        );
+
+        Hubspot::assertRequestCount(4);
+
+        $traffic = array_map(
+            static fn (array $entry): string => sprintf(
+                '%s %s',
+                $entry['request']->getUri()->getPath(),
+                $entry['request']->getBody(),
+            ),
+            $fake->recordedRequests(),
+        );
+
+        self::assertSame([$traffic[0], $traffic[1]], [$traffic[2], $traffic[3]]);
     }
 
     /**
@@ -523,7 +817,7 @@ final class LabelledAssociationTest extends TestCase
             Hubspot::associations()->associateWithLabel(
                 self::notePair(),
                 label: 'Attached note',
-                bidirectional: true,
+                inverseLabel: 'Attached to',
             );
             self::fail('Expected an unresolvable reverse direction to throw rather than reuse the forward id.');
         } catch (AssociationTypeException $exception) {
@@ -532,7 +826,11 @@ final class LabelledAssociationTest extends TestCase
                 $exception->getMessage(),
                 'The message must name the REVERSE direction, which is the one that failed.',
             );
-            self::assertStringContainsString('Attached note', $exception->getMessage());
+            self::assertStringContainsString(
+                'Attached to',
+                $exception->getMessage(),
+                'And the label it failed under, which is the INVERSE label — the forward label was resolvable.',
+            );
         }
 
         Hubspot::assertRequestCount(0);
@@ -558,7 +856,7 @@ final class LabelledAssociationTest extends TestCase
             Hubspot::associations()->associateWithLabel(
                 self::notePair(),
                 label: 'Attached note',
-                bidirectional: true,
+                inverseLabel: 'Attached to',
             );
         } catch (AssociationTypeException) {
             // Asserted in full above; here the throw is only the precondition.
@@ -578,14 +876,15 @@ final class LabelledAssociationTest extends TestCase
     }
 
     /**
-     * `bidirectional` belongs to the parameter, not to the labelled path, so it works on the
-     * unlabelled write too — and there it resolves nothing in either direction, because
-     * `createDefault()` sends no body at all. Two requests, two directions, zero type ids: the
-     * safest write this package can make, performed twice.
+     * The unlabelled path's reverse write, which is where a plain boolean IS the right shape: it
+     * resolves nothing in either direction, because `createDefault()` sends no body at all. Two
+     * requests, two directions, zero type ids and zero labels — the safest write this package can
+     * make, performed twice. There is no label text to be asymmetric about, which is the whole
+     * difference between this method and the two labelled ones.
      *
      * This unlabelled case lives in this file rather than in `AssociationGatewayTest` because the
-     * subject under test is the parameter, and splitting one parameter's behaviour across two files
-     * by which route it happens to take would hide the symmetry.
+     * subject under test is requesting both directions, and splitting that across two files by which
+     * route it happens to take would hide the contrast that justifies the two shapes.
      */
     public function test_requesting_both_directions_for_an_unlabelled_pair_writes_two_defaults_with_no_type_id(): void
     {
@@ -617,11 +916,9 @@ final class LabelledAssociationTest extends TestCase
     }
 
     /**
-     * Leaving the parameter at its default changes nothing about the behaviour that shipped before it
-     * existed: one write, one direction. Asserted for all three write methods, because a
-     * `bidirectional` that defaulted to `true` — or an `if` written with the wrong sense — would
-     * double every association write in every consumer's application, silently, and both writes would
-     * succeed.
+     * Not asking for the reverse direction writes one direction, on all three write methods. Asserted
+     * because a default of `true` — or an `if` written with the wrong sense — would double every
+     * association write in every consumer's application, silently, with both writes succeeding.
      *
      * @return array<string, array{callable(): void, string}>
      */
@@ -650,7 +947,7 @@ final class LabelledAssociationTest extends TestCase
     }
 
     #[DataProvider('singleDirectionByDefaultProvider')]
-    public function test_leaving_bidirectional_at_its_default_writes_exactly_one_direction(callable $call, string $expectedPath): void
+    public function test_leaving_the_reverse_direction_unrequested_writes_exactly_one_direction(callable $call, string $expectedPath): void
     {
         $fake = Hubspot::fake();
         self::bindResolverKnowingNoteToContact();
