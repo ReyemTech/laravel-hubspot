@@ -13,3 +13,7 @@ Out-of-scope discoveries logged during plan execution, per the scope-boundary ru
   (including arch rules) to execute will be surprised it doesn't. Predates 01-03, unrelated to
   the JS toolchain; not fixed here. Whoever owns plan 04's follow-up (or a future hygiene pass)
   should decide whether to add `Arch` as a fourth testsuite entry.
+
+  **Resolved in 01-07.** `phpunit.xml.dist` now declares a fourth `Arch` testsuite
+  (`tests/Ci/PhpunitTestsuitesTest.php` locks this in). A bare `vendor/bin/pest` reports 30
+  passed (190 assertions) instead of 13, confirmed via real output before and after the fix.
