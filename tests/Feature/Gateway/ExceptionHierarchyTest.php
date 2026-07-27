@@ -11,6 +11,7 @@ use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Exceptions\ObjectTypeException;
+use ReyemTech\Hubspot\Gateway\AssociationCategory;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Tests\TestCase;
 use RuntimeException;
@@ -214,6 +215,114 @@ final class ExceptionHierarchyTest extends TestCase
             .'"buyer". Register this direction -- the inverse companies -> contacts is a '
             .'different, unrelated typeId and is never substituted automatically -- before '
             .'associating these object types.',
+            $exception->getMessage(),
+        );
+    }
+
+    /**
+     * The five members plan 02-05 added, asserted as **exact text** rather than by substring.
+     *
+     * That distinction is the whole reason these tests exist, and it is the same one this file's
+     * header already records: every message here is built from a dozen concatenated fragments, and
+     * `assertStringContainsString` cannot tell a correct message from one whose fragments have been
+     * reordered or truncated. `pest --mutate` proves it — `ConcatSwitchSides` and `ConcatRemoveRight`
+     * produced **31 surviving mutants** across these five constructors when the only assertions on
+     * them were substring checks in `AssociationTypeTest` and `NeverTheInverseTest`. Those substring
+     * assertions are still worth keeping where they are, because they assert the *contract* (the
+     * message names the direction, the label, the fix) at the point of use; these assert the artefact.
+     *
+     * A failure here is usually benign — someone improved the wording — and the fix is to update the
+     * expected string after reading the new one. A failure here alongside a green
+     * `NeverTheInverseTest` is always benign. The reverse is not.
+     */
+    public function test_no_resolver_installed_names_the_direction_the_label_and_the_container_key(): void
+    {
+        $exception = AssociationTypeException::noResolverInstalled('notes', 'contacts', 'Attached note');
+
+        self::assertSame(
+            'No association type resolver is installed, so the direction notes -> contacts labelled '
+            .'"Attached note" cannot be resolved to a typeId, and nothing was written. Bind '
+            .'ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver in a service provider to an '
+            .'implementation that resolves this exact direction -- the inverse contacts -> notes is a '
+            .'different, unrelated typeId and is never substituted automatically -- or call associate(), '
+            .'which uses the unlabelled default association type and resolves no typeId at all.',
+            $exception->getMessage(),
+        );
+    }
+
+    public function test_no_labels_given_steers_to_the_method_that_legitimately_resolves_nothing(): void
+    {
+        $exception = AssociationTypeException::noLabelsGiven();
+
+        self::assertSame(
+            'A labelled association write was requested with no labels, so there is no direction to '
+            .'resolve and nothing was written. Pass at least one label, or call associate(), which uses '
+            .'the unlabelled default association type and resolves no typeId at all.',
+            $exception->getMessage(),
+        );
+    }
+
+    public function test_unknown_association_category_lists_every_value_the_sdk_accepts(): void
+    {
+        $exception = AssociationTypeException::unknownAssociationCategory(
+            'USER_DEFINEDD',
+            AssociationCategory::values(),
+        );
+
+        self::assertSame(
+            'Association category "USER_DEFINEDD" is not one the HubSpot API recognises. Use one of: '
+            .'HUBSPOT_DEFINED, INTEGRATOR_DEFINED, USER_DEFINED, WORK.',
+            $exception->getMessage(),
+        );
+    }
+
+    public function test_a_non_string_category_message_explains_where_strict_types_actually_binds(): void
+    {
+        $exception = AssociationTypeException::nonStringAssociationCategory(3, AssociationCategory::values());
+
+        self::assertSame(
+            'An association category was given as type int. Pass one of the strings the HubSpot API '
+            .'recognises -- HUBSPOT_DEFINED, INTEGRATOR_DEFINED, USER_DEFINED, WORK -- or a '
+            .'ReyemTech\Hubspot\Gateway\AssociationCategory case, which makes the invalid value '
+            .'unrepresentable. This is validated here rather than by the parameter type because '
+            .'declare(strict_types=1) binds at the calling file, not at this package\'s: in a file '
+            .'without it, 1 and true would both have arrived as "1" and been reported as an unknown '
+            .'category nobody wrote.',
+            $exception->getMessage(),
+        );
+    }
+
+    /**
+     * The message names two real HubSpot type ids that a coerced value lands on — 1 for
+     * Contact -> Primary Company, 19 for Deal -> Line Item — because "pass an int" alone does not
+     * convey why this is rejected rather than cast. A reader who does not know that `true` becomes a
+     * valid-looking type id will reasonably think the strictness is pedantry.
+     */
+    public function test_a_non_integer_type_id_message_names_the_real_ids_a_coerced_value_lands_on(): void
+    {
+        $exception = AssociationTypeException::nonIntegerTypeId(true);
+
+        self::assertSame(
+            'A HubSpot association type id was given as type bool. Pass it as an int -- a value held as '
+            .'a string is cast at the call site with "(int) $typeId", never coerced here. This is '
+            .'validated in the value object rather than by the parameter type because '
+            .'declare(strict_types=1) binds at the calling file, not at this package\'s: in a file '
+            .'without it, true would have arrived as 1 -- a real type id, Contact -> Primary Company -- '
+            .'and 19.9 as 19, another real one, Deal -> Line Item. Either writes an association nobody '
+            .'meant, and HubSpot reports no error for it.',
+            $exception->getMessage(),
+        );
+    }
+
+    public function test_a_non_positive_type_id_message_says_where_hubspot_ids_start(): void
+    {
+        $exception = AssociationTypeException::nonPositiveTypeId(0);
+
+        self::assertSame(
+            'A HubSpot association type id of 0 is not a valid id, and nothing was written. HubSpot type '
+            .'ids start at 1 -- Contact -> Primary Company is 1 and Company -> Primary Contact is 2 -- '
+            .'so a zero or negative id is a value that was defaulted rather than resolved. Resolve the '
+            .'direction and pass the id registered for it.',
             $exception->getMessage(),
         );
     }

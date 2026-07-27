@@ -24,17 +24,42 @@ declare(strict_types=1);
 // @phpstan-ignore method.notFound, method.nonObject
 arch('R1: Gateway is the only layer that may reference HubSpot\* SDK classes')->expect('HubSpot')->toOnlyBeUsedIn('ReyemTech\Hubspot\Gateway');
 
-// @phpstan-ignore method.notFound, method.nonObject
-arch('R2: Registry may depend only on Gateway')->expect('ReyemTech\Hubspot\Registry')->toOnlyUse('ReyemTech\Hubspot\Gateway');
+/*
+ * R2 through R5 additionally allow `ReyemTech\Hubspot\Exceptions`, added 2026-07-27.
+ *
+ * **The package exception hierarchy is a cross-cutting namespace, not a layer.** STANDARDS §9 requires
+ * one typed hierarchy rooted at a package-owned interface, which consumers catch, and forbids a raw SDK
+ * exception ever reaching userland — so every layer has to be able to throw it. Without `Exceptions` in
+ * these allow-lists those two rules are mutually impossible, and the first place that bites is the
+ * resolver seam plan 02-05 shipped: a `Registry` implementation of
+ * `Gateway\Contracts\AssociationTypeResolver` MUST throw `Exceptions\AssociationTypeException` on a
+ * miss (the contract's return type is non-nullable, and 02-CONTEXT.md rule 3 forbids answering a miss
+ * with anything else), and R2 rejected it for exactly that. `Sync`, `Webhooks` and `Signals` hit the
+ * same wall the first time they throw.
+ *
+ * This widens no LAYER boundary: nothing here lets `Registry` see `Sync`, or `Frontend` see the SDK,
+ * and R6 and R8 are untouched — `Frontend` still talks to the public facade only, which is where its
+ * exceptions arrive from anyway. `Exceptions` depends on no layer in return (it names two `Gateway`
+ * classes via `::class`, which the compiler resolves to plain strings and never autoloads), so this
+ * adds no cycle.
+ *
+ * `tests/Arch/ResolverSeamTest.php` proves each of these four rules PASSES against a committed fixture
+ * of the code the boundary exists to permit, and `scripts/ci/verify-arch-rules-fire.sh` still proves
+ * each one FAILS under its own violation fixture — those fixtures violate by depending on
+ * `Sync`/`Webhooks`/`Frontend`, never on `Exceptions`, so every one of them fires unchanged.
+ */
 
 // @phpstan-ignore method.notFound, method.nonObject
-arch('R3: Sync may depend only on Registry and Gateway')->expect('ReyemTech\Hubspot\Sync')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway']);
+arch('R2: Registry may depend only on Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Registry')->toOnlyUse(['ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
 
 // @phpstan-ignore method.notFound, method.nonObject
-arch('R4: Webhooks may depend only on Registry and Gateway')->expect('ReyemTech\Hubspot\Webhooks')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway']);
+arch('R3: Sync may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Sync')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
 
 // @phpstan-ignore method.notFound, method.nonObject
-arch('R5: Signals may depend only on Registry and Gateway')->expect('ReyemTech\Hubspot\Signals')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway']);
+arch('R4: Webhooks may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Webhooks')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
+
+// @phpstan-ignore method.notFound, method.nonObject
+arch('R5: Signals may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Signals')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
 
 // R6's positive allowlist names the intended public facade FQCN
 // (ReyemTech\Hubspot\Facades\Hubspot), which does not exist until Phase 2 ships it

@@ -157,11 +157,25 @@ Sync      → may depend on: Registry, Gateway
 Webhooks  → may depend on: Registry, Gateway
 Signals   → may depend on: Registry, Gateway
 Frontend  → may depend on: the public facade ONLY
+
+Exceptions → cross-cutting; every layer above may depend on it, and it depends on no
+             layer in return                          [amended 2026-07-27]
 ```
 
 Anything reaching upward fails the build. `Gateway` is the only layer permitted to reference
 `HubSpot\*` classes — that is what makes the SDK swappable and the rest of the package fast to
 test.
+
+**The `Exceptions` line was added 2026-07-27, and it is a correction rather than a relaxation.**
+§9 requires one typed hierarchy rooted at a package-owned interface, which consumers catch, and
+forbids a raw SDK exception ever reaching userland — so every layer must be able to throw it. The
+allow-lists for `Registry`, `Sync`, `Webhooks` and `Signals` did not name `Exceptions`, which made
+those two rules mutually impossible; the first place it bit was the association-type resolver seam,
+where a `Registry` implementation of the Gateway-side contract cannot answer a miss with anything
+but a throw, and the architecture test rejected it for throwing. No layer boundary moved: nothing
+lets `Registry` see `Sync` or `Frontend` see the SDK, and `Frontend`'s two rules are unchanged.
+`tests/Arch/ResolverSeamTest.php` pins the permission with a committed fixture per layer, so a later
+tightening cannot quietly re-break it.
 
 Two further rules, added 2026-07-26 with the `Signals` and `Frontend` layers:
 

@@ -4,23 +4,31 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Exceptions;
 
+use ReyemTech\Hubspot\Gateway\AssociationCategory;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use RuntimeException;
 
 /**
  * A resolution failure -- a directed `(from, to[, label])` pair the association-type registry
- * cannot resolve to a typeId (STANDARDS §9, design spec §9, 02-CONTEXT.md's four association
- * rules). Extends `RuntimeException`, not `LogicException`: the pair itself may be perfectly
- * valid data -- what fails is a runtime lookup against the registry's current state, the same
- * family as `ApiException`'s own failure shape.
+ * cannot resolve to a typeId, or a type id or category that could not have come from one
+ * (STANDARDS §9, design spec §9, 02-CONTEXT.md's four association rules). Extends
+ * `RuntimeException`, not `LogicException`: the pair itself may be perfectly valid data -- what
+ * fails is a runtime lookup against the registry's current state, the same family as
+ * `ApiException`'s own failure shape.
  *
  * **Never falls back to the inverse typeId.** That silent fallback is exactly how a note<->contact
- * association gets written backwards and nobody notices for months (02-CONTEXT.md) -- the message
- * below states the failed direction and explicitly disclaims the inverse as a substitute, rather
+ * association gets written backwards and nobody notices for months (02-CONTEXT.md) -- the messages
+ * below state the failed direction and explicitly disclaim the inverse as a substitute, rather
  * than merely omitting it.
  *
- * Not yet thrown anywhere in Phase 2: the association-type registry does not exist until Phase 3.
- * `directionNotResolvable()` ships now, ahead of its first real caller in plan 02-05, so the
- * Registry's seam exists before that plan needs it (02-02-PLAN.md's scope note).
+ * `directionNotResolvable()` shipped in plan 02-02, ahead of its first real caller, so the
+ * Registry's seam existed before it was needed. Plan 02-05 adds the five members the Gateway's
+ * labelled path actually raises. Two of them (`nonStringAssociationCategory()`,
+ * `nonIntegerTypeId()`) name a `Gateway` class in their message, via `::class` rather than as a
+ * hand-written literal so a rename cannot leave the message pointing at nothing. `::class` on an
+ * imported name is resolved by the compiler to a plain string and never autoloads, so this adds no
+ * runtime coupling from `Exceptions` back to `Gateway`; no architecture rule governs this namespace
+ * either way (`tests/Arch/LayerBoundariesTest.php` constrains the six layers, not `Exceptions`).
  */
 final class AssociationTypeException extends RuntimeException implements HubspotException
 {
@@ -48,6 +56,107 @@ final class AssociationTypeException extends RuntimeException implements Hubspot
             $direction,
             $labelled,
             $inverse,
+        ));
+    }
+
+    /**
+     * No resolver capable of answering is bound -- the state of the package before Phase 3's
+     * registry exists, raised by `Gateway\UnresolvedAssociationTypeResolver` for every request.
+     *
+     * Distinct from `directionNotResolvable()` on purpose: that one means "a registry looked and
+     * found nothing", this one means "nothing looked". The remedies differ, and a message naming the
+     * wrong one sends the reader to add a row to a table that does not exist.
+     */
+    public static function noResolverInstalled(string $fromType, string $toType, string $label): self
+    {
+        return new self(sprintf(
+            'No association type resolver is installed, so the direction %s -> %s labelled "%s" cannot '
+            .'be resolved to a typeId, and nothing was written. Bind %s in a service provider to an '
+            .'implementation that resolves this exact direction -- the inverse %s -> %s is a different, '
+            .'unrelated typeId and is never substituted automatically -- or call associate(), which uses '
+            .'the unlabelled default association type and resolves no typeId at all.',
+            $fromType,
+            $toType,
+            $label,
+            AssociationTypeResolver::class,
+            $toType,
+            $fromType,
+        ));
+    }
+
+    /**
+     * A labelled write was requested with an empty label list. Steers to the unlabelled method
+     * rather than quietly sending an empty spec array, which HubSpot answers with a 400 about a
+     * payload the caller never knowingly built.
+     */
+    public static function noLabelsGiven(): self
+    {
+        return new self(
+            'A labelled association write was requested with no labels, so there is no direction to '
+            .'resolve and nothing was written. Pass at least one label, or call associate(), which uses '
+            .'the unlabelled default association type and resolves no typeId at all.'
+        );
+    }
+
+    /**
+     * @param  list<string>  $valid
+     */
+    public static function unknownAssociationCategory(string $received, array $valid): self
+    {
+        return new self(sprintf(
+            'Association category "%s" is not one the HubSpot API recognises. Use one of: %s.',
+            $received,
+            implode(', ', $valid),
+        ));
+    }
+
+    /**
+     * @param  list<string>  $valid
+     */
+    public static function nonStringAssociationCategory(mixed $received, array $valid): self
+    {
+        return new self(sprintf(
+            'An association category was given as type %s. Pass one of the strings the HubSpot API '
+            .'recognises -- %s -- or a %s case, which makes the invalid value unrepresentable. This is '
+            .'validated here rather than by the parameter type because declare(strict_types=1) binds at '
+            .'the calling file, not at this package\'s: in a file without it, 1 and true would both have '
+            .'arrived as "1" and been reported as an unknown category nobody wrote.',
+            get_debug_type($received),
+            implode(', ', $valid),
+            AssociationCategory::class,
+        ));
+    }
+
+    /**
+     * A type id that arrived as something other than an int -- rejected rather than cast, because
+     * every plausible coercion lands on a real HubSpot type id.
+     */
+    public static function nonIntegerTypeId(mixed $received): self
+    {
+        return new self(sprintf(
+            'A HubSpot association type id was given as type %s. Pass it as an int -- a value held as a '
+            .'string is cast at the call site with "(int) $typeId", never coerced here. This is validated '
+            .'in the value object rather than by the parameter type because declare(strict_types=1) binds '
+            .'at the calling file, not at this package\'s: in a file without it, true would have arrived '
+            .'as 1 -- a real type id, Contact -> Primary Company -- and 19.9 as 19, another real one, '
+            .'Deal -> Line Item. Either writes an association nobody meant, and HubSpot reports no error '
+            .'for it.',
+            get_debug_type($received),
+        ));
+    }
+
+    /**
+     * HubSpot issues type ids from 1 upward, so a zero or negative id is not an unlikely id -- it is
+     * the shape a defaulted or unresolved variable takes on its way to the wire.
+     */
+    public static function nonPositiveTypeId(int $received): self
+    {
+        return new self(sprintf(
+            'A HubSpot association type id of %d is not a valid id, and nothing was written. HubSpot '
+            .'type ids start at 1 -- Contact -> Primary Company is 1 and Company -> Primary Contact is 2 '
+            .'-- so a zero or negative id is a value that was defaulted rather than resolved. Resolve the '
+            .'direction and pass the id registered for it.',
+            $received,
         ));
     }
 }

@@ -55,11 +55,13 @@ final readonly class AssociationPair
      * calling code rather than a side effect on a value someone else is still holding — `readonly`
      * makes mutation impossible anyway, and the name is what makes the intent legible.
      *
-     * Plan 02-05's `bidirectional` option is the caller this exists for: it performs two
+     * Writing the opposite direction as well is the caller this exists for — `associate()`'s
+     * `bidirectional`, and the labelled writes' `inverseLabel`/`inverseLabels`. Each performs two
      * independently resolved directed writes, and the second one needs the reversed pair as a
      * first-class value. Note what reversal does NOT do — it does not carry, derive or assume a type
-     * id for the opposite direction. The inverse type id is stored, never assumed (02-CONTEXT.md
-     * rule 4); the reversed pair resolves its own.
+     * id for the opposite direction, and it says nothing about what that direction's label is called
+     * either. The inverse type id is stored, never assumed (02-CONTEXT.md rule 4); the reversed pair
+     * resolves its own, under labels its own caller named.
      */
     public function reversed(): self
     {

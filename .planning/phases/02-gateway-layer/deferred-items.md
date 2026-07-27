@@ -55,3 +55,38 @@ Out-of-scope discoveries logged during execution, per the executor's scope-bound
   expected directional id rather than taking the first or the only one — the probe observed two types
   per record in a non-guaranteed order. Recorded here so neither is implemented against a "first
   type" assumption that would pass regardless of which id was written.
+
+## 02-05
+
+- ~~**R2 (and R3, R4, R5) forbid a non-Gateway layer from naming a package exception, which Phase 3
+  must do.**~~ **FIXED 2026-07-27, on this branch, before merge** — see 02-05-SUMMARY.md
+  *"Post-review fixes"*. `'ReyemTech\Hubspot\Exceptions'` is now in R2 through R5's `toOnlyUse()`
+  allow-lists: the exception hierarchy is a cross-cutting namespace, not a layer, and every layer has
+  to be able to throw it or STANDARDS §9's single shared hierarchy and its no-raw-SDK-exception rule
+  are mutually impossible.
+
+  Two things in the original entry were wrong and are recorded here rather than quietly corrected. The
+  cost estimate — "one entry per rule, each of which owes a violation fixture" — was an overestimate:
+  R2 through R5's existing fixtures violate by depending on `Sync`/`Webhooks`/`Frontend`, never on
+  `Exceptions`, so all four fired unchanged and no fixture was added, edited or removed
+  (`scripts/ci/verify-arch-rules-fire.sh`: 10/10). And R6 was named in the heading but is not
+  affected: `Frontend` may depend on the public facade only, which is still right, and its exceptions
+  arrive through that facade.
+
+  Deferring it was also the wrong call on its own terms. The rule as shipped made this plan's own
+  must_have — that Phase 3 plugs a real resolver in without changing the gateway's public shape —
+  unsatisfiable, so it was not a note for a later phase; it was a defect in this one.
+  `tests/Arch/ResolverSeamTest.php` now pins the permission with a committed fixture per layer, so the
+  boundary cannot be re-narrowed without a failing build naming the reason.
+
+- **A possessive apostrophe after "HubSpot" in a single-quoted PHP string reads as a namespace
+  reference to `tests/Arch/SdkSurfaceTest.php`.** `'HubSpot\'s unlabelled default association'`
+  compiles to a token whose text contains `HubSpot\`, which is the exact needle
+  `reyemtech_hubspot_sdk_surface_references_sdk()` searches for — so an exception message in
+  `src/Exceptions/` failed R1's non-vacuity test for prose, not for code. It cost ten minutes here and
+  the prose was rephrased ("the unlabelled default association type"), which is the right fix for one
+  occurrence. The scan is conservative in the safe direction — it produces a false failure, never a
+  false pass — so it is not urgent. A precise fix would require the character after `HubSpot\` to be
+  an identifier character; that is a change to a gate file and needs its own justification, and
+  "relax the arch test so my sentence fits" is exactly the move this repository forbids, so it was not
+  attempted opportunistically.
