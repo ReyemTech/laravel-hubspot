@@ -141,10 +141,31 @@ final class ExceptionHierarchyTest extends TestCase
         // or dropped (a common surviving-mutant shape for concatenated named-constructor
         // messages, per this plan's own <verification> guidance).
         self::assertSame(
-            'HUBSPOT_TOKEN is not set. Create a HubSpot Private App access token (HubSpot '
-            .'account settings -> Integrations -> Private Apps) and set HUBSPOT_TOKEN in your '
-            .'.env file before making any Gateway call.',
+            'HUBSPOT_TOKEN is not set. Create a HubSpot Service Key (HubSpot account settings '
+            .'-> Integrations -> Service Keys) and set HUBSPOT_TOKEN in your .env file before '
+            .'making any Gateway call. A legacy Private App token also works.',
             $exception->getMessage(),
+        );
+    }
+
+    /**
+     * The error a user actually sees when their token is missing must not send them somewhere
+     * different from `config/hubspot.php`. HubSpot classifies Private Apps as legacy, the config
+     * file's own comment now says to create a Service Key, and a message pointing at a different
+     * settings page than the documentation is worse than a vague one — it costs the reader a trip
+     * to a deprecated screen before they discover the mismatch.
+     */
+    public function test_the_missing_token_message_names_the_same_credential_as_the_config_file(): void
+    {
+        $message = ConfigurationException::missingToken()->getMessage();
+        $config = (string) file_get_contents(__DIR__.'/../../../config/hubspot.php');
+
+        self::assertStringContainsString('Service Key', $message);
+        self::assertStringContainsString('Service Key', $config);
+        self::assertStringNotContainsString(
+            'Create a HubSpot Private App',
+            $message,
+            'The missing-token message must not steer users to the legacy Private App flow.',
         );
     }
 
