@@ -73,15 +73,77 @@ function ciInstallDependenciesStepRun(): string
     throw new RuntimeException('Expected the "tests" job to declare an "Install dependencies" step.');
 }
 
+/**
+ * Tokenizes the composer command and flags any `vendor/package` (optionally
+ * `:constraint`-suffixed) token that is not directly preceded by a `--with`
+ * token. This replaces two regexes that only ever inspected the token(s)
+ * immediately following "composer update": one anchored positionally right
+ * after "update", and one whose negative lookahead for "--with anywhere
+ * later in the string" disabled itself the moment any --with flag appeared
+ * -- which the real step's --with-constrained shape always does. A
+ * positional spec appended after those legitimate flags was invisible to
+ * both, even though Composer still treats it as a partial, lockfile-
+ * dependent update.
+ */
+function ciRunHasPositionalPackageSpec(string $run): bool
+{
+    $tokens = preg_split('/\s+/', trim($run)) ?: [];
+
+    foreach ($tokens as $index => $token) {
+        if ($token === '') {
+            continue;
+        }
+
+        if (! preg_match('#^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(:\S+)?$#', $token)) {
+            continue;
+        }
+
+        $previous = $tokens[$index - 1] ?? null;
+
+        if ($previous !== '--with') {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 it('never passes a positional package argument to composer update, since that requires a preexisting lock file', function (): void {
     $run = ciInstallDependenciesStepRun();
 
     // A partial update names packages as bare positional arguments, e.g.
     // "composer update laravel/framework:12.*". The lockless-safe shape
     // constrains via --with=pkg:constraint instead, so this must never
-    // match a package spec that isn't preceded by --with.
-    expect($run)->not->toMatch('/composer update(?!.*--with)\s+\S+\/\S+:/s');
-    expect($run)->not->toMatch('/composer update\s+[a-z0-9_-]+\/[a-z0-9_.-]+:\S+/');
+    // contain a package spec that isn't directly preceded by --with,
+    // anywhere in the command -- not only immediately after "composer
+    // update". See ciRunHasPositionalPackageSpec() for why a simple regex
+    // pair does not catch a spec appended after the --with flags.
+    expect(ciRunHasPositionalPackageSpec($run))->toBeFalse();
+});
+
+it('detects a positional package spec appended after every --with flag, not only one immediately after "composer update"', function (): void {
+    // A regex anchored to "composer update <spec>" only ever inspects the
+    // token(s) directly after "composer update"; a negative lookahead for
+    // "--with anywhere later" disables itself the instant the command
+    // contains a legitimate --with flag, which the real step always does.
+    // Neither shape catches a positional spec smuggled in after the
+    // legitimate --with options -- exactly the shape Composer still treats
+    // as a partial (lockfile-dependent) update.
+    $maliciousRun = 'composer update --with illuminate/contracts:12.* --with illuminate/support:12.* laravel/framework:12.* --prefer-stable --prefer-dist --no-interaction';
+
+    expect(ciRunHasPositionalPackageSpec($maliciousRun))->toBeTrue();
+});
+
+it('does not flag a package spec that is directly preceded by --with', function (): void {
+    $run = 'composer update --with illuminate/contracts:12.* --with orchestra/testbench:10.* --prefer-stable --prefer-dist --no-interaction';
+
+    expect(ciRunHasPositionalPackageSpec($run))->toBeFalse();
+});
+
+it('flags a positional package spec with no version constraint at all', function (): void {
+    $maliciousRun = 'composer update --with illuminate/contracts:12.* laravel/framework --prefer-stable';
+
+    expect(ciRunHasPositionalPackageSpec($maliciousRun))->toBeTrue();
 });
 
 it('constrains illuminate/* and orchestra/testbench per matrix cell via --with, not composer.json edits', function (): void {

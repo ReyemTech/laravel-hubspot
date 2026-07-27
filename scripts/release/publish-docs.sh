@@ -20,9 +20,31 @@ set -euo pipefail
 readonly SITE_DIST="${SITE_DIST:-site/dist}"
 readonly REPO="ReyemTech/laravel-hubspot"
 
+# Captured before anything below ever changes directory. push_attempt() cannot rely on
+# $OLDPWD to find its way back to the checkout that has site/dist -- $OLDPWD is a
+# process-wide shell variable, not scoped to a function or a single `cd`, so it gets
+# clobbered by the *next* `cd` (the retry's clone), not restored when a function
+# returns. SRC_DIR is a value captured once, never reassigned, and immune to that.
+readonly SRC_DIR="$PWD"
+
 [[ -d "$SITE_DIST" ]] || { echo "error: $SITE_DIST not found -- run \`pnpm --filter './site' build\` first" >&2; exit 1; }
 [[ -f "$SITE_DIST/index.html" ]] || { echo "error: $SITE_DIST/index.html missing -- build incomplete" >&2; exit 1; }
 [[ -n "${GITHUB_TOKEN:-}" ]] || { echo "error: GITHUB_TOKEN required" >&2; exit 1; }
+
+# The workflow file that must exist on docs-pages for the Pages deploy to ever trigger.
+# Copied fresh from this checkout on every publish (see push_attempt() below) rather than
+# merely preserved from whatever docs-pages already carries: the documented bootstrap
+# (docs/repo/docs-site-deploy.md's "Reference commands") creates docs-pages as a genuinely
+# empty orphan branch, so on the first-ever publish there is nothing to preserve and a
+# preserve-only strategy would leave the branch permanently without this file. Copying it
+# from main unconditionally also means the docs-pages copy never drifts if this file
+# changes later.
+readonly DEPLOY_PAGES_WORKFLOW=".github/workflows/deploy-pages.yml"
+
+[[ -f "$SRC_DIR/$DEPLOY_PAGES_WORKFLOW" ]] || {
+    echo "error: $DEPLOY_PAGES_WORKFLOW not found in this checkout -- cannot publish without it" >&2
+    exit 1
+}
 
 # The docs-pages branch is bootstrapped as a one-time manual step once both owner-gated
 # blockers clear (see docs/repo/docs-site-deploy.md's "Reference commands" section); it is
@@ -51,50 +73,76 @@ fi
 # includes `.github/` -- the docs-pages branch carries its own
 # `.github/workflows/deploy-pages.yml`, a separate workflow file living on that
 # branch (not on main), and that file is what actually performs the Pages
-# deployment when pushed to. Wiping it kills the deploy trigger silently: the push
-# to docs-pages still succeeds, but Pages never updates, and rotating a token does
-# not fix it -- it requires re-adding the workflow file to the branch by hand.
+# deployment when pushed to. Preserving whatever else may already live under
+# `.github/` is a courtesy on top of the unconditional re-copy above, not a
+# substitute for it.
 readonly -a PRESERVE=(
     ".github"
 )
 
+# Bash suspends `set -e` for every command inside a function for the duration that the
+# function itself is used as the condition of `if`/`while`/`&&`/`||` (this is standard,
+# documented bash behaviour, not a bug in this script's use of `set -e`) -- so
+# `if push_attempt; then` on the first attempt below would silently swallow a failure in
+# any single command this function runs, letting execution fall through to `git commit`
+# and `git push` against a half-updated working tree. Every fallible command here is
+# therefore checked and returned from explicitly, rather than relying on `set -e` to stop
+# the function -- this makes push_attempt's own exit status meaningful under both call
+# styles: `if push_attempt; then …` (attempt 1) and the bare, unconditional `push_attempt`
+# (the retry), where `set -e` reasserts itself normally.
 push_attempt() {
     local work
-    work="$(mktemp -d)"
-    trap 'rm -rf "$work"' RETURN
+    work="$(mktemp -d)" || return 1
+
+    # cd back to SRC_DIR before deleting $work: the working directory is still inside
+    # $work at the point this function returns (nothing below ever cd's back out), and
+    # `rm -rf` on the process's own current directory leaves the shell's $PWD pointing at
+    # a directory that no longer exists -- silently corrupting $OLDPWD for whatever runs
+    # next (see SRC_DIR's comment above for the retry-path consequence of that).
+    trap 'cd "$SRC_DIR" 2>/dev/null || true; rm -rf "$work"' RETURN
 
     git clone --branch docs-pages --depth 1 \
-        "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git" "$work"
+        "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git" "$work" || return 1
 
-    cd "$work"
+    cd "$work" || return 1
     # Identity scoped to this clone so it doesn't leak into any shared runner-level
     # git config.
-    git config user.email "release@reyem.tech"
-    git config user.name "laravel-hubspot-release-bot"
+    git config user.email "release@reyem.tech" || return 1
+    git config user.name "laravel-hubspot-release-bot" || return 1
 
     # Stash the preserved paths (-a keeps mode and recurses into directories --
     # cp -p alone fails on dirs), wipe everything else, copy the fresh build
     # output on top, then restore what was stashed.
     local stash
-    stash="$(mktemp -d)"
+    stash="$(mktemp -d)" || return 1
     for f in "${PRESERVE[@]}"; do
-        [[ -e "$f" ]] && cp -a "$f" "$stash/"
+        if [[ -e "$f" ]]; then
+            cp -a "$f" "$stash/" || return 1
+        fi
     done
 
-    find . -mindepth 1 -maxdepth 1 ! -name ".git" -exec rm -rf {} +
-    cp -R "$OLDPWD/$SITE_DIST"/. .
+    find . -mindepth 1 -maxdepth 1 ! -name ".git" -exec rm -rf {} + || return 1
+    cp -R "${SRC_DIR}/${SITE_DIST}"/. . || return 1
     for f in "${PRESERVE[@]}"; do
-        [[ -e "$stash/$f" ]] && cp -a "$stash/$f" "$f"
+        if [[ -e "$stash/$f" ]]; then
+            cp -a "$stash/$f" "$f" || return 1
+        fi
     done
     rm -rf "$stash"
 
-    git add -A
+    # Unconditional re-copy, after the preserve-restore above so it always wins: guarantees
+    # deploy-pages.yml exists on docs-pages even on the very first publish to a freshly
+    # bootstrapped, genuinely empty orphan branch (see DEPLOY_PAGES_WORKFLOW's comment).
+    mkdir -p "$(dirname "$DEPLOY_PAGES_WORKFLOW")" || return 1
+    cp -a "${SRC_DIR}/${DEPLOY_PAGES_WORKFLOW}" "$DEPLOY_PAGES_WORKFLOW" || return 1
+
+    git add -A || return 1
     if git diff --staged --quiet; then
         echo "-> no doc changes; nothing to publish"
         return 0
     fi
-    git commit -m "chore(docs): publish Starlight site"
-    git push origin docs-pages
+    git commit -m "chore(docs): publish Starlight site" || return 1
+    git push origin docs-pages || return 1
 }
 
 if push_attempt; then
