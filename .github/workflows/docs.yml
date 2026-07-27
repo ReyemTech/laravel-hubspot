@@ -1,0 +1,48 @@
+name: docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Independent of js.yml's install (see js.yml's own filtered install step): the docs site pulls
+# in Astro/Starlight, which need a newer Node than resources/js's Vitest floor, so the two
+# workspaces are installed and built in isolation from each other on purpose.
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    # Node major pinned to the lowest version astro's own package.json "engines" field permits
+    # (`>=22.12.0`, read via `npm view astro engines` against the installed 7.1.3) — not matched
+    # to js.yml's Node 20, because astro's floor is higher than vitest's. The install step below
+    # is filtered to site/ only, so this workflow never touches resources/js and vice versa.
+    name: docs site build (site/ only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.17.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies (site only)
+        run: pnpm install --frozen-lockfile --filter './site...'
+
+      - name: Build docs site
+        run: pnpm --filter './site' build
+
+      - name: Verify build artifact
+        run: test -f site/dist/index.html
