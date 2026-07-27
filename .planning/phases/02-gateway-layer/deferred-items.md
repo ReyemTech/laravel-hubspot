@@ -128,6 +128,17 @@ Out-of-scope discoveries logged during execution, per the executor's scope-bound
   name what WAS handled, as `assertSynced`'s and `assertNothingSynced`'s do — a bare "no webhook was
   handled" is the message a developer immediately replaces with their own debugging output.
 
+- **`src/Testing/RequestLog.php` is 458 lines and `src/Testing/HubspotFake.php` is 460, both against
+  the 500-line hard gate and the 300-line review target.** `RequestLog` grew there with the
+  post-review one-record fix (see 02-06-SUMMARY.md), and its own natural seam is the message
+  rendering — `trafficSummary`, `requestSummary`, `associationSummary`, `describeAll`,
+  `describeValues`, `describeValue`, `describeRecords`, `describeRecord`, ~90 lines — which would move
+  out as a stateless renderer. It was not extracted with the fix because the fix's subject was a false
+  positive in an assertion, and splitting a class in the same change would have made the correctness
+  diff harder to review than it needed to be. The 500-line gate has now forced three extractions in
+  this phase (02-05's `LabelledAssociationTest`, 02-06's `RequestLog`/`RecordedRequest`, and 02-06's
+  `FakeSyncedPropertiesTest`); the pattern is worth noticing rather than absorbing one file at a time.
+
 - **`src/Testing/HubspotFake.php` is 460 lines against the 500-line hard gate and the 300-line
   review target.** Not fixed in 02-06: this plan already extracted the assertion surface out of it
   into `RecordedRequest` and `RequestLog` rather than appending (STANDARDS §6b), and what remains is

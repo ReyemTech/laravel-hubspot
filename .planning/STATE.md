@@ -6,9 +6,9 @@ current_phase: 2
 current_phase_name: Gateway Layer
 status: executing
 stopped_at: "Completed 02-06-PLAN.md — Phase 2 complete, PR #20 open"
-last_updated: "2026-07-27T23:22:35.157Z"
+last_updated: "2026-07-27T23:40:55.171Z"
 last_activity: 2026-07-27
-last_activity_desc: "executed 02-06-PLAN.md (the fake's assertion surface): assertSynced, assertNothingSynced, assertAssociated with a directional type-id check read from the recorded request body, and determinism by default. GW-04 delivered; **all six Phase 2 plans are executed** and the phase is ready for verification. assertWebhookHandled is deferred to Phase 5 as a recorded decision."
+last_activity_desc: "executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 354 tests / 1588 assertions, 100.0% coverage, MSI 98.84%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision."
 progress:
   total_phases: 2
   completed_phases: 2
@@ -33,8 +33,8 @@ request lifecycle.
 
 Phase: 2 of 9 (Gateway Layer)
 Plan: 6 of 6 in current phase
-Status: Plans 02-01 through 02-05 merged (PRs #8, #14, #15, #18, #19). Plan 02-06 (the fake's assertion surface, directional assertAssociated, determinism) complete on branch `feat/02-06-fake-assertion-surface` — PR #20 open, awaiting GitHub checks and Codex review. **No plans remain in Phase 2.**
-Last activity: 2026-07-27 — executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 351 tests / 1557 assertions, 100.0% coverage, MSI 98.79%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision.
+Status: Plans 02-01 through 02-05 merged (PRs #8, #14, #15, #18, #19). Plan 02-06 (the fake's assertion surface, directional assertAssociated, determinism) complete on branch `feat/02-06-fake-assertion-surface` — PR #20 open, all 29 required checks green, one Codex P1 found and fixed on the branch (`218bbb8` RED → `6c7cfa4` GREEN); the review thread is left unanswered for the owner per STANDARDS §12. **No plans remain in Phase 2.**
+Last activity: 2026-07-27 — executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 354 tests / 1588 assertions, 100.0% coverage, MSI 98.84%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision.
 
 Progress: [██████████] 100%
 
@@ -149,6 +149,7 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: No fake assertion reads a response; RecordedRequest holds none, because an association read returns associationTypes in no guaranteed order and proves nothing about what was written
 - [Phase ?]: With no frozen clock the fake stamps one fixed instant rather than the real one, and never mutates the global clock — determinism must hold across processes, not only within one
 - [Phase ?]: assertWebhookHandled deferred to Phase 5 with recorded reasoning: no webhook path exists, a no-op stub would pass and prove nothing, and adding it later is semver-safe
+- [Phase ?]: assertSynced's property subset must be carried by ONE record, never assembled from several — Codex P1 on PR #20; the per-property search stays only as the diagnosis producing the useful message
 
 ### Pending Todos
 

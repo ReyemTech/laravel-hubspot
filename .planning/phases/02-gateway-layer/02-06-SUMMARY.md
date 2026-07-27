@@ -38,12 +38,14 @@ tech-stack:
     - "Determinism without global side effects: the double reads the test clock when one is frozen and a fixed documented instant otherwise, rather than freezing the consumer's clock or falling back to the real one"
     - "A surviving mutant on a line that exists only to satisfy a docblock is a line to delete, not a test to write — five array_values() calls went that way, and one redundant guard went with them"
     - "A double's decode shape pinned by array access rather than array_column, because array_column accepts objects too and therefore leaves json_decode's associative flag asserted by nothing"
+    - "A subset expectation over several written records is satisfied by ONE record carrying all of it, never by values assembled from different records — the per-property search stays, but only as the diagnosis that produces the useful message (Codex P1, PR #20)"
 
 key-files:
   created:
     - src/Testing/RecordedRequest.php
     - src/Testing/RequestLog.php
     - tests/Feature/HubspotFakeTest.php
+    - tests/Feature/FakeSyncedPropertiesTest.php
     - tests/Feature/FakeDeterminismTest.php
     - tests/Feature/Gateway/AssertAssociatedDirectionTest.php
     - tests/Support/FailedAssertion.php
@@ -103,26 +105,40 @@ coverage:
         status: pass
     human_judgment: false
   - id: D2
-    description: "assertSynced with an expected property subset compares strictly, searches every written record including a batch's, and fails naming the property and both values with their types"
+    description: "assertSynced with an expected property subset compares strictly, searches every written record including a batch's, and fails naming the property and both values with their types. Refs moved 2026-07-27: these tests live in FakeSyncedPropertiesTest after the post-review split"
     requirement: "GW-04"
     verification:
       - kind: unit
-        ref: "tests/Feature/HubspotFakeTest.php#test_assert_synced_matches_a_property_subset_read_from_the_recorded_request_body"
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_assert_synced_matches_a_property_subset_read_from_the_recorded_request_body"
         status: pass
       - kind: unit
-        ref: "tests/Feature/HubspotFakeTest.php#test_assert_synced_compares_property_values_strictly_and_names_both_types"
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_assert_synced_compares_property_values_strictly_and_names_both_types"
         status: pass
       - kind: unit
-        ref: "tests/Feature/HubspotFakeTest.php#test_assert_synced_fails_naming_the_property_that_was_not_written_at_all"
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_assert_synced_fails_naming_the_property_that_was_not_written_at_all"
         status: pass
       - kind: unit
-        ref: "tests/Feature/HubspotFakeTest.php#test_assert_synced_names_the_first_property_that_no_written_record_satisfies"
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_assert_synced_names_the_first_property_that_no_written_record_satisfies"
         status: pass
       - kind: unit
-        ref: "tests/Feature/HubspotFakeTest.php#test_assert_synced_searches_every_written_record_not_only_the_first"
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_assert_synced_searches_every_written_record_not_only_the_first"
         status: pass
       - kind: unit
-        ref: "tests/Feature/HubspotFakeTest.php#test_assert_synced_finds_a_property_in_any_record_of_a_batch_write"
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_assert_synced_finds_a_property_in_any_record_of_a_batch_write"
+        status: pass
+    human_judgment: false
+  - id: D16
+    description: "**A property subset must be carried by ONE record, not assembled from several** — the Codex P1 on PR #20. Values written by different records do not satisfy one expectation, and the failure message reports the subset asked for and every record actually submitted"
+    requirement: "GW-04"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_assert_synced_requires_one_record_to_carry_the_whole_property_subset"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_the_one_record_rule_holds_across_separate_writes_too"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/FakeSyncedPropertiesTest.php#test_a_record_missing_one_expected_property_does_not_carry_the_subset"
         status: pass
     human_judgment: false
   - id: D3
@@ -285,7 +301,7 @@ coverage:
     human_judgment: false
 
 # Metrics
-duration: ~95min (commit span, including two mutation-testing runs at ~5min each)
+duration: ~135min (commit span, including three mutation-testing runs at ~5min each and the post-review fix)
 completed: 2026-07-27
 status: complete
 ---
@@ -299,12 +315,12 @@ actually happened rather than only that something did not.**
 
 ## Performance
 
-- **Duration:** ~95 min (commit span)
+- **Duration:** ~135 min (commit span)
 - **Tasks:** 3 (assertSynced/assertNothingSynced/assertRequestCount; assertAssociated; determinism and
-  the recorded deferral), plus one mutation-remediation commit
-- **Files created:** 6 · **Files modified:** 4 · **+2122 / −8 lines**
-- **Tests:** 351 (1557 assertions), up from 305 (1195)
-- **Line coverage:** 100.0% · **MSI:** 98.79% (up from 98.31%) · **PHPStan:** level max, no baseline,
+  the recorded deferral), plus one mutation-remediation commit and one post-review fix pair
+- **Files created:** 7 · **Files modified:** 4
+- **Tests:** 354 (1588 assertions), up from 305 (1195)
+- **Line coverage:** 100.0% · **MSI:** 98.84% (up from 98.31%) · **PHPStan:** level max, no baseline,
   no suppression added
 - **Surviving mutants:** 7 — the documented pre-existing equivalents minus one, now killed. **Zero new.**
 
@@ -361,8 +377,8 @@ actually happened rather than only that something did not.**
 | Gate | Phase 2 final | Phase 1 left behind | 02-05 (previous plan) |
 |---|---|---|---|
 | Line coverage | **100.0%** | 100% | 100.0% |
-| MSI | **98.79%** | 100% | 98.31% |
-| Tests | **351** (1557 assertions) | 30 (190) | 305 (1195) |
+| MSI | **98.84%** | 100% | 98.31% |
+| Tests | **354** (1588 assertions) | 30 (190) | 305 (1195) |
 
 Coverage has not regressed from the 100% Phase 1 left behind. **MSI is below Phase 1's 100%, and the
 reason is unchanged from 02-03 onwards rather than new here:** the seven surviving mutants are
@@ -371,7 +387,7 @@ equivalent mutants in code that has no observable difference to assert — four 
 value is already asserted, a `RemoveArrayItem` on `'status' => 'COMPLETE'`, and a `(string)` cast on
 `json_encode`'s return) and three in `ObjectGateway` (`UnwrapArrayMap`/`UnwrapArrayValues` over
 already-list-shaped SDK results). Phase 1's 100% was measured over a single `ServiceProvider`; this
-phase's number is measured over 580 mutants across 20 classes, and it went **up** in this plan rather
+phase's number is measured over 601 mutants across 20 classes, and it went **up** in this plan rather
 than down.
 
 **One of the eight documented pre-existing equivalents is now killed.** `RemoveStringCast` on
@@ -494,7 +510,8 @@ split is worth recording because the second group is the one that is easy to get
   branch. What proves that is `test_a_dissociate_never_satisfies_assert_associated`, and the docblock
   now says so, including what would have to change if a v4 read route ever gained a four-segment shape.
 
-**After: MSI 98.79% (7 untested, 573 tested)** — above the 98.31% baseline. The 7 are byte-for-byte the
+**After: MSI 98.79% (7 untested, 573 tested)**, and **98.84% (7 untested, 594 tested)** once the
+post-review fix below added its tests — above the 98.31% baseline either way. The 7 are byte-for-byte the
 documented pre-existing equivalents, verified by reading the source at each reported line:
 
 | File | Line (was) | Mutator | Code |
@@ -516,12 +533,12 @@ All run on this branch before push:
 
 | Gate | Result |
 |---|---|
-| `vendor/bin/pest` | **351 passed, 1557 assertions** (from 305/1195) |
+| `vendor/bin/pest` | **354 passed, 1588 assertions** (from 305/1195) |
 | `vendor/bin/pest --coverage --min=95` | **100.0%** |
-| `vendor/bin/pest --mutate --min=80` | **MSI 98.79%** (7 untested, 573 tested) — up from 98.31% |
+| `vendor/bin/pest --mutate --min=80` | **MSI 98.84%** (7 untested, 594 tested) — up from 98.31% |
 | `vendor/bin/phpstan analyse --no-progress` | level max, no errors, no baseline, no suppression added |
 | `vendor/bin/pint --test` | passed |
-| `vendor/bin/phpcs --standard=phpcs.xml -q` | passed (`HubspotFake` 460/500, logged in deferred-items) |
+| `vendor/bin/phpcs --standard=phpcs.xml -q` | passed (`HubspotFake` 460/500, `RequestLog` 458/500, both logged in deferred-items) |
 | `bash scripts/ci/verify-arch-rules-fire.sh` | 10/10 rules fired |
 | `bash scripts/ci/verify-quality-gates-fire.sh` | passed |
 | `bash scripts/ci/check-source-hygiene.sh` | passed |
@@ -544,6 +561,82 @@ authoritative result is what GitHub reports on PR #20.
 
 ## Self-Check: PASSED
 
-Every file claimed under `key-files.created` exists on disk, and all eight commits
-(`25474d5`, `91ad80f`, `94d75ae`, `058b20d`, `f444509`, `ea0e985`, `130e656`, `c4fe045`) are present in
-`git log`.
+Every file claimed under `key-files.created` exists on disk, and all ten commits
+(`25474d5`, `91ad80f`, `94d75ae`, `058b20d`, `f444509`, `ea0e985`, `130e656`, `c4fe045`, `218bbb8`,
+`6c7cfa4`) are present in `git log`.
+
+---
+
+## Post-review fix, 2026-07-27 (PR #20, after all 29 required checks were green)
+
+One defect, found by Codex on `src/Testing/RequestLog.php:135-139` and rated P1. **It is real**, it was
+in code this plan introduced, and it is the exact class of false positive the whole assertion surface
+exists to prevent — so it is fixed here rather than deferred.
+
+### The defect
+
+`assertSynced($type, $properties)` collected the values recorded for **each** property across **all**
+written records and then checked each property independently. So writes of
+`{dealname: One, amount: 10}` and `{dealname: Two, amount: 20}` satisfied
+`assertSynced('deals', ['dealname' => 'One', 'amount' => '20'])` — a combination **neither record
+holds**. A multi-record sync that transposed two records' fields, or wrote the right values against the
+wrong record ids, would pass while the CRM holds neither record the caller described.
+
+Worth recording plainly: the shipped test
+`test_assert_synced_searches_every_written_record_not_only_the_first` and the docblock phrase "searches
+every written record" were both *true* and both described the bug. The intent was "do not inspect only
+the first record"; what was implemented was "assemble a match out of any records you like". The tests
+asserting single-property expectations across several records could not tell the two apart, because a
+one-property subset makes them identical.
+
+### The fix
+
+Two assertions in sequence, because they diagnose different failures:
+
+1. **Per property, was this value written anywhere?** The common failure — a wrong value, or a property
+   the package never sent — and the message that names the property, the expected value with its type,
+   and every value recorded for it. Unchanged.
+2. **Then: did ONE record carry all of them together?** New, with its own message, because at that
+   point no single property is to blame: every one of them was written.
+
+```
+Expected HubSpot to have synced object type 'deals' with {"dealname":"One","amount":"20"} on one
+record, but no single record carried all of them. Records written:
+{"dealname":"One","amount":"10"}; {"dealname":"Two","amount":"20"}.
+```
+
+`recordCarriesAll()` checks `array_key_exists` before comparing rather than
+`($record[$name] ?? null) === $expected`: a property the package never sent and one it sent as `null`
+are different facts, and conflating them would let an expectation of `null` be satisfied by an absence.
+Three tests cover it — the batch case Codex named, the same rule across two separate single-record
+writes, and a record that matches one expected property while lacking the other (records in one batch
+legitimately carry different property sets, so "absent" is a state this check meets in practice).
+
+### One change beyond the fix, reported rather than smoothed over
+
+**`HubspotFakeTest` was split, because the two new tests took it to 499 lines** against the 500-line
+hard gate — one line of margin, which is not margin. The property-expectation subject moved wholesale
+into `tests/Feature/FakeSyncedPropertiesTest.php`; every test crossed unchanged, and `HubspotFakeTest`
+keeps the object-type-level assertions and their guards. That is a coherent split rather than an
+overflow bucket, and it is the third time in this phase the 500-line gate has forced an extraction
+(02-05 split `LabelledAssociationTest`, and this plan's own `RequestLog`/`RecordedRequest` extraction
+was forced the same way).
+
+### Verification of the post-review fix
+
+| Gate | Result |
+|---|---|
+| `vendor/bin/pest` | **354 passed, 1588 assertions** (from 351/1557) |
+| `vendor/bin/pest --coverage --min=95` | **100.0%** |
+| `vendor/bin/pest --mutate --min=80` | **MSI 98.84%** (7 untested, 594 tested) — up from 98.79%; **zero new survivors**, the 7 are byte-for-byte the documented pre-existing equivalents |
+| `vendor/bin/phpstan analyse --no-progress` | level max, no errors, no baseline, no new suppression |
+| `vendor/bin/pint --test` | passed |
+| `vendor/bin/phpcs --standard=phpcs.xml -q` | passed (`HubspotFakeTest` back to 324 lines) |
+| `bash scripts/ci/verify-arch-rules-fire.sh` | 10/10 rules fired |
+| `bash scripts/ci/verify-quality-gates-fire.sh` | passed |
+| `bash scripts/ci/check-source-hygiene.sh` | passed |
+
+**Commits:** `218bbb8` (RED, 2 failures confirmed) → `6c7cfa4` (GREEN).
+
+**The review thread is not answered or resolved here.** Reading and replying to automated review is
+the repository owner's step under STANDARDS §12; this records the fix and the evidence for it.
