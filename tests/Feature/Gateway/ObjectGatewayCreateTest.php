@@ -11,8 +11,8 @@ use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\HubspotObject;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
 use ReyemTech\Hubspot\HubspotManager;
-use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Testing\HubspotFake;
+use ReyemTech\Hubspot\Tests\TestCase;
 
 /**
  * The tracer (02-01): proves one `deals` create runs end to end through the package's own
