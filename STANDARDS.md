@@ -198,7 +198,8 @@ Every change starts as a **failing (RED) test** and is implemented until green. 
 - Review checks the sequence, since CI cannot: a PR whose tests were written after the code is
   sent back.
 
-The honest caveat: this is the one standard here that tooling cannot fully enforce. It holds
+The honest caveat: this is one of two standards here that tooling cannot fully enforce — the other
+is reading automated review before resolving it (§12, *Automated review is review*). It holds
 because review enforces it, which means reviewers have to actually look.
 
 ## 6b. Code shape
@@ -306,6 +307,41 @@ Every exception message names the fix, not just the fault: *"HUBSPOT_STORE=datab
 - PRs are reviewable in one sitting. Over ~400 changed lines, the description must say why it
   could not be split.
 - No PR merges red. Not "it's unrelated", not "it's flaky" — see §6.
+
+### Automated review is review
+
+`main` requires conversation resolution, which makes resolving a thread feel like a mechanical
+step on the way to a green merge button. It is not. Resolving a thread is an assertion that
+somebody considered the feedback.
+
+- **Every automated review comment is read in full before its thread is resolved.** Codex, or
+  whatever replaces it. There is no "these are just bot comments" exemption — they read the diff
+  more carefully than a tired human does at 2am.
+- **A thread is closed by fixing the finding, or by a reply explaining with evidence why it is
+  wrong.** Never by silence. If the finding is correct but out of scope, say so and record where
+  the work went.
+- **Resolving to unblock a merge is forbidden.** This is the specific failure that produced this
+  section, not a hypothetical.
+- **Verify before implementing.** A reviewer asserts; it does not prove. Several findings in the
+  incident below were reproducible locally in minutes, and one recommendation would have been
+  wrong to follow as written.
+
+**Why this is here.** On 2026-07-27, nine Codex comments across three pull requests were resolved
+without being read, purely to satisfy the conversation-resolution gate. Two were P1 defects that
+merged as a result: a Dependabot auto-merge workflow that could never run, because Dependabot's
+`pull_request` runs receive a read-only token regardless of the permissions the workflow requests;
+and a documentation publish script that left the `docs-pages` branch without the workflow needed to
+trigger it, so Pages would have silently never deployed — the exact failure the PAT design existed
+to prevent. A third finding was a defect in this repository's own release configuration, where
+`bump-patch-for-minor-pre-major` downgraded `feat:` commits to patch bumps below 1.0.0 while the
+commit message introducing it claimed the opposite.
+
+None of them were found by CI. All of them were sitting in threads someone had already closed.
+
+**Enforcement.** `scripts/ci/check-review-threads.sh` fails the build when a resolved review thread
+has no reply from a human author. That catches silent resolution, which is the mechanical half of
+the failure. It cannot verify that anyone *understood* what they read — like §6a's TDD ordering,
+the remainder holds because review enforces it.
 
 **Commits:**
 

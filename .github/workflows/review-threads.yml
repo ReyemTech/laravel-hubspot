@@ -1,0 +1,50 @@
+name: review-threads
+
+# STANDARDS.md §12, "Automated review is review": scripts/ci/check-review-threads.sh
+# fails the build when a resolved review thread has no reply from a human author.
+# Its own workflow file (not governance.yml) so it has its own `permissions:` and
+# `env:` for the `gh api graphql` call the script makes, without those spreading
+# onto governance.yml's other jobs, which do not need them.
+#
+# CORRECTED (PR #10, discussion_r3657716045): this workflow originally also
+# declared `pull_request_review_thread: types: [resolved, unresolved]`, intended
+# to re-run the check when a thread's resolution state changes without a new
+# commit -- otherwise a stale "success" from the previous push stands even after
+# a finding is silently resolved. That trigger does not exist. Confirmed
+# empirically, not assumed: a minimal workflow file declaring only
+# `on: pull_request_review_thread` was pushed to a throwaway branch on this
+# repository and GitHub rejected it outright as an invalid workflow file (no job
+# ever scheduled); a control file using the same structure with the genuinely
+# valid `pull_request_review` trigger was accepted with no error. Both scratch
+# branches/refs were deleted immediately after.
+#
+# GitHub Actions has no built-in trigger for "a review thread was resolved with
+# no accompanying comment or review" -- the closest events, `pull_request_review`
+# (a review submitted/edited/dismissed) and `pull_request_review_comment` (a
+# review comment created/edited/deleted), both fire on *authoring* something, not
+# on the "Resolve conversation" UI action itself. `pull_request_review_thread` is
+# real, but only as a webhook/GitHub-App event, not as an Actions `on:` trigger --
+# closing this gap natively would need a webhook receiver (a GitHub App or a
+# small external service) outside Actions entirely, which is materially more
+# infrastructure than this PR's scope. See
+# docs/repo/owner-gated-checklist.md's "review-threads.yml" section for the
+# resulting residual gap, recorded for the owner rather than silently dropped.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review-threads:
+    name: Review threads (resolved threads need a human reply)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check this PR's resolved review threads for a human reply
+        run: bash scripts/ci/check-review-threads.sh
+      - name: Prove the violation rule fires
+        run: bash scripts/ci/check-review-threads.sh --self-test

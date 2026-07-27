@@ -63,6 +63,30 @@ and the manifest-shape lock:
 - `governance` — the security policy, Dependabot config, CODEOWNERS and PR template content checks
 - `commitlint` — lints every commit in the PR (D-25/D-26), not only the head commit or PR title
 
+**`.github/workflows/review-threads.yml`** — STANDARDS §12, "Automated review is review":
+
+- `review-threads` — fails when a resolved review thread has no reply from a human author
+  (`scripts/ci/check-review-threads.sh`). Its own workflow file, not governance.yml, purely so its
+  *permissions*/*env* (for the `gh api graphql` call the script makes) do not spread onto
+  governance.yml's other jobs, which need neither.
+
+  **Known gap, accepted rather than closed (PR #10, discussion_r3657716045).** This check runs on
+  *pull_request*'s default activity types (opened, synchronize, reopened) only. A review thread
+  resolved via the GitHub UI with no accompanying commit does not re-trigger it, so a stale
+  "success" from the previous push stands even after a finding is silently resolved — branch
+  protection would allow the merge regardless. An attempt to fix this by also triggering on
+  *pull_request_review_thread* (resolved/unresolved) was made and reverted: that event is real as
+  a webhook/GitHub-App delivery but is **not a valid GitHub Actions "on:" trigger**, confirmed
+  empirically against this repository (a minimal workflow file declaring only that trigger was
+  pushed to a throwaway branch and GitHub rejected it outright as an invalid workflow file; a
+  control file using the genuinely valid *pull_request_review* trigger was accepted). Natively
+  closing this gap would need a webhook receiver (a GitHub App or a small external service)
+  subscribed to that event, entirely outside GitHub Actions — materially more infrastructure than
+  this phase's scope. **Owner decision needed:** accept this gap (branch protection's
+  conversation-resolution requirement still blocks an *unresolved* thread from merging; this only
+  degrades to "checked at last push" for threads resolved afterward), or scope a webhook-based
+  follow-up.
+
 **`.github/workflows/js.yml`** — the frontend coverage floor:
 
 - `coverage` — Vitest, 95% floor on lines/functions/branches/statements, `resources/js/` only
@@ -77,9 +101,29 @@ and the manifest-shape lock:
 - `bc-check` — `roave/backward-compatibility-check`, single PHP-8.4 job, skips with a loud
   message (never silently) only when no git tag exists yet
 
-That is 17 required status checks in total. `.github/workflows/release-please.yml`'s own job is
-deliberately **not** in this list — it triggers on push to the default branch only, never on a
-pull request, so it is not a check a contributor's PR needs to pass.
+That is 18 required status checks in total, by job id. `.github/workflows/release-please.yml`'s
+own job is deliberately **not** in this list — it triggers on push to the default branch only,
+never on a pull request, so it is not a check a contributor's PR needs to pass.
+
+**Job-id count vs. the real branch-protection list.** The 18 above counts distinct job *ids*, the
+unit this document and `tests/Ci/RequiredChecksTest.php` both track. GitHub's actual "Required
+status checks" setting is keyed on each job's rendered **check name**, and `tests`
+(`.github/workflows/ci.yml`) is a 3×2×2 matrix (PHP 8.3/8.4/8.5 × Laravel 12/13 ×
+prefer-lowest/prefer-stable) that GitHub lists as 12 separate named checks, not one — so the real
+required-checks list the owner configures has **29** entries (18 − 1 for the collapsed `tests` row
++ 12 matrix cells), not 18. Whichever number is live in **Settings → Branches** at any given time,
+re-derive it as "job ids in this section, with `tests` expanded to its current matrix cell count"
+rather than trusting a number written down here — the matrix shape itself can change (STANDARDS
+§1 already dropped Laravel 11 mid-project).
+
+**Re-apply branch protection whenever this list changes.** GitHub's required-status-check list is
+a snapshot the owner configures by hand at **Settings → Branches → Branch protection rules**; it
+does not update itself when a new job is added here or removed. `review-threads` above is new as
+of this document's revision — until the owner adds it to that setting, main can merge a PR with
+a silently-resolved review thread, exactly the failure STANDARDS §12 exists to prevent, without
+any red X appearing. A required check that exists in CI but not in that setting is not required at
+all; it is only advisory. Treat every diff to this section as a reminder to open that settings page
+and reconcile it, not as documentation that stays true on its own.
 
 ## Dependabot auto-merge
 

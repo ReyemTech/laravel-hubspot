@@ -67,6 +67,16 @@ PHP `^8.3`; this package targets `^8.2` for reach.
 - Conventional Commits on **every** commit, not just the PR title.
 - Before finalising: `vendor/bin/pint`, `vendor/bin/phpstan analyse`, `vendor/bin/pest`, and the
   architecture tests. All green, no exceptions, no disabled gates.
+- **Never resolve a review thread you have not read.** See `STANDARDS.md` §12, *Automated review is
+  review*. Branch protection requires conversation resolution, so resolving threads is the last
+  thing standing between you and a green merge button — which is exactly why it is the easiest
+  discipline in this repository to quietly drop. Read every Codex comment in full, then either fix
+  it or reply saying with evidence why it is wrong. Closing a thread in silence is not allowed, and
+  "it's only a bot" is not a reason.
+- **Local green is not evidence.** Phase 1 shipped four gate failures that passed on the machine
+  and failed in CI — no `composer.lock` on a matrix build, a missing workflow permission, a Node
+  pin below what pnpm requires, and a missing coverage driver. None were reachable without pushing.
+  Push, watch the real checks, and report what GitHub says rather than what your terminal said.
 
 ## When the spec is silent
 
