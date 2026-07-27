@@ -400,9 +400,9 @@ need to watch for a stray `feat:` inside a branch bumping the minor version.
 
 ## Decisions needing sign-off
 
-Seven decisions are recorded here. **Six are now signed off — #0, #1, #2, #3, #4 and #6. Only #5
-remains open.** Each diverges from current ReyemTech practice or sets a cost, and was flagged
-rather than assumed:
+Seven decisions are recorded here. **All seven are now signed off as of 2026-07-27 — nothing in
+this document is pending.** Each diverged from current ReyemTech practice or set a cost, and was
+flagged rather than assumed:
 
 0. **~~Merge commits vs release-please~~ — SIGNED OFF 2026-07-26** (§12a). Merge commits stay;
    commitlint on every commit is mandatory and is a required check in §12b. Rationale: squashing
@@ -431,8 +431,13 @@ rather than assumed:
    architecture test. New to both repos. Justified in §4.
 4. **~~Coverage 95% / MSI 80%~~ — SIGNED OFF 2026-07-26.** Confirmed as written. These are real
    floors that will occasionally block a merge; that is the point.
-5. **`final` by default.** Reduces consumer flexibility, prevents accidental BC commitments. The
-   escape hatch is interfaces, which the layer design already provides.
+5. **~~`final` by default~~ — SIGNED OFF 2026-07-27.** Confirmed as written in §8: every class is
+   `final` unless extension is an explicit, documented feature. Extension happens through the layer
+   interfaces, rebound in the container — the escape hatch the layer design already provides.
+   The deciding argument is asymmetry: shipping unsealed and sealing later breaks everyone who
+   subclassed, while shipping sealed and unsealing later is a patch nobody notices. Accepted cost:
+   a consumer who wants to change one method must implement an interface rather than override, and
+   test doubles must target the interface.
 6. **~~Function hard limit at 150 lines~~ — SIGNED OFF 2026-07-26** (§6b). Confirmed at 500 file /
    150 function / 10 complexity, with review targets of 300 / 40 / 5. With everything else in this
    document a 150-line function should never survive review — the *review target* is the number
