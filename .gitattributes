@@ -1,0 +1,44 @@
+# Distribution boundary for reyemtech/laravel-hubspot.
+#
+# `export-ignore` controls what `git archive` emits, which is what Packagist serves as this
+# package's dist tarball and therefore what lands in a consumer's `vendor/` directory. Without
+# this file every path in the repository shipped -- the planning corpus, the whole Astro docs
+# site, the test suite and every tool config. That is bandwidth a consumer pays for and cannot
+# use.
+#
+# What stays in the tarball is the runtime surface plus the files a consumer or an auditor may
+# legitimately need offline: `src/`, `config/`, `database/`, `resources/`, `composer.json`,
+# `README.md`, `LICENSE`, `SECURITY.md` and `CHANGELOG.md`.
+#
+# What is excluded is development-only. Excluding `tests/` is the one line worth stating a reason
+# for: consumers cannot run this package's suite anyway -- it needs `orchestra/testbench` and the
+# dev requires, none of which are installed transitively -- so shipping it only adds weight. The
+# suite remains available to anyone who clones the repository, which is where it is run.
+#
+# `export-ignore` affects `git archive` only. A clone is unaffected, so CI, which clones, sees
+# every path as before.
+
+/.claude            export-ignore
+/.github            export-ignore
+/.planning          export-ignore
+/docs               export-ignore
+/scripts            export-ignore
+/site               export-ignore
+/tests              export-ignore
+
+/BRIEF.md           export-ignore
+/CLAUDE.md          export-ignore
+/STANDARDS.md       export-ignore
+
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/.npmrc             export-ignore
+/commitlint.config.mjs      export-ignore
+/phpcs.xml          export-ignore
+/phpstan.neon       export-ignore
+/phpunit.xml.dist   export-ignore
+/pint.json          export-ignore
+/pnpm-lock.yaml     export-ignore
+/pnpm-workspace.yaml        export-ignore
+/release-please-config.json export-ignore
+/.release-please-manifest.json      export-ignore
