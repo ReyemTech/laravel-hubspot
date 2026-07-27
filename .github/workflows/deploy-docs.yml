@@ -22,6 +22,9 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/deploy-docs.yml"
+      # deploy-pages.yml is copied onto the docs-pages branch by publish-docs.sh, so a change to
+      # it must re-trigger publication — otherwise docs-pages keeps running the stale copy.
+      - ".github/workflows/deploy-pages.yml"
       - "scripts/release/publish-docs.sh"
   workflow_dispatch:
 

@@ -132,8 +132,16 @@ plan 06), shipped ahead of the rest of Phase 9 with explicit owner approval to p
 Both workflows are guarded to stay inert (a loud warning, not a red X) until the two things below
 are true. Nothing further needs deciding — only these two owner actions remain:
 
-1. **Create the `RELEASE_TOKEN` repository secret** — a personal access token with permission to
-   push to this repository, added at **Settings → Secrets and variables → Actions**. Without it,
+1. **Create the `RELEASE_TOKEN` repository secret** — a personal access token added at
+   **Settings → Secrets and variables → Actions**. It needs **two** permissions, not one:
+   - push access to this repository, and
+   - the **`workflow` scope** (classic PAT) or **Workflows: write** (fine-grained PAT).
+
+   The second is easy to miss and is not optional. `publish-docs.sh` copies
+   `.github/workflows/deploy-pages.yml` onto the `docs-pages` branch — without it that branch has
+   no workflow to trigger and Pages never deploys — and **GitHub rejects any push that adds or
+   updates a file under `.github/workflows/` when the token lacks workflow permission.** A PAT with
+   push access alone makes both publish attempts fail at `git push`. Without the secret entirely,
    `deploy-docs.yml` still runs and still succeeds (it falls back to `GITHUB_TOKEN`), but
    `deploy-pages.yml` never fires automatically from that push — see
    `docs/repo/docs-site-deploy.md` for why.

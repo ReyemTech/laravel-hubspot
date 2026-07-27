@@ -16,6 +16,12 @@ Two things are still blocked on the repository owner (D-47), not on anything tec
    real deploy (see below for why). Unblocked by the owner creating one and adding it at
    `Settings -> Secrets and variables -> Actions`.
 
+   It must carry the **`workflow` scope** (classic PAT) or **Workflows: write** (fine-grained),
+   in addition to repository push access. `publish-docs.sh` copies
+   `.github/workflows/deploy-pages.yml` onto `docs-pages`, and GitHub rejects a push that touches
+   anything under `.github/workflows/` from a token without that permission — so a push-only PAT
+   fails on both attempts rather than bootstrapping the deployment.
+
 Both blockers are independent of each other and of everything else in this document — the
 workflows below can be written, committed, and will sit correctly inert until both are cleared.
 
