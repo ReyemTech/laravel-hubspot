@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Gateway;
 
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
+use ReyemTech\Hubspot\Gateway\AssociationGateway;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
@@ -78,6 +80,22 @@ final class ServiceProviderBindingsTest extends TestCase
             $second,
             'ObjectGatewayContract must resolve a fresh instance every time, not a cached singleton -- '
             .'this is what lets Hubspot::fake() swap the transport without forgetting a stale gateway.',
+        );
+    }
+
+    public function test_association_gateway_contract_resolves_to_association_gateway_non_shared(): void
+    {
+        config(['hubspot.token' => 'binding-test-token']);
+
+        $first = app(AssociationGatewayContract::class);
+        $second = app(AssociationGatewayContract::class);
+
+        self::assertInstanceOf(AssociationGateway::class, $first);
+        self::assertNotSame(
+            $first,
+            $second,
+            'AssociationGatewayContract must resolve a fresh instance every time, for the same reason '
+            .'ObjectGatewayContract does: a cached instance would keep the pre-fake transport.',
         );
     }
 

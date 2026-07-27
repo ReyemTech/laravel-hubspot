@@ -414,14 +414,16 @@ final class ObjectGateway implements ObjectGatewayContract
      * Unreachable in practice — Guzzle throws before this branch is reached on a real 4xx/5xx
      * (02-RESEARCH.md Pitfall 3) — but the SDK declares every single-object call as a
      * `Model|Error` union, and instanceof narrowing IS the correct fix at PHPStan level max, not a
-     * suppression. A plain `RuntimeException` deliberately, never the package's own `ApiException`:
-     * an unexpected response shape is a bug in this wrapper or the SDK, not an API failure the
-     * caller can handle (threat T-02-05).
+     * suppression.
+     *
+     * The exception itself is built by `ExceptionTranslator::unexpectedResponseShape()`, which
+     * `AssociationGateway` shares: one message, one implementation (STANDARDS §6b). This private
+     * method stays as the single call point for the eight narrowing branches above.
      *
      * @param  class-string  $expected
      */
     private function unexpectedShape(string $expected): RuntimeException
     {
-        return new RuntimeException("Unexpected response shape from the HubSpot SDK: expected {$expected}.");
+        return ExceptionTranslator::unexpectedResponseShape($expected);
     }
 }

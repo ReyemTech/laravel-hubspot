@@ -173,6 +173,16 @@ REL-02.
     **never** falls back to the inverse id. `associate($from, $to, label:, bidirectional:)` is the
     surface.
 
+  - Progress: **first half shipped in 02-04.** `ObjectRef` and `AssociationPair(from, to)` exist as
+    validated readonly value objects; the pair's parameter names and order are pinned by a reflection
+    test, no accessor hands both sides back unordered, and every method on
+    `AssociationGatewayContract` takes the pair first — so no API in the package accepts two objects
+    without an order. The unlabelled path (`associate()`) goes through `createDefault()` and sends no
+    request body at all, so it cannot resolve or send any type id, and a test proves reversing the
+    pair changes the recorded request URI. **Still pending in 02-05:** the labelled write, the
+    resolver seam, the `bidirectional` option, and the guarantee that an unresolvable direction throws
+    rather than falling back to the inverse id. Do not mark complete until that lands.
+
 - [x] **GW-03**: Typed exception hierarchy, no raw SDK exception to userland
   — `REQ-error-hierarchy` (core spec §9, §13 Phase 1; STANDARDS §9)
 
@@ -655,7 +665,7 @@ Deferred. Tracked but not in the current roadmap.
 | FOUND-05 | Phase 1 | Complete |
 | REL-01 | Phase 1 | Complete |
 | GW-01 | Phase 2 | Complete — 02-03 ships the full generic object surface incl. batch and HTTP 207 |
-| GW-02 | Phase 2 | Pending |
+| GW-02 | Phase 2 | Pending — In progress, 02-04 ships the directed pair and the unlabelled path; 02-05 owns the labelled write and the never-the-inverse throw |
 | GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
 | GW-04 | Phase 2 | Pending — In progress, 02-01 ships the fake transport + `assertRequestCount` only |
 | REG-01 | Phase 3 | Pending — acceptance absent in source |

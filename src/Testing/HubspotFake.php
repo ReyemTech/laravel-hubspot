@@ -170,6 +170,10 @@ final class HubspotFake
             return $this->jsonResponse(200, ['total' => 0, 'results' => []]);
         }
 
+        if (str_contains($path, '/associations/')) {
+            return $this->defaultAssociationResponse($request);
+        }
+
         if (str_contains($path, '/batch/')) {
             return $this->defaultBatchResponse($request);
         }
@@ -233,6 +237,34 @@ final class HubspotFake
             'status' => 'COMPLETE',
             'results' => $results,
         ]);
+    }
+
+    /**
+     * The association v4 routes, which the object-route defaults answer wrongly in three separate
+     * ways — and each wrong answer looks like a package bug rather than a missing fixture, because
+     * the SDK deserialises on the status code:
+     *
+     * - A default-association write is a PUT, which no object route uses, so it would fall through
+     *   to the archive branch's 204 and land in the SDK's `default` switch arm as `Model\Error`.
+     * - An association read is a GET, so it would receive `{"id": ..., "properties": {}}` and
+     *   deserialise into a collection with no `results` at all — a TypeError raised inside the SDK.
+     * - An association archive is a DELETE and genuinely answers 204, which the object branch
+     *   already gets right; it is repeated here so this method answers the whole route family rather
+     *   than two thirds of it.
+     *
+     * Routed on HTTP method and route shape only, never on object type — the same rule the object
+     * defaults follow, and for the same reason: keying a test double on object type would put the
+     * per-type branching this package exists to avoid inside the double itself.
+     */
+    private function defaultAssociationResponse(RequestInterface $request): ResponseInterface
+    {
+        return match ($request->getMethod()) {
+            'DELETE' => new Response(204),
+            'GET' => $this->jsonResponse(200, ['results' => []]),
+            // PUT — both the default-association write and the labelled one. HubSpot answers with a
+            // batch response describing the association it created.
+            default => $this->jsonResponse(200, ['status' => 'COMPLETE', 'results' => []]),
+        };
     }
 
     private function defaultCreatedResponse(RequestInterface $request): ResponseInterface

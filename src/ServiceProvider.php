@@ -6,6 +6,8 @@ namespace ReyemTech\Hubspot;
 
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
+use ReyemTech\Hubspot\Gateway\AssociationGateway;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
@@ -52,8 +54,9 @@ final class ServiceProvider extends BaseServiceProvider
 
         // Intentionally non-shared: HubspotFake replaces the HubspotClientFactory singleton
         // instance and relies on every subsequent resolution constructing a fresh gateway
-        // against it, rather than needing to forget a cached ObjectGatewayContract instance.
+        // against it, rather than needing to forget a cached gateway instance.
         $this->app->bind(ObjectGatewayContract::class, ObjectGateway::class);
+        $this->app->bind(AssociationGatewayContract::class, AssociationGateway::class);
     }
 
     public function boot(): void

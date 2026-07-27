@@ -54,6 +54,9 @@ function reyemtech_hubspot_sdk_surface_boundary_shape_files(string $gatewayRoot)
         $gatewayRoot.'/SearchQuery.php',
         $gatewayRoot.'/BatchResult.php',
         $gatewayRoot.'/BatchError.php',
+        $gatewayRoot.'/ObjectRef.php',
+        $gatewayRoot.'/AssociationPair.php',
+        $gatewayRoot.'/AssociationRow.php',
     ];
 }
 

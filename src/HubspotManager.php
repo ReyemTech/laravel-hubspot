@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot;
 
 use Illuminate\Contracts\Container\Container;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
@@ -25,6 +26,16 @@ final class HubspotManager
     public function objects(): ObjectGatewayContract
     {
         return $this->container->make(ObjectGatewayContract::class);
+    }
+
+    /**
+     * The directional association surface — associate, dissociate and read for a stated
+     * `(from, to)` direction. Every method takes an `AssociationPair`; there is no way to hand it
+     * two object references without an order.
+     */
+    public function associations(): AssociationGatewayContract
+    {
+        return $this->container->make(AssociationGatewayContract::class);
     }
 
     /**

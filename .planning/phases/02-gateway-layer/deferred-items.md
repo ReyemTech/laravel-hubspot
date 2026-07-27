@@ -33,3 +33,25 @@ Out-of-scope discoveries logged during execution, per the executor's scope-bound
   already establishes. It was NOT extracted in 02-03 because the phase's whole argument is that one
   class serves every object type, and splitting the SDK boundary across two files to buy back lines
   that are mostly documentation trades clarity for a number.
+
+## 02-04
+
+- **An association read returns HubSpot's first page only; cursor paging is not expressible.**
+  `AssociationGateway::read()` calls `getPage()` with the SDK's own default limit of 500 and returns
+  `list<AssociationRow>`, so a record with more than 500 associations of one object type silently
+  reports only the first 500. It was not fixed in 02-04 because the fix is a shape decision, not a
+  parameter: the returned list has nowhere to carry `paging.next.after`, so exposing paging means a
+  package-owned `AssociationPage` (the shape `HubspotObjectPage` already establishes for search) plus
+  an `after` argument, and 02-04's plan fixes the read's return shape as rows. Additive when it
+  lands, and semver-safe on a `final` class, but it changes a return type — so it belongs to whoever
+  needs the 501st association, with the object page as the precedent to copy. Not reachable in any
+  Phase 2 test: the fake answers one page.
+
+- **`AssociationRow::$typeId` is read-only data with no consumer yet.** The row carries the
+  directional type id HubSpot reported, which FOUND-03 confirmed is *not* the id that was written in
+  the other direction (`3 → 4` unlabelled, `1 → 2` labelled). Nothing consumes it in Phase 2. Its two
+  intended consumers are `associate(..., verify: true)` and `php artisan hubspot:associations:doctor`,
+  both named in `docs/probes/association-inverse-probe.md`, and both must **search** the rows for the
+  expected directional id rather than taking the first or the only one — the probe observed two types
+  per record in a non-guaranteed order. Recorded here so neither is implemented against a "first
+  type" assumption that would pass regardless of which id was written.
