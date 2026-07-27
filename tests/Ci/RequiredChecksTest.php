@@ -18,6 +18,14 @@ function requiredChecksAllowlistedWorkflowFiles(): array
         // Triggers on push to main only (see requiredChecksTriggersOnPullRequest()) -- cuts tags
         // and opens the release PR, never a pull-request gate a contributor's PR has to pass.
         'release-please.yml',
+
+        // Does trigger on pull_request, but its single job is gated on
+        // `github.actor == 'dependabot[bot]'` and merges the PR itself on green rather than
+        // gating it -- it is PR-triggered automation, not a status check a contributor's own
+        // PR needs to pass. See docs/repo/owner-gated-checklist.md's "Dependabot auto-merge"
+        // section for the repository-setting half of this feature (auto-merge must also be
+        // enabled at Settings -> General -> Pull Requests).
+        'dependabot-auto-merge.yml',
     ];
 }
 

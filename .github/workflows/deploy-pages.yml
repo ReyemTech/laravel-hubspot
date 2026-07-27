@@ -1,0 +1,65 @@
+# .github/workflows/deploy-pages.yml
+name: deploy-pages
+
+# Deploys the docs-pages branch (published by deploy-docs.yml) to GitHub Pages. Split
+# into its own workflow because GitHub Pages deploys from a branch, not from an
+# arbitrary workflow run -- see docs/repo/docs-site-deploy.md for the full rationale.
+#
+# NOTE: this file must also exist ON the docs-pages branch itself once that branch is
+# bootstrapped -- GitHub reads workflow files from the ref being pushed to for
+# branch-triggered workflows, so the copy on `main` alone never fires this trigger.
+# scripts/release/publish-docs.sh's preserve-list keeps `.github/` intact across every
+# publish specifically so this file survives on docs-pages.
+on:
+  push:
+    branches: [docs-pages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  check-pages-enabled:
+    name: Check whether GitHub Pages is enabled
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Query the Pages API
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # GitHub Pages requires a paid plan on a private repository (this one is
+        # private today). Rather than let the deploy job fail outright when Pages
+        # has not been enabled yet, check first and skip cleanly with a loud
+        # message -- an inert precondition, not a build failure.
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" > /dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GitHub Pages is not enabled on this repository yet -- skipping deploy." >&2
+            echo "::warning::See docs/repo/owner-gated-checklist.md (\"GitHub Pages deploy\") for the two remaining owner actions. This is expected until the owner enables Pages; it is not a failure." >&2
+          fi
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: check-pages-enabled
+    if: needs.check-pages-enabled.outputs.enabled == 'true'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: . }
+      - id: deployment
+        uses: actions/deploy-pages@v4

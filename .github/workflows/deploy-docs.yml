@@ -1,0 +1,68 @@
+name: deploy-docs
+
+# Builds the Astro/Starlight site in site/ and publishes the built output to the
+# docs-pages branch. A second, independent workflow (deploy-pages.yml) deploys that
+# branch to GitHub Pages -- see docs/repo/docs-site-deploy.md for the full
+# two-workflow-split rationale (mirrors ReyemTech/apps/stint's deploy-docs.yml /
+# deploy-pages.yml, read directly while preparing this repository's own copies).
+#
+# Push-triggered, not pull_request-triggered: no name-pattern guess required to keep
+# it out of tests/Ci/RequiredChecksTest.php's required-checks comparison -- that test
+# only considers workflows carrying a `pull_request` trigger, and this one has none.
+#
+# INERT UNTIL THE OWNER ACTS (docs/repo/owner-gated-checklist.md, "GitHub Pages
+# deploy"): the RELEASE_TOKEN secret does not exist yet, GitHub Pages is not enabled
+# on this repository, and the docs-pages branch has not been bootstrapped. This
+# workflow still runs and still succeeds through all three -- see
+# scripts/release/publish-docs.sh for the loud, non-failing guards -- rather than
+# reporting a red X for conditions that are expected to be missing right now.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-docs.yml"
+      - "scripts/release/publish-docs.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    name: Build site/ and publish to docs-pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies (site only)
+        run: pnpm install --frozen-lockfile --filter './site...'
+
+      - name: Build docs site
+        run: pnpm --filter './site' build
+
+      - name: Publish to docs-pages branch
+        env:
+          # Push authenticated as RELEASE_TOKEN (a PAT), not GITHUB_TOKEN: GitHub Actions
+          # deliberately suppresses workflow-trigger events for commits authored by the
+          # default GITHUB_TOKEN, so deploy-pages.yml's `push: branches: [docs-pages]`
+          # trigger would never fire even though this push itself succeeds and reports
+          # green. See docs/repo/docs-site-deploy.md for the full failure-mode writeup.
+          # Falls back to GITHUB_TOKEN only so this step doesn't hard-fail before the
+          # secret exists; publish-docs.sh logs loudly when that fallback is in effect.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_TOKEN_SET: ${{ secrets.RELEASE_TOKEN != '' }}
+        run: scripts/release/publish-docs.sh
