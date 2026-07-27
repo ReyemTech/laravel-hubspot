@@ -67,11 +67,19 @@ cleanup() {
 trap cleanup EXIT
 
 echo "--- Step 1: create a disposable test contact ---"
+# Per-run unique address. Archiving a contact DOES release its email for re-creation -- observed
+# directly on 2026-07-27, where two consecutive runs reused one address successfully -- so this is
+# not what makes the happy path work. It is insurance against the UNhappy path: cleanup() is
+# best-effort by design (it warns and continues rather than failing the run) and does not run at
+# all if the process is killed, and a single surviving live contact would then block every
+# subsequent run with a dedup error that looks nothing like its cause.
+PROBE_EMAIL="found-03-probe-$(date +%s)-$$@example.com"
+echo "  Using ${PROBE_EMAIL}"
 CONTACT_RESPONSE=$(curl --silent --show-error --request POST \
   --url "${HUBSPOT_API_BASE}/crm/v3/objects/contacts" \
   --header "Authorization: Bearer ${HUBSPOT_PROBE_TOKEN}" \
   --header "Content-Type: application/json" \
-  --data '{"properties":{"email":"found-03-probe@example.test","firstname":"FOUND-03","lastname":"Probe"}}')
+  --data "{\"properties\":{\"email\":\"${PROBE_EMAIL}\",\"firstname\":\"FOUND-03\",\"lastname\":\"Probe\"}}")
 CONTACT_ID=$(echo "$CONTACT_RESPONSE" | jq -r '.id // empty')
 [ -n "$CONTACT_ID" ] || fail "Could not create test contact. Response: ${CONTACT_RESPONSE}"
 echo "  Created contact ${CONTACT_ID}"
@@ -97,10 +105,24 @@ LABELS_RESPONSE=$(curl --silent --show-error --request GET \
 echo "  Available deals -> contacts association types:"
 echo "$LABELS_RESPONSE" | jq '.'
 
-TYPE_ID=$(echo "$LABELS_RESPONSE" | jq -r '.results[0].typeId // empty')
-CATEGORY=$(echo "$LABELS_RESPONSE" | jq -r '.results[0].category // empty')
-[ -n "$TYPE_ID" ] && [ -n "$CATEGORY" ] || fail "Could not determine an association typeId/category from the portal. Response: ${LABELS_RESPONSE}"
-echo "  Using typeId=${TYPE_ID}, category=${CATEGORY} for the write below."
+# A USER_DEFINED type, never merely .results[0]. On a fresh portal .results[0] is HubSpot's own
+# unlabelled default (typeId 3), and writing THAT answers a different question than this probe
+# asks: unlabelled associations take a separate path in this package -- createDefault(), which
+# never resolves a typeId at all -- so a default-type result says nothing about whether a
+# user-defined LABEL is mirrored onto the inverse direction. Fail loudly rather than quietly
+# probing the wrong thing.
+LABELLED=$(echo "$LABELS_RESPONSE" | jq -c '[.results[] | select(.category == "USER_DEFINED")][0] // empty')
+if [ -z "$LABELLED" ]; then
+  fail "This portal has no USER_DEFINED (labelled) deals -> contacts association type, only HubSpot's unlabelled default.
+Create one by hand first: Settings -> Data Management -> Objects -> Deals -> Associations -> create a label
+(a paired label, e.g. 'Buyer' / 'Deals', is ideal -- it gives each direction its own name).
+Then re-run. See docs/probes/association-inverse-probe.md."
+fi
+
+TYPE_ID=$(echo "$LABELLED" | jq -r '.typeId')
+CATEGORY=$(echo "$LABELLED" | jq -r '.category')
+LABEL=$(echo "$LABELLED" | jq -r '.label // "(null)"')
+echo "  Using typeId=${TYPE_ID}, category=${CATEGORY}, label=${LABEL} for the write below."
 
 echo
 echo "--- Step 4: create the labelled deals -> contacts association ---"
@@ -131,7 +153,7 @@ echo " RESULT -- transcribe this block into docs/probes/association-inverse-prob
 echo "=================================================================================="
 echo "  Deal:               ${DEAL_ID}"
 echo "  Contact:            ${CONTACT_ID}"
-echo "  typeId used:        ${TYPE_ID} (category: ${CATEGORY})"
+echo "  typeId used:        ${TYPE_ID} (category: ${CATEGORY}, label: ${LABEL})"
 echo "  Forward read count: $(echo "$FORWARD_READ" | jq '.results | length')"
 echo "  Inverse read count: $(echo "$INVERSE_READ" | jq '.results | length')"
 echo

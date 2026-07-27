@@ -58,7 +58,7 @@ REL-02.
 
   - Note: core spec §13 schedules this in its Phase 5. ADR precedence moves it to the first phase.
 
-- [x] **FOUND-03**: Association-inverse empirical probe — **BLOCKED**
+- [x] **FOUND-03**: Association-inverse empirical probe — **ANSWERED 2026-07-27**
   — `REQ-association-inverse-probe` (core spec §6.4, §13 Phase 0; BRIEF.md)
 
   - Acceptance: Against a HubSpot **developer test account** (never a production portal): create a
@@ -67,9 +67,25 @@ REL-02.
     `bidirectional:` parameter. Regardless of outcome, `associate(..., verify: true)` and
     `php artisan hubspot:associations:doctor` both ship.
 
-  - **Blocked:** requires a HubSpot developer account token the executing agent does not hold. Every
-    other part of Phase 1 proceeds without it. Do **not** substitute reasoning for the probe — the
-    procedure is prescribed precisely because the docs do not state the answer.
+  - **Answered 2026-07-27**, by running the probe — not by reasoning. Against a developer test
+    account with an owner-supplied Service Key: a labelled `deals → contacts` write (`typeId 1`,
+    `USER_DEFINED`, label `Deals`) made the inverse direction readable immediately with **no second
+    write**, returning `typeId 2` label `People` — its own distinct id, not the one written. The
+    unlabelled default behaves the same way (`3 → 4`).
+
+    Consequences, all now observed rather than assumed: `associate()` is **one** API write;
+    `inverse_type_id` stays read/verification-only (design spec §6.2, unchanged); a future
+    `bidirectional:` parameter defaults to **not** issuing a second write.
+
+    Two findings beyond the question, both binding on later phases: a labelled write *also*
+    materialises the unlabelled default association, and an association **read** returns a *list* of
+    `associationTypes` per related record, in no guaranteed order. The latter constrains the
+    read-response parsers — `associate(..., verify: true)` and `hubspot:associations:doctor` — which
+    must search that list rather than taking the first or only entry. It does **not** constrain
+    `assertAssociated()`, which per 02-06-PLAN.md Task 2 parses the recorded *outgoing request*, not
+    a read response.
+
+    Raw output and the full results table: `docs/probes/association-inverse-probe.md`.
 
 - [x] **FOUND-04**: Node/pnpm toolchain, JavaScript coverage gate and docs-site build, green on an
       empty package
@@ -567,7 +583,7 @@ it can be completed by an agent under current conditions.
 
 | Item | Requirement | Phase | Why it cannot proceed |
 |---|---|---|---|
-| Association-inverse empirical probe | FOUND-03 | 1 | Needs a HubSpot developer account token the executing agent does not hold. Not answerable by reasoning — the docs do not state it |
+| Association-inverse empirical probe | FOUND-03 | 1 | **Resolved 2026-07-27** — run against a developer test account with an owner-supplied Service Key. The inverse IS automatic and carries its own distinct typeId (3→4 unlabelled, 1→2 labelled). See docs/probes/association-inverse-probe.md |
 | Branch protection configuration | FOUND-01 | 1 | Repository settings are owner action; may additionally be limited by plan on a private repository |
 | Packagist name + integration + first release | REL-02 | 9 | Owner-gated by decision (signals spec §15.1), and **impossible** while the repository is private — Packagist requires a public repository |
 | GitHub Pages deploy for the docs site | SHIP-04 | 9 | Pages needs a paid plan on private repositories. The site may build and publish the branch; the deploy waits |
@@ -634,7 +650,7 @@ Deferred. Tracked but not in the current roadmap.
 |-------------|-------|--------|
 | FOUND-01 | Phase 1 | Complete |
 | FOUND-02 | Phase 1 | Complete |
-| FOUND-03 | Phase 1 | Pending — **blocked** (developer account token) |
+| FOUND-03 | Phase 1 | Complete — probe run 2026-07-27; the inverse is automatic, `inverse_type_id` stays read-only |
 | FOUND-04 | Phase 1 | Complete |
 | FOUND-05 | Phase 1 | Complete |
 | REL-01 | Phase 1 | Complete |

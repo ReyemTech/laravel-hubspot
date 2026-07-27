@@ -9,11 +9,21 @@ return [
     | Access token
     |--------------------------------------------------------------------------
     |
-    | The HubSpot Private App access token used to authenticate every request
-    | the Gateway layer makes to hubspot/api-client. If this is missing, every
-    | API call throws a ConfigurationException naming the missing token — it
-    | is never silently treated as "no client configured" and never logged
-    | (see tests/Arch/SecretLoggingTest.php).
+    | The HubSpot access token used to authenticate every request the Gateway
+    | layer makes to hubspot/api-client. Create a Service Key in the HubSpot
+    | account you are syncing to (Settings -> Integrations -> Service Keys),
+    | scoped to the object types you sync. HubSpot now classifies Private Apps
+    | as legacy — a Private App token still works here, since both are sent as
+    | a plain `Authorization: Bearer` header, but new integrations should use a
+    | Service Key.
+    |
+    | This is NOT an OAuth access token: this package authenticates as a single
+    | account and performs no install or refresh flow. If you need a public,
+    | multi-portal OAuth app, obtain the access token yourself and bind it here.
+    |
+    | If this is missing, every API call throws a ConfigurationException naming
+    | the missing token — it is never silently treated as "no client configured"
+    | and never logged (see tests/Arch/SecretLoggingTest.php).
     |
     */
     'token' => env('HUBSPOT_TOKEN'),

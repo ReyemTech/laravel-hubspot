@@ -218,18 +218,19 @@ their report was received. Confirm before the first public release.
 
 ## FOUND-03: the association-inverse probe
 
-**Blocked on exactly one thing: a HubSpot developer test account token.** Design spec §6.4 defines
-this as an empirical question — HubSpot's own documentation does not state whether an
-association created `deals → contacts` is automatically readable `contacts → deals` — and requires
-running the probe against a real (test) portal, not reasoning to an answer.
+**DONE — no longer owner-gated.** Run on 2026-07-27 against a developer test account, with a
+Service Key supplied by the owner. **The inverse IS automatic, and carries its own distinct
+`typeId`** (`3 → 4` unlabelled, `1 → 2` for a user-defined paired label). `inverse_type_id`
+therefore stays read/verification-only exactly as design spec §6.2 specifies.
 
-The ready-to-run procedure and script live at:
+Full results, raw response bodies and three incidental findings are recorded in
+**`docs/probes/association-inverse-probe.md`**. The script
+(**`scripts/probes/association-inverse-probe.sh`**) remains runnable for re-verification.
 
-- **`docs/probes/association-inverse-probe.md`** — the question, the exact steps, and an empty
-  results table (deliberately left unfilled — see that file for why).
-- **`scripts/probes/association-inverse-probe.sh`** — the `curl`-based implementation against the
-  HubSpot v4 associations REST endpoints, reading the token from an environment variable.
+Nothing is required of the owner here any more. Two things worth knowing:
 
-To unblock: obtain a HubSpot **developer test account** access token (never a production portal
-token — the procedure writes real association records) and set it in the environment variable the
-script documents, then run the script and fill in the results table by hand from its output.
+- The Service Key used for the run should be revoked if it has not been already — it existed to
+  answer one question.
+- Re-running is a verification exercise, not an unblocking one, and needs a developer test account,
+  a Service Key with five CRM scopes, and a user-defined `deals → contacts` label. See the probe
+  doc's *Re-running it* section.

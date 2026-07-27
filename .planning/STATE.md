@@ -33,7 +33,7 @@ request lifecycle.
 
 Phase: 2 of 9 (Gateway Layer)
 Plan: 4 of 6 in current phase
-Status: Plans 02-01 and 02-02 merged. Plan 02-03 (the generic object core) complete on branch `feat/02-03-generic-object-core` — PR open, awaiting GitHub checks. 3 plans remain in Phase 2 (02-04..02-06).
+Status: Plans 02-01, 02-02 and 02-03 merged (PRs #8, #14, #15). FOUND-03 unblocked and answered — the association-inverse probe was run 2026-07-27 and its result is recorded, so `bidirectional:`'s default is measured rather than reserved (02-05-PLAN.md amended accordingly). 3 plans remain in Phase 2 (02-04..02-06).
 Last activity: 2026-07-27 — executed 02-03-PLAN.md (the generic object core): the full generic object surface over any object type, batch operations, one-item-batch upsert, and HTTP 207 as a first-class partial-failure outcome. GW-01 is now **complete**. GW-04 remains **partially** delivered until 02-06 ships the fake's assertions.
 
 Progress: [███████░░░] 69%
@@ -141,10 +141,14 @@ None yet.
 **Blocked work — do not plan as executable.** Details and unblock conditions in ROADMAP.md →
 *Blocked & Owner-Gated Work*.
 
-- **FOUND-03, the §6.4 association-inverse probe (Phase 1).** Needs a HubSpot developer account token
-  the executing agent does not hold. **Phase 1 can do everything else.** The answer is not derivable
-  by reasoning — HubSpot's docs do not state it. `associate(..., verify: true)` and
-  `hubspot:associations:doctor` ship regardless; the probe sets a default, it does not block the design
+- ~~**FOUND-03, the §6.4 association-inverse probe (Phase 1).**~~ **UNBLOCKED AND ANSWERED
+  2026-07-27** — owner supplied a developer test account Service Key and the probe was run. The
+  inverse IS automatic and carries its own distinct typeId (`3 → 4` unlabelled, `1 → 2` labelled),
+  so `associate()` is one write and `inverse_type_id` stays read/verification-only. Full results in
+  `docs/probes/association-inverse-probe.md`. Note for Phase 3+: an association **read** returns a
+  *list* of `associationTypes` in no guaranteed order, so the read-response parsers
+  (`associate(..., verify: true)`, `hubspot:associations:doctor`) must search it rather than take
+  the first entry. This does NOT apply to `assertAssociated()`, which parses the outgoing request
 
 - **Branch protection configuration (Phase 1).** Owner action; may be limited by plan on a private
   repository. Defining the required checks is executable; switching protection on is not
