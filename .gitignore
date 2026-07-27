@@ -10,3 +10,4 @@ composer.lock
 node_modules/
 resources/js/coverage/
 site/dist/
+site/.astro/

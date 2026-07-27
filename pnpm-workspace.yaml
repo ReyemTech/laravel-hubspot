@@ -3,3 +3,5 @@ packages:
   # site is declared here (not added by plan 06) so plan 06, which runs in wave 2, never
   # has to edit this file — a workspace member declared before it exists is inert, not broken.
   - site
+allowBuilds:
+  esbuild: true
