@@ -141,10 +141,13 @@ None yet.
 **Blocked work — do not plan as executable.** Details and unblock conditions in ROADMAP.md →
 *Blocked & Owner-Gated Work*.
 
-- **FOUND-03, the §6.4 association-inverse probe (Phase 1).** Needs a HubSpot developer account token
-  the executing agent does not hold. **Phase 1 can do everything else.** The answer is not derivable
-  by reasoning — HubSpot's docs do not state it. `associate(..., verify: true)` and
-  `hubspot:associations:doctor` ship regardless; the probe sets a default, it does not block the design
+- ~~**FOUND-03, the §6.4 association-inverse probe (Phase 1).**~~ **UNBLOCKED AND ANSWERED
+  2026-07-27** — owner supplied a developer test account Service Key and the probe was run. The
+  inverse IS automatic and carries its own distinct typeId (`3 → 4` unlabelled, `1 → 2` labelled),
+  so `associate()` is one write and `inverse_type_id` stays read/verification-only. Full results in
+  `docs/probes/association-inverse-probe.md`. Note for 02-06: an association read returns a **list**
+  of `associationTypes`, so `assertAssociated()` must search it for the expected directional id and
+  still fail when only the inverse is present
 
 - **Branch protection configuration (Phase 1).** Owner action; may be limited by plan on a private
   repository. Defining the required checks is executable; switching protection on is not
