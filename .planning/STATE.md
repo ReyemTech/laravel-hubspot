@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: Gateway Layer
 status: executing
-stopped_at: Completed 02-03-PLAN.md (the generic object core)
-last_updated: "2026-07-27T17:05:00.000Z"
+stopped_at: Completed 02-04-PLAN.md (the directed pair and the unlabelled association path)
+last_updated: "2026-07-27T20:02:51.533Z"
 last_activity: 2026-07-27
-last_activity_desc: "executed 02-03-PLAN.md (the generic object core): expanded the tracer's single `create()` into the whole generic object surface — create, find, update, archive, search, upsert and batch over any CRM object type through one gateway with no object-type-specific branch — and closed the HTTP 207 trap with a `BatchResult` whose obvious accessor refuses to report a partially failed batch as success. Delete is named `archive()`; there is no unarchive and a test proves it. GW-01 is now **complete**, proven in both directions (eight object types incl. a custom `p_*` one through one instance, plus `tests/Arch/NoPerTypeServiceTest.php`). GW-04 remains **partially** delivered until 02-06 ships the fake's assertions."
+last_activity_desc: "executed 02-04-PLAN.md (the directed pair and the unlabelled association path): `ObjectRef`, `AssociationPair(from, to)` with its names and order pinned by reflection, the unlabelled `createDefault()` write that sends no body and therefore no type id, dissociate, and a read that emits one row per reported association type. GW-02 is **half** delivered; 02-05 owns the labelled write and the never-the-inverse throw. GW-04 remains **partially** delivered until 02-06."
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 13
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -32,11 +32,11 @@ request lifecycle.
 ## Current Position
 
 Phase: 2 of 9 (Gateway Layer)
-Plan: 4 of 6 in current phase
-Status: Plans 02-01, 02-02 and 02-03 merged (PRs #8, #14, #15). FOUND-03 unblocked and answered — the association-inverse probe was run 2026-07-27 and its result is recorded, so `bidirectional:`'s default is measured rather than reserved (02-05-PLAN.md amended accordingly). 3 plans remain in Phase 2 (02-04..02-06).
-Last activity: 2026-07-27 — executed 02-03-PLAN.md (the generic object core): the full generic object surface over any object type, batch operations, one-item-batch upsert, and HTTP 207 as a first-class partial-failure outcome. GW-01 is now **complete**. GW-04 remains **partially** delivered until 02-06 ships the fake's assertions.
+Plan: 5 of 6 in current phase
+Status: Plans 02-01, 02-02 and 02-03 merged (PRs #8, #14, #15). Plan 02-04 (the directed pair and the unlabelled association path) complete on branch `feat/02-04-directed-pair-unlabelled-associations` — PR open, awaiting GitHub checks. 2 plans remain in Phase 2 (02-05, 02-06).
+Last activity: 2026-07-27 — executed 02-04-PLAN.md (the directed pair and the unlabelled association path): `ObjectRef`, `AssociationPair(from, to)` with its names and order pinned by reflection, the unlabelled `createDefault()` write that sends no body and therefore no type id, dissociate, and a read that emits one row per reported association type. GW-02 is **half** delivered; 02-05 owns the labelled write and the never-the-inverse throw. GW-04 remains **partially** delivered until 02-06.
 
-Progress: [███████░░░] 69%
+Progress: [█████████░] 85%
 
 ## Performance Metrics
 
@@ -71,6 +71,7 @@ Progress: [███████░░░] 69%
 | Phase 01 P07 | 30min | 4 tasks | 12 files |
 | Phase 02 P01 | 45min | 3 tasks | 18 files |
 | Phase 02 P02 | 22min | 3 tasks | 13 files |
+| Phase 02 P04 | ~20min | 2 tasks | 19 files |
 
 ## Accumulated Context
 
@@ -130,6 +131,10 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: AssociationTypeException extends RuntimeException (registry resolution failure, ApiException's own family); ConfigurationException/ObjectTypeException extend LogicException/InvalidArgumentException (caller mistake detectable before any I/O)
 - [Phase ?]: ExceptionTranslator::recognisedSdkApiExceptions() is public static so the arch coverage guard reads the real list, not a hand-copied duplicate; the guard is one-directional (referenced-by-Gateway implies recognised, not the reverse)
 - [Phase ?]: Retry-middleware presence on the production Guzzle handler stack is asserted via HandlerStack::__toString() with explicitly-named pushes, not a mock 429-then-200 sequence, since RetryMiddlewareFactory's decider/delay functions are already-tested SDK code
+- [Phase ?]: AssociationPair(from, to) rejects a self-pair and ObjectRef rejects a blank/whitespace-only object type or id — all three raise ObjectTypeException, the hierarchy's pre-I/O caller-mistake member, because STANDARDS §9 forbids a fifth member and AssociationTypeException documents itself as a runtime registry-lookup failure
+- [Phase ?]: AssociationPair::reversed() added in 02-04 (not deferred) because 02-05's bidirectional option needs the reversed pair as a value; it returns a new pair and carries no type id — reversal is not a claim about the inverse id
+- [Phase ?]: An association read emits one AssociationRow per reported association TYPE, not per related record — FOUND-03 observed one record carrying both a USER_DEFINED label and the HUBSPOT_DEFINED default in a non-guaranteed order, so "the first type" would pass regardless of which id was written
+- [Phase ?]: ExceptionTranslator gained a shared static unexpectedResponseShape(); ObjectGateway's private helper delegates to it, so the message has one implementation across both gateways (STANDARDS §6b)
 - [Phase ?]: config/hubspot.php transport defaults: 10s timeout, 5s connect timeout, retries enabled -- honest for a queued job, unbounded default explicitly rejected in the inline comment
 
 ### Pending Todos
@@ -202,6 +207,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-27T16:03:09.935Z
-Stopped at: Completed 02-02-PLAN.md (Gateway errors & transport)
+Last session: 2026-07-27T20:05:00.000Z
+Stopped at: Completed 02-04-PLAN.md (the directed pair and the unlabelled association path)
 Resume file: None
