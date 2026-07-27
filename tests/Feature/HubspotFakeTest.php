@@ -371,15 +371,22 @@ final class HubspotFakeTest extends TestCase
      * `fake()`. Asserted for the whole set together rather than one test each, because the failure mode
      * being closed is "one of them was forgotten" — a per-assertion test proves each one individually
      * and says nothing about the set, while this loop fails the moment another assertion is added
-     * without the guard. `assertAssociated` joins this list in plan 02-06's second commit pair, which
-     * is where it is implemented.
+     * without the guard.
      */
     public function test_no_assertion_passes_vacuously_when_no_fake_is_installed(): void
     {
+        $pair = new AssociationPair(
+            from: new ObjectRef('notes', '10'),
+            to: new ObjectRef('contacts', '20'),
+        );
+
         $assertions = [
             'assertRequestCount' => static fn () => Hubspot::assertRequestCount(0),
             'assertSynced' => static fn () => Hubspot::assertSynced('deals'),
             'assertNothingSynced' => static fn () => Hubspot::assertNothingSynced(),
+            // Unlabelled deliberately: a labelled call would consult the resolver, and the no-fake
+            // guard must fire before anything else has a chance to throw for another reason.
+            'assertAssociated' => static fn () => Hubspot::assertAssociated($pair),
         ];
 
         foreach ($assertions as $name => $assertion) {
