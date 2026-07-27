@@ -55,9 +55,15 @@ final class AssociationGateway implements AssociationGatewayContract
         private readonly AssociationTypeResolver $typeResolver,
     ) {}
 
-    public function associate(AssociationPair $pair): void
+    public function associate(AssociationPair $pair, bool $bidirectional = false): void
     {
         $this->writeDefault($pair);
+
+        if ($bidirectional) {
+            // No resolution to do here and none to keep independent: `createDefault()` sends no body
+            // at all, so neither write can carry a type id, let alone the other direction's.
+            $this->writeDefault($pair->reversed());
+        }
     }
 
     public function associateWithLabel(AssociationPair $pair, string $label, bool $bidirectional = false): void

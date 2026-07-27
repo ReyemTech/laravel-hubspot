@@ -44,11 +44,16 @@ interface AssociationGatewayContract
      *
      * No type id is sent, so HubSpot picks the default for the direction on the wire. FOUND-03
      * measured that a single write also makes the opposite direction readable immediately, with its
-     * own distinct type id — so this is one API call, never two.
+     * own distinct type id — so `$bidirectional` defaults to `false` and this is one API call.
+     *
+     * `true` issues a second default-association write for the reversed pair. There is still no type
+     * id in either request — this path resolves nothing at all — so the two writes are independent by
+     * construction rather than by discipline. See {@see self::associateWithLabels()} for the full
+     * `$bidirectional` rationale and the probe that set its default.
      *
      * @throws ApiException if HubSpot rejects the write
      */
-    public function associate(AssociationPair $pair): void;
+    public function associate(AssociationPair $pair, bool $bidirectional = false): void;
 
     /**
      * Associates the pair in the stated direction under one label.
