@@ -819,6 +819,31 @@ Two implementation notes worth keeping:
    rules are unchanged. `docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md` carries the same
    table and was **not** edited: it is a dated design document, and STANDARDS is the binding one.
 
+### The seam proof failed in CI while green on this machine — twice, for the same underlying reason
+
+Worth recording, because it is the fourth instance of the pattern `CLAUDE.md` warns about and the first
+one this repository produced from a *test* rather than a workflow.
+
+The seam proof asserts on a child pest process's output, and its first two versions asserted on how
+that output was **worded**. Both passed locally and failed only on the `prefer-lowest` matrix legs:
+
+1. `Tests:    1 passed` as a literal string, whose padding pest computes. Hardened to a regex
+   pre-emptively, before CI had a chance to say so.
+2. The regex `/Tests:\s+1 passed/` then failed on **PHP 8.5 + `prefer-lowest` only**, where
+   `pest-plugin-arch` at its lowest resolvable version trips a PHP 8.5 deprecation
+   (`Method ReflectionProperty::…`). PHPUnit labels a test by its highest-severity outcome, so the
+   *passing* arch test was reported `DEPR` and the summary read `Tests:    1 deprecated`. The
+   deprecation is pre-existing on that leg — the shipped `StrictTypesTest` reports it in the same run
+   — and this project does not fail a build on deprecations, so R2 had genuinely passed. The assertion
+   was wrong, not the code.
+
+Fixed by asserting the child's **exit code** plus two vacuity guards (the output does not say
+`No tests found`, and it does name the rule under proof), which is the same claim without depending on
+how a run is labelled. That the exit code is `0` for a deprecation-only run under this project's
+`phpunit.xml.dist` was **verified locally with a throwaway probe test rather than reasoned about** —
+`Tests: 1 deprecated`, exit `0` — since reasoning about exit codes is what produced the two failures
+above.
+
 One thing deliberately left alone: `$inverseLabels` gets no runtime element-type validation, exactly
 like `$labels`. Both are `list<string>` by docblock, and a weak-mode caller passing `[123]` raises a
 `TypeError` from `AssociationTypeResolver::resolve()`'s native `string $label` in either case. That
