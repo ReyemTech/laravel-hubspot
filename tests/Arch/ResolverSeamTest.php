@@ -165,7 +165,9 @@ test('a layer that throws the package exception hierarchy passes its own boundar
         "The {$rule} filter matched no test, so this proof would have been vacuous.\n\n{$result['output']}",
     );
 
-    expect(str_contains($result['output'], 'Tests:    1 passed'))->toBeTrue(
+    // Matched loosely on the whitespace: pest pads that summary label, and pinning the exact number of
+    // spaces would make this test a hostage to a patch release across the `prefer-lowest` matrix legs.
+    expect(preg_match('/Tests:\s+1 passed/', $result['output']) === 1)->toBeTrue(
         "{$rule} did not pass with tests/Arch/{$fixture} present. If the message below names "
         ."'ReyemTech\\Hubspot\\Exceptions', the layer allow-lists have been narrowed again and the layer can no "
         ."longer throw the package's own exceptions — which STANDARDS §9 requires of every one of them.\n\n"
