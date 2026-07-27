@@ -17,6 +17,8 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * which a single shared test class cannot do per-test since the application is built
  * once per test case.
  */
+mutates(ServiceProvider::class);
+
 final class ServiceProviderDatabaseStoreTest extends TestCase
 {
     /**

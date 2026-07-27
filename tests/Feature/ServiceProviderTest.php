@@ -25,6 +25,8 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * without requiring a publish step, make the config publishable, and never load
  * migrations under the default (cache) store -- zero-migration install must hold.
  */
+mutates(ServiceProvider::class);
+
 final class ServiceProviderTest extends TestCase
 {
     /**
@@ -50,9 +52,7 @@ final class ServiceProviderTest extends TestCase
     {
         $published = config_path('hubspot.php');
 
-        if (File::exists($published)) {
-            File::delete($published);
-        }
+        self::removePublished($published);
 
         try {
             $result = $this->artisan('vendor:publish', [
@@ -72,11 +72,32 @@ final class ServiceProviderTest extends TestCase
                 self::assertSame(0, $result);
             }
 
-            self::assertFileExists($published);
+            // assertFileExists() alone would also pass for a directory (file_exists()
+            // is true for both) -- assertFileIsReadable() plus an explicit is_file()
+            // check is what actually proves a single config *file* was published, not
+            // a directory tree copied wholesale because the publish source resolved to
+            // something other than config/hubspot.php.
+            self::assertTrue(is_file($published), "Expected {$published} to be a file, not a directory.");
+            self::assertFileIsReadable($published);
         } finally {
-            if (File::exists($published)) {
-                File::delete($published);
-            }
+            self::removePublished($published);
+        }
+    }
+
+    /**
+     * Removes whatever vendor:publish left at the given path, whether a file (the
+     * correct outcome) or a directory (what a broken source path would copy).
+     */
+    private static function removePublished(string $path): void
+    {
+        if (File::isDirectory($path)) {
+            File::deleteDirectory($path);
+
+            return;
+        }
+
+        if (File::exists($path)) {
+            File::delete($path);
         }
     }
 
