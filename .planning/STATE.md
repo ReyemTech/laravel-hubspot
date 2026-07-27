@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: Gateway Layer
 status: executing
-stopped_at: Completed 02-02-PLAN.md (Gateway errors & transport)
-last_updated: "2026-07-27T16:03:09.954Z"
+stopped_at: Completed 02-03-PLAN.md (the generic object core)
+last_updated: "2026-07-27T17:05:00.000Z"
 last_activity: 2026-07-27
-last_activity_desc: "executed 02-02-PLAN.md (Gateway errors & transport): completed the four-member `HubspotException` hierarchy (`ConfigurationException`, `ObjectTypeException`, `AssociationTypeException` alongside `ApiException`), extended `ExceptionTranslator` to the associations v4 namespace with a source-derived arch coverage guard, and made the production Guzzle transport deliberate (explicit timeout/connect-timeout, the SDK's own retry middleware, a `ConfigurationException` before any client is built when the token is missing). GW-03 is now **complete**. GW-01/GW-04 remain **partially** delivered — see `.planning/REQUIREMENTS.md`'s Progress notes; do not treat them as complete until their remaining plans (02-03..02-06) ship."
+last_activity_desc: "executed 02-03-PLAN.md (the generic object core): expanded the tracer's single `create()` into the whole generic object surface — create, find, update, archive, search, upsert and batch over any CRM object type through one gateway with no object-type-specific branch — and closed the HTTP 207 trap with a `BatchResult` whose obvious accessor refuses to report a partially failed batch as success. Delete is named `archive()`; there is no unarchive and a test proves it. GW-01 is now **complete**, proven in both directions (eight object types incl. a custom `p_*` one through one instance, plus `tests/Arch/NoPerTypeServiceTest.php`). GW-04 remains **partially** delivered until 02-06 ships the fake's assertions."
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -32,9 +32,9 @@ request lifecycle.
 ## Current Position
 
 Phase: 2 of 9 (Gateway Layer)
-Plan: 3 of 6 in current phase
-Status: Plan 02-01 (Gateway tracer) merged (PR #8). Plan 02-02 (Gateway errors & transport) complete — PR #14 open, 29/29 required checks green, not yet merged. 4 plans remain in Phase 2 (02-03..02-06).
-Last activity: 2026-07-27 — executed 02-02-PLAN.md (Gateway errors & transport): completed the four-member `HubspotException` hierarchy, extended `ExceptionTranslator` to the associations v4 namespace with a source-derived coverage guard, and made the production Guzzle transport deliberate (timeout, connect timeout, retry middleware, missing-token `ConfigurationException`). GW-03 is now **complete**. GW-01/GW-04 remain **partially** delivered — see `.planning/REQUIREMENTS.md`'s Progress notes; do not treat them as complete until their remaining plans (02-03..02-06) ship.
+Plan: 4 of 6 in current phase
+Status: Plans 02-01 and 02-02 merged. Plan 02-03 (the generic object core) complete on branch `feat/02-03-generic-object-core` — PR open, awaiting GitHub checks. 3 plans remain in Phase 2 (02-04..02-06).
+Last activity: 2026-07-27 — executed 02-03-PLAN.md (the generic object core): the full generic object surface over any object type, batch operations, one-item-batch upsert, and HTTP 207 as a first-class partial-failure outcome. GW-01 is now **complete**. GW-04 remains **partially** delivered until 02-06 ships the fake's assertions.
 
 Progress: [███████░░░] 69%
 
