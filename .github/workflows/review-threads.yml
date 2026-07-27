@@ -1,0 +1,74 @@
+name: review-threads
+
+# STANDARDS.md §12, "Automated review is review": scripts/ci/check-review-threads.sh
+# fails the build when a resolved review thread has no reply from a human author.
+#
+# Two triggers, deliberately:
+#
+# - `pull_request` (default activity types: opened, synchronize, reopened) covers
+#   the normal case -- a push updates the PR, the check re-evaluates against it.
+# - `pull_request_review_thread` (resolved/unresolved) exists because a thread can
+#   be resolved -- or unresolved -- with no new commit at all. `pull_request`'s
+#   default activity types never fire for that, so without this second trigger a
+#   stale "success" result from the *previous* push would remain the check's last
+#   word, and branch protection would allow a merge even though a finding was
+#   silently resolved after the fact -- precisely the failure this gate exists to
+#   catch, just slipping in through its own CI wiring instead of a contributor's
+#   silence.
+#
+# This second trigger is a genuine improvement but its coverage has NOT been
+# empirically confirmed end-to-end, and that gap is deliberately not hidden:
+#
+# 1. Workflows triggered by events outside the push/pull_request(/_target) family
+#    are only evaluated using the copy of the workflow file present on the
+#    *default* branch -- confirmed empirically against this repository (not
+#    assumed): a throwaway branch carrying only this trigger, with a real
+#    resolveReviewThread mutation fired against a throwaway PR from it, produced
+#    no workflow run at all. That means this trigger cannot take effect, or be
+#    further verified, until this file merges to main.
+# 2. Once merged, `github.sha` for a `pull_request_review_thread`-triggered run is
+#    documented by GitHub to resolve to the *default branch's* tip, not the PR's
+#    head -- which is why the checkout step below pins an explicit ref rather than
+#    trusting the default. What is NOT yet confirmed is whether the Checks API
+#    still attaches the *automatic* per-job check run GitHub Actions creates for
+#    this job to the PR's head commit (what branch protection's required-checks
+#    list actually reads) when the run itself was scheduled against a different
+#    `github.sha`. If it does not, closing this gap fully needs an explicit Check
+#    Run created via `gh api repos/{owner}/{repo}/check-runs -f head_sha=...`
+#    rather than relying on the automatic one -- a materially different mechanism
+#    from every other required check in this repository, deliberately not
+#    introduced speculatively in the same change that adds the trigger.
+#
+# See docs/repo/owner-gated-checklist.md's "review-threads.yml" section for the
+# owner-verification step this leaves open, and PR #10 (discussion_r3657716045)
+# for the review finding this responds to.
+on:
+  pull_request:
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review-threads:
+    name: Review threads (resolved threads need a human reply)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # pull_request_review_thread is not in the pull_request family, so
+      # actions/checkout@v4's default ref (github.sha) would check out the
+      # default branch's tip for that trigger, not this PR -- running the
+      # *base* branch's copy of this very script against the wrong commit.
+      # Both event payloads carry pull_request.head.sha, so pin to it
+      # explicitly on every trigger, not only the one where it happens to
+      # matter, so there is exactly one code path instead of two.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Check this PR's resolved review threads for a human reply
+        run: bash scripts/ci/check-review-threads.sh
+      - name: Prove the violation rule fires
+        run: bash scripts/ci/check-review-threads.sh --self-test

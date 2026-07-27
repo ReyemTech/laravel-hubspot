@@ -62,8 +62,23 @@ and the manifest-shape lock:
 
 - `governance` — the security policy, Dependabot config, CODEOWNERS and PR template content checks
 - `commitlint` — lints every commit in the PR (D-25/D-26), not only the head commit or PR title
+
+**`.github/workflows/review-threads.yml`** — STANDARDS §12, "Automated review is review":
+
 - `review-threads` — fails when a resolved review thread has no reply from a human author
-  (STANDARDS §12, "Automated review is review"; `scripts/ci/check-review-threads.sh`)
+  (`scripts/ci/check-review-threads.sh`). Its own workflow file, not governance.yml, because it
+  needs a trigger the other governance jobs do not: *pull_request_review_thread*
+  (resolved/unresolved), alongside the usual *pull_request*, so the check re-evaluates when a
+  thread's resolution state changes without a new commit. **That second trigger's coverage is
+  not fully verified yet** — see the script's own header comment and review-threads.yml's header
+  comment for exactly what was empirically confirmed (a throwaway-branch workflow never received
+  the event at all; this requires the workflow to exist on the default branch first) versus what is
+  documented-but-unverified GitHub behaviour (whether the automatic per-job check run this
+  triggers still attaches to the PR's head commit for branch-protection purposes, or whether
+  closing that fully needs an explicit Check Run created via the Checks API instead). **Owner
+  action once this merges:** watch the first real occurrence of a thread being resolved with no
+  accompanying push on an open PR, and confirm a corresponding check run appears against that
+  PR's head commit before treating this gap as closed.
 
 **`.github/workflows/js.yml`** — the frontend coverage floor:
 
