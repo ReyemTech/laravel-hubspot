@@ -32,10 +32,18 @@ final class ServiceProvider extends BaseServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/hubspot.php', 'hubspot');
 
         $this->app->singleton(HubspotClientFactory::class, function (Application $app): HubspotClientFactory {
-            /** @var string|null $token */
-            $token = $app->make('config')->get('hubspot.token');
+            $config = $app->make('config');
 
-            return HubspotClientFactory::fromConfig($token);
+            /** @var string|null $token */
+            $token = $config->get('hubspot.token');
+            /** @var float $timeout */
+            $timeout = $config->get('hubspot.transport.timeout');
+            /** @var float $connectTimeout */
+            $connectTimeout = $config->get('hubspot.transport.connect_timeout');
+            /** @var bool $retriesEnabled */
+            $retriesEnabled = $config->get('hubspot.transport.retries');
+
+            return HubspotClientFactory::fromConfig($token, $timeout, $connectTimeout, $retriesEnabled);
         });
 
         $this->app->singleton(ExceptionTranslator::class);

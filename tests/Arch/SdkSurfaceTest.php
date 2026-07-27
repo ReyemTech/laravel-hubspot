@@ -22,9 +22,20 @@ declare(strict_types=1);
  * The searched SDK namespace is built from concatenated fragments, the same technique
  * scripts/ci/check-source-hygiene.sh uses on its own marker literals, so this test file's own
  * source is never itself a literal match for the string it searches for.
+ *
+ * 02-02-PLAN.md Task 1 adds a third property, the translator coverage guard: every SDK API
+ * namespace `ApiException` that `src/Gateway/*.php` actually references (via a `use` import or
+ * an inline FQCN) must be present in `Gateway\ExceptionTranslator::recognisedSdkApiExceptions()`
+ * -- read from the translator itself, never a hand-copied list, so a future Gateway call into an
+ * untranslated namespace fails this test rather than silently letting a raw SDK exception reach
+ * userland. Deliberately does NOT assert the reverse (that every recognised namespace is
+ * referenced) -- 02-02-PLAN.md's scope note excludes the Associations\V4\Schema namespace from
+ * the recognised list precisely because nothing calls it yet, and this test must not punish a
+ * translator for recognising a namespace ahead of the Gateway code that will use it.
  */
 
 use Composer\Autoload\ClassLoader;
+use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 
 /**
  * Package-owned result objects the Gateway hands back to a caller. Update this list when a
@@ -156,4 +167,63 @@ test('boundary-safe return shapes: Contracts/ and package-owned Gateway result o
     ));
 
     expect($violations)->toBe([]);
+});
+
+/**
+ * Token-scoped scan for `HubSpot\...\ApiException` FQCNs referenced anywhere in `src/Gateway/`
+ * (via `use` imports or inline fully-qualified names), skipping comments for the same reason
+ * `reyemtech_hubspot_sdk_surface_references_sdk()` does above -- a doc comment discussing an
+ * exception class by name must not count as the Gateway actually calling into it.
+ *
+ * @return list<string>
+ */
+function reyemtech_hubspot_sdk_surface_gateway_referenced_api_exceptions(string $gatewayRoot): array
+{
+    $found = [];
+
+    foreach (reyemtech_hubspot_sdk_surface_php_files($gatewayRoot) as $path) {
+        $tokens = token_get_all((string) file_get_contents($path));
+
+        foreach ($tokens as $token) {
+            if (! is_array($token)) {
+                continue;
+            }
+
+            [$id, $text] = $token;
+
+            if ($id !== T_NAME_QUALIFIED && $id !== T_NAME_FULLY_QUALIFIED) {
+                continue;
+            }
+
+            $fqcn = ltrim($text, '\\');
+
+            if (str_starts_with($fqcn, 'HubSpot\\') && str_ends_with($fqcn, '\\ApiException')) {
+                $found[$fqcn] = true;
+            }
+        }
+    }
+
+    return array_keys($found);
+}
+
+test('the ExceptionTranslator recognises every SDK ApiException namespace src/Gateway/ actually references', function (): void {
+    $root = reyemtech_hubspot_sdk_surface_src_root();
+    $gatewayRoot = $root.'/Gateway';
+
+    $referenced = reyemtech_hubspot_sdk_surface_gateway_referenced_api_exceptions($gatewayRoot);
+
+    expect($referenced)
+        ->not->toBeEmpty('Expected src/Gateway/ to reference at least one SDK ApiException namespace.');
+
+    $recognised = ExceptionTranslator::recognisedSdkApiExceptions();
+
+    foreach ($referenced as $fqcn) {
+        // expect(...)->toContain() is variadic with no message parameter (Pest's Expectation
+        // mixin) -- a second argument is treated as a second needle, not a failure message. Use
+        // toBeTrue() with an explicit message instead so a failure names the offending FQCN.
+        expect(in_array($fqcn, $recognised, true))->toBeTrue(
+            "src/Gateway/ references {$fqcn}, but ExceptionTranslator::recognisedSdkApiExceptions() ".
+            'does not recognise it -- add an instanceof branch and extend the recognised list.',
+        );
+    }
 });
