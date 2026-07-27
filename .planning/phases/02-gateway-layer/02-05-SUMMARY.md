@@ -20,7 +20,7 @@ provides:
   - "Gateway\\Contracts\\AssociationTypeResolver — the seam Phase 3's registry (REG-02) implements; one method, non-nullable return, a miss is a throw"
   - "UnresolvedAssociationTypeResolver — the shipped default binding: stateless, holds no map, throws naming the direction, the label and the container key that would fix it"
   - "AssociationGatewayContract::associateWithLabel() and ::associateWithLabels() — the labelled write path, one request per directed pair regardless of label count"
-  - "bidirectional: bool = false on all three write methods — FOUND-03's measured default, performing two independently resolved directed writes at true"
+  - "bidirectional: bool = false on the UNLABELLED associate() — FOUND-03's measured default, performing two independently resolved directed writes at true. AMENDED 2026-07-27 (see Post-review fixes): the two labelled writes take the inverse direction's own labels instead — ?string $inverseLabel = null and array $inverseLabels = [] — because a paired HubSpot label has a different NAME in each direction"
   - "Five named constructors on AssociationTypeException: noResolverInstalled, noLabelsGiven, unknownAssociationCategory, nonStringAssociationCategory, nonIntegerTypeId, nonPositiveTypeId"
   - "tests/Support/DirectedMapResolver — a resolver double holding a strictly directed map with no reversed-key lookup anywhere, which is what makes the never-the-inverse negative case expressible"
   - "Hubspot::fake() answers the labelled association PUT with 201 and a LabelsBetweenObjectPair body, distinct from the default route's 200"
@@ -48,6 +48,14 @@ key-files:
     - tests/Feature/Gateway/NeverTheInverseTest.php
     - tests/Feature/Gateway/LabelledAssociationTest.php
     - tests/Support/DirectedMapResolver.php
+    # Added by the post-review fixes, 2026-07-27
+    - tests/Feature/Gateway/ReverseDirectionWriteTest.php
+    - tests/Support/AssociationFixtures.php
+    - tests/Arch/ResolverSeamTest.php
+    - tests/Arch/SeamFixtures/Registry/RegistryResolverThrowingOnAMiss.php
+    - tests/Arch/SeamFixtures/Sync/SyncThrowingAnObjectTypeException.php
+    - tests/Arch/SeamFixtures/Webhooks/WebhooksThrowingAConfigurationException.php
+    - tests/Arch/SeamFixtures/Signals/SignalsThrowingAnAssociationTypeException.php
   modified:
     - src/Exceptions/AssociationTypeException.php
     - src/Gateway/AssociationGateway.php
@@ -60,6 +68,10 @@ key-files:
     - tests/Feature/Gateway/ExceptionHierarchyTest.php
     - tests/Feature/Gateway/ServiceProviderBindingsTest.php
     - .planning/phases/02-gateway-layer/deferred-items.md
+    # Modified by the post-review fixes, 2026-07-27
+    - tests/Arch/LayerBoundariesTest.php
+    - tests/Arch/rules.json
+    - STANDARDS.md
 
 key-decisions:
   - "**The association category is a backed enum, not a validated string.** A `string` property validated in the constructor is checked once and then handed to every consumer downstream as a plain `string` PHPStan knows nothing about, so each of them either re-checks it or trusts it. An enum case makes the invalid value unrepresentable past the door: once an AssociationType holds a case, no later code path can produce a category HubSpot would reject, and level max can prove it. The string→case conversion still needs a validated door with a good message, because Phase 3's registry reads the category out of storage as text — that door is `AssociationCategory::fromValue(mixed)`, which throws. There is deliberately no `tryFromValue()`."
@@ -68,7 +80,7 @@ key-decisions:
   - "**Two labelled methods, singular and plural, with the singular a one-line delegation.** `associateWithLabels()` is the primitive because the SDK's `create()` takes an `AssociationSpec[]` and FOUND-03 finding 2 observed that one directed pair legitimately carries more than one type at once — so several labels are ONE request with one spec each. Forcing them through N calls would be the N+1 STANDARDS §11 calls a test failure. `associateWithLabel($pair, label: 'x')` exists because it is the surface GW-02 names and the one nearly every caller wants, and `label: 'x'` reads better at a call site than `labels: ['x']`. One implementation of the write, two front doors."
   - "**An empty label list throws rather than being tolerated.** Sending an empty spec array would have HubSpot answer 400 about a payload the caller never knowingly built; falling through to the default association would write the *unlabelled* association under the guise of a labelled call. `AssociationTypeException::noLabelsGiven()` names the fix and steers to `associate()`, the method that legitimately resolves nothing."
   - "**Every direction and every label resolves BEFORE the first request is built — a deliberate strengthening of what the plan asked for.** The plan said an unresolvable second direction \"throws naming that direction; it never substitutes the first direction's type id\", which permits writing the forward direction and then throwing. That is defensible (HubSpot has no transaction) and still wrong: a caller who asked for both directions and got an exception has no way to learn that half of it landed, and their retry would double-write the forward direction. Resolving both up-front makes the failure atomic and the retry safe. Asserted: an unresolvable reverse direction records ZERO requests, not one."
-  - "**`bidirectional` is a plain non-nullable `bool` defaulting to `false`, and its TYPE is where that measurement is recorded.** FOUND-03 ran on 2026-07-27 against a developer test account and observed HubSpot materialising the inverse association itself, with its own distinct type id, for both the unlabelled default type and a paired user-defined label. A `?bool` would be a claim that design spec §6.4 is still open, which is false as of that date. A reflection test on all three write methods pins the type, the non-nullability and the `false` default, with a failure message pointing at the probe document, so reverting to a nullable cannot happen quietly."
+  - "**`bidirectional` is a plain non-nullable `bool` defaulting to `false`, and its TYPE is where that measurement is recorded.** FOUND-03 ran on 2026-07-27 against a developer test account and observed HubSpot materialising the inverse association itself, with its own distinct type id, for both the unlabelled default type and a paired user-defined label. A `?bool` would be a claim that design spec §6.4 is still open, which is false as of that date. A reflection test pins the type, the non-nullability and the `false` default, with a failure message pointing at the probe document, so reverting to a nullable cannot happen quietly. **PARTLY WRONG, corrected 2026-07-27 before merge — see Post-review fixes.** The measurement and the `false` default hold, and the boolean is correct on `associate()`, whose `createDefault()` carries no labels at all. It was wrong on the two LABELLED methods: the same probe run measured a *paired* label carrying a different NAME in each direction (`Deals` forward, `People` inverse), so a boolean could only resolve the reversed pair under the forward direction's label — a row a correctly populated registry does not hold. Those two methods now take `?string $inverseLabel = null` / `array $inverseLabels = []`, which makes a reverse write inexpressible without naming that direction's labels."
   - "**The resolver's `$label` is non-nullable `string`, so the resolver never sees the unlabelled case.** An unlabelled association takes an entirely different route and resolves nothing; a resolver asked to invent a default type id for a null label is a resolver being asked to guess. Pinned by reflection alongside the parameter names `(pair, label)`."
   - "**`AssociationTypeException` names two `Gateway` classes in its messages via `::class`, not as literals.** `AssociationTypeResolver::class` (the container key to bind) and `AssociationCategory::class` (the type to pass instead of a string) are what make those messages actionable. `::class` on an imported name is resolved by the compiler to a plain string and never autoloads, so this adds no runtime coupling from `Exceptions` back to `Gateway`, and no architecture rule governs the `Exceptions` namespace in either direction. A hand-written literal would let a rename leave the message pointing at nothing."
   - "**`AssociationType` rejects a non-int type id rather than casting it, and the message says why.** Following `ObjectRef`'s post-review precedent exactly: native `mixed` parameters, `is_int()` before the semantic `>= 1` check, declared `readonly` properties assigned only after validation, and `get_debug_type($received)` in the message. The reason this is not pedantry is specific — from a weak-mode consumer file, `true` coerces to `1`, which is Contact → Primary Company, and `19.9` truncates to `19`, which is Deal → Line Item. Both are real HubSpot type ids that fail loudly nowhere. No narrowing `@param` docblock sits over the natives, because PHPStan at level max would fold the checks into tautologies and a baseline is forbidden."
@@ -214,14 +226,20 @@ coverage:
         status: pass
     human_judgment: false
   - id: D9
-    description: "bidirectional is a non-nullable bool defaulting to false on all three write methods — FOUND-03's measured answer — and leaving it at the default writes exactly one direction"
+    description: "bidirectional is a non-nullable bool defaulting to false on the UNLABELLED write, and the two labelled writes cannot request a reverse write at all without naming that direction's labels — FOUND-03's measured answer in both cases. Refs updated 2026-07-27: these tests moved to ReverseDirectionWriteTest and two of them are new"
     requirement: "GW-02"
     verification:
       - kind: unit
-        ref: "tests/Feature/Gateway/LabelledAssociationTest.php#test_bidirectional_is_a_non_nullable_bool_defaulting_to_false_on_every_write"
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_bidirectional_on_the_unlabelled_write_is_a_non_nullable_bool_defaulting_to_false"
         status: pass
       - kind: unit
-        ref: "tests/Feature/Gateway/LabelledAssociationTest.php#test_leaving_bidirectional_at_its_default_writes_exactly_one_direction"
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_the_singular_labelled_write_requests_the_reverse_direction_only_by_naming_its_label"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_the_plural_labelled_write_requests_the_reverse_direction_only_by_naming_its_labels"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_leaving_the_reverse_direction_unrequested_writes_exactly_one_direction"
         status: pass
     human_judgment: false
   - id: D10
@@ -229,16 +247,53 @@ coverage:
     requirement: "GW-02"
     verification:
       - kind: unit
-        ref: "tests/Feature/Gateway/LabelledAssociationTest.php#test_requesting_both_directions_resolves_twice_and_writes_each_directions_own_id"
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_the_reverse_write_resolves_the_reversed_pair_under_the_inverse_label"
         status: pass
       - kind: unit
-        ref: "tests/Feature/Gateway/LabelledAssociationTest.php#test_an_unresolvable_reverse_direction_throws_naming_it_and_writes_neither_direction"
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_an_unresolvable_reverse_direction_throws_naming_it_and_writes_neither_direction"
         status: pass
       - kind: unit
-        ref: "tests/Feature/Gateway/LabelledAssociationTest.php#test_the_reverse_write_never_borrows_the_forward_directions_type_id"
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_the_reverse_write_never_borrows_the_forward_directions_type_id"
         status: pass
       - kind: unit
-        ref: "tests/Feature/Gateway/LabelledAssociationTest.php#test_requesting_both_directions_for_an_unlabelled_pair_writes_two_defaults_with_no_type_id"
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_requesting_both_directions_for_an_unlabelled_pair_writes_two_defaults_with_no_type_id"
+        status: pass
+    human_judgment: false
+  - id: D15
+    description: "**A paired label is asymmetric in NAME, so the reverse write resolves the reversed pair under the INVERSE labels** — proven on the two recorded request URIs and both decoded bodies, including against the probe's own measured data (`Deals` -> typeId 1 forward, `People` -> typeId 2 inverse), and with a resolver that holds the reversed pair under the FORWARD label so the wrong implementation would succeed visibly"
+    requirement: "GW-02"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_the_reverse_write_resolves_the_reversed_pair_under_the_inverse_label"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_the_probes_own_paired_label_writes_deals_forward_and_people_in_reverse"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/NeverTheInverseTest.php#test_a_reverse_write_never_resolves_the_reversed_pair_under_the_forward_label"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_several_inverse_labels_write_one_reverse_request_with_one_spec_each"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_the_single_inverse_label_is_the_inverse_list_with_one_entry"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/ReverseDirectionWriteTest.php#test_an_explicitly_empty_inverse_label_list_writes_the_forward_direction_only"
+        status: pass
+    human_judgment: false
+  - id: D16
+    description: "**The resolver seam is implementable by Phase 3, proven end to end rather than asserted:** a committed `ReyemTech\\Hubspot\\Registry` resolver that implements the Gateway-side contract and throws `Exceptions\\AssociationTypeException` on a miss passes R2, and one fixture per layer proves R3/R4/R5 permit the same. Guarded against vacuity by requiring R2's own violation fixture to go red through the identical mechanism"
+    requirement: "GW-02"
+    verification:
+      - kind: unit
+        ref: "tests/Arch/ResolverSeamTest.php#a layer that throws the package exception hierarchy passes its own boundary rule"
+        status: pass
+      - kind: unit
+        ref: "tests/Arch/ResolverSeamTest.php#the scratch overlay the proof above relies on is the tree the rule actually reads"
+        status: pass
+      - kind: command
+        ref: "bash scripts/ci/verify-arch-rules-fire.sh — 10/10 rules still fire, no fixture added or edited"
         status: pass
     human_judgment: false
   - id: D11
@@ -451,6 +506,18 @@ several labels must be **one** request (an N+1 is a test failure under STANDARDS
 `associateWithLabel($pair, label: 'x')` is a one-line delegation, kept because it is the surface GW-02
 names and reads better than `labels: ['x']`.
 
+**Extended 2026-07-27, and this is the deeper half of the same deviation:** GW-02's acceptance names
+`bidirectional:` as literally as it names `label:`, and the labelled path does not ship it at all. The
+probe's own evidence forces that. FOUND-03 run 2 used a **paired** label and recorded the forward
+direction as `Deals` (typeId 1, `USER_DEFINED`) and the inverse as `People` (typeId 2,
+`USER_DEFINED`) — a paired label is asymmetric in its *name*, not only in its id. A boolean on the
+labelled path therefore has no correct implementation: resolving the reversed pair under `$labels`
+asks a directional registry for `(contacts -> deals, "Deals")`, which the portal the probe ran against
+does not have, so the boolean either throws for every asymmetric paired label (the normal case) or
+quietly reuses the forward label — the label-level form of falling back to the inverse type id.
+`?string $inverseLabel = null` / `array $inverseLabels = []` is the same capability with the wrong
+call unrepresentable instead of validated. Full detail in *Post-review fixes* below.
+
 ### 2. Bidirectional writes resolve everything before writing anything — stronger than specified
 
 The plan permitted writing the forward direction and then throwing if the reverse could not resolve
@@ -559,7 +626,11 @@ pair on the `$typeId < 1` boundary, and the `TrueToFalse`/`FalseToTrue` pair on 
 ## Findings for Phase 3, logged in `deferred-items.md`
 
 - **R2 through R5 forbid a non-Gateway layer from naming a package exception, and Phase 3's registry
-  must do exactly that. Reproduced with a throwaway fixture, not theorised.** The plan's design claim
+  must do exactly that. Reproduced with a throwaway fixture, not theorised.** **FIXED 2026-07-27
+  before merge — see *Post-review fixes* below. The "not fixed here deliberately" reasoning that
+  closes this item was wrong on two counts: the fixture cost was overestimated (all four existing
+  violation fixtures fire unchanged), and the defect made this plan's own must_have unsatisfiable, so
+  it was never a note for a later phase.** The plan's design claim
   — that Phase 3 can implement the resolver in `Registry` without breaking R2 — holds for the
   *interface*: a `ReyemTech\Hubspot\Registry` class implementing `Gateway\Contracts\AssociationTypeResolver`
   and returning a `Gateway\AssociationType` passes R2. It fails the moment that resolver throws
@@ -617,3 +688,166 @@ authoritative result is what GitHub reports on the PR.
 Every file claimed under `key-files.created` exists on disk, and all seven commits
 (`d562302`, `8ecceaa`, `f20ec61`, `55bd132`, `27eae3b`, `1f9f761`, `575910b`) are present in
 `git log`.
+
+---
+
+## Post-review fixes, 2026-07-27 (PR #19, after all 29 required checks were green)
+
+Two defects found on review of the shipped branch. Both were verified against this repository's own
+evidence before any code was written, and both are corrected here rather than deferred — the second
+one in particular because deferring it was the original mistake.
+
+### Fix 1 — a paired label is asymmetric in NAME, so the reverse write needs its own label
+
+`associateWithLabels()` resolved the reversed pair with the **forward** `$labels`:
+
+```php
+$reversedSpecs = $this->specsFor($reversedPair, $labels);
+```
+
+`docs/probes/association-inverse-probe.md` run 2 records the forward association as label `Deals`
+(typeId 1, `USER_DEFINED`) and the inverse as label **`People`** (typeId 2, `USER_DEFINED`). **A
+paired HubSpot label has a different name in each direction.** So a correctly populated directional
+registry holds no `(contacts -> deals, "Deals")` entry, and `bidirectional: true` on the labelled path
+threw before either write for every asymmetric paired label — that is, for the normal case. The only
+other outcome available to a boolean was reusing the forward label, which is the label-level analogue
+of falling back to the inverse type id: precisely what this plan exists to forbid.
+
+**Fixed by making the mistake unrepresentable rather than validated**, not by deriving or looking up
+the inverse name (nothing in this package may do that). The two labelled methods now read:
+
+```php
+public function associateWithLabel(AssociationPair $pair, string $label, ?string $inverseLabel = null): void;
+public function associateWithLabels(AssociationPair $pair, array $labels, array $inverseLabels = []): void;
+```
+
+A non-null `$inverseLabel` / non-empty `$inverseLabels` means "also write the reverse direction,
+resolved on its own terms under these labels". There is therefore **no way to request a reverse write
+without naming that direction's labels** — no boolean, no runtime check, and no call a caller can
+write that expresses the wrong thing. `assertNoBooleanParameter()` pins the absence of a flag of *any*
+name on both methods, since renaming the boolean would have restored the defect while keeping a
+name-based assertion green.
+
+**`associate()` keeps `bool $bidirectional = false`, and that is correct there.** `createDefault()`
+sends no body, so there are no labels on that path and nothing to resolve in either direction — there
+is no label text for a paired label's asymmetry to break. The reflection test pinning the measured
+`false` default survives, narrowed to that one method.
+
+**The resolve-everything-before-writing-anything ordering is untouched**, because that property is
+correct and load-bearing: both directions and every label still resolve before the first request is
+built, so an unresolvable reverse direction still records zero requests.
+
+New tests, all reading the wire rather than the resolver:
+
+| Test | What it pins |
+|---|---|
+| `ReverseDirectionWriteTest::test_the_reverse_write_resolves_the_reversed_pair_under_the_inverse_label` | both recorded URIs and both decoded bodies (202 forward, 201 reverse), with the resolver knowing each direction under a *different* label so reusing either would throw |
+| `…::test_the_probes_own_paired_label_writes_deals_forward_and_people_in_reverse` | the probe's real asymmetric pair as data: `Deals` -> 1 forward, `People` -> 2 inverse |
+| `NeverTheInverseTest::test_a_reverse_write_never_resolves_the_reversed_pair_under_the_forward_label` | the strongest form — the reversed pair IS registered under the FORWARD label with 201 one lookup away, and naming a different inverse label must throw and write nothing |
+| `…::test_several_inverse_labels_write_one_reverse_request_with_one_spec_each` | the reverse direction is one request however many labels it carries (STANDARDS §11) |
+| `…::test_the_single_inverse_label_is_the_inverse_list_with_one_entry` | one implementation of the reverse write, asserted as byte-identical traffic |
+| `…::test_an_explicitly_empty_inverse_label_list_writes_the_forward_direction_only` | the `$inverseLabels === []` branch, reached explicitly as well as by default |
+
+**Deviation from GW-02, recorded.** GW-02's acceptance names `associate($from, $to, label:,
+bidirectional:)`, and the labelled path now ships neither that method name nor that parameter. The
+`label:` half was already deviated from and argued in *Deviations* §1; the `bidirectional:` half is
+forced by the probe's own measurement, as set out above. A surface that reads literally like GW-02
+cannot be implemented correctly against a paired label, which is the shape HubSpot's own UI produces
+and the shape the probe used.
+
+### Fix 2 — the resolver seam was not implementable by Phase 3 as shipped
+
+02-05's own summary recorded this and then deferred it. A Phase 3 `Registry`-side resolver must throw
+`AssociationTypeException` because the contract's non-nullable return type requires it, and R2 failed
+with `However, it also uses 'ReyemTech\Hubspot\Exceptions\AssociationTypeException'`. That
+contradicted this plan's must_have — that Phase 3 plugs a real resolver in without changing the
+gateway's public shape — so the seam as shipped could not be implemented at all.
+
+**Fixed by adding `'ReyemTech\Hubspot\Exceptions'` to the `toOnlyUse()` allow-list of R2, R3, R4 and
+R5.** The package exception hierarchy is a cross-cutting namespace, not a layer: STANDARDS §9 requires
+one shared hierarchy that consumers catch *and* forbids a raw SDK exception reaching userland, and a
+layer that cannot name `Exceptions` satisfies neither. No layer boundary moved — nothing lets
+`Registry` see `Sync` or `Frontend` see the SDK — and **R6 and R8 are deliberately untouched**:
+`Frontend` may depend on the public facade only, which is where its exceptions arrive from anyway.
+
+The previous executor's cost estimate was wrong, and the correction matters for anyone reading that
+entry: **no violation fixture was owed.** R2 through R5's fixtures violate by depending on
+`Sync`/`Webhooks`/`Frontend`, never on `Exceptions`, so all four fire unchanged and
+`scripts/ci/verify-arch-rules-fire.sh` still reports **10/10**. Not one fixture file was added, edited
+or removed, and `FiringHarnessTest` — which reads `rules.json` — stays green because each rule's
+`arch()` description and its manifest `description` were updated together.
+
+**The seam's implementability is now pinned, not merely asserted.** `tests/Arch/ResolverSeamTest.php`
+is the mirror image of the firing harness: where `verify-arch-rules-fire.sh` proves each rule *can*
+go red under a violation fixture, this proves four of them *do* permit the code they exist to protect.
+The previous executor's throwaway probe fixture is now a committed one —
+`tests/Arch/SeamFixtures/Registry/RegistryResolverThrowingOnAMiss.php`, the shape REG-02 ships,
+holding a strictly directed map (a resolver with no map has no miss to express) and throwing on a
+miss. One fixture per layer covers R3, R4 and R5, each throwing a **different** member of the
+hierarchy so that between them they prove the whole namespace is permitted rather than one convenient
+class.
+
+Two implementation notes worth keeping:
+
+- **The test runs a nested pest process, and it has to.** `pest-plugin-arch` reads Composer's
+  in-memory PSR-4 prefixes and deliberately ignores every directory under the project's own `tests/`
+  (`Pest\Arch\Support\Composer::userNamespacesWithDirectories()`), so a fixture living under `tests/`
+  can never be seen by an `arch()` expectation in-process, however it is autoloaded. The test
+  therefore reuses the mechanism the firing harness already proved out: a scratch copy of `src/` with
+  the fixture merged in, one filtered child run through `scripts/ci/arch-fire-bootstrap.php`, and
+  nothing written into the working tree. Each case costs ~0.3s.
+- **The proof needs its own non-vacuity guard, for the same reason the whole arch suite does.** R2
+  passes trivially over an empty `Registry` namespace, so a broken overlay would make the seam proof
+  green for the worst possible reason. The second test plays R2's own committed violation fixture
+  through the identical helper and requires red.
+
+### Two changes beyond the brief, both reported rather than smoothed over
+
+1. **`LabelledAssociationTest` was split, because it broke the 500-line hard gate.** Adding the
+   reverse-direction tests took it to **578** counted lines against phpcs's
+   `SlevomatCodingStandard.Files.FileLength` limit of 500 (STANDARDS §6b), which fails the build. The
+   reverse-direction subject moved wholesale into `tests/Feature/Gateway/ReverseDirectionWriteTest.php`
+   — every test crossed unchanged — and the pair and resolver arrangement both files need was
+   extracted to `tests/Support/AssociationFixtures.php` rather than copied (§6b again: extract
+   immediately, not on the third occurrence). Two now-shared private helpers would otherwise have
+   drifted, and on this seam a fixture that quietly diverges is a test that quietly stops testing.
+2. **STANDARDS §6's layer table gained an `Exceptions` line.** The table said `Registry → may depend
+   on: Gateway`, which after Fix 2 describes a gate that no longer exists. §6's own framing — every
+   standard here is enforced by CI or it does not belong in this document — cuts both ways: a gate CI
+   enforces that the binding document contradicts is worse than either alone. The note states the
+   amendment, its date, that it is a correction rather than a relaxation, and that `Frontend`'s two
+   rules are unchanged. `docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md` carries the same
+   table and was **not** edited: it is a dated design document, and STANDARDS is the binding one.
+
+One thing deliberately left alone: `$inverseLabels` gets no runtime element-type validation, exactly
+like `$labels`. Both are `list<string>` by docblock, and a weak-mode caller passing `[123]` raises a
+`TypeError` from `AssociationTypeResolver::resolve()`'s native `string $label` in either case. That
+exposure is pre-existing and unchanged by this fix; adding validation to the new parameter alone would
+make the two asymmetric for no gain.
+
+### Commits
+
+| # | Purpose | RED | GREEN |
+|---|---|---|---|
+| 1 | Fix 1 — the labelled reverse write takes its own labels | `e3e6a3b` (11 failures confirmed) | `a07c33e` |
+| 2 | Fix 2 — every layer may throw the package exception hierarchy | `398c8fe` (4 failures confirmed, one per rule) | `1efa0ae` |
+
+### Verification of the post-review fixes
+
+| Gate | Result |
+|---|---|
+| `vendor/bin/pest` | **305 passed, 1195 assertions** (from 295/1160) |
+| `vendor/bin/pest --coverage --min=95` | **100.0%** |
+| `vendor/bin/pest --mutate --min=80` | **MSI 98.31%** (8 untested, 466 tested — one more mutant tested than the 465 before these fixes) — **zero new survivors**; the 8 are byte-for-byte the documented pre-existing equivalents above, same files, lines and mutators |
+| `vendor/bin/phpstan analyse --no-progress` | level max, no errors, no baseline, no new suppression |
+| `vendor/bin/pint --test` | passed |
+| `vendor/bin/phpcs --standard=phpcs.xml -q` | passed (`LabelledAssociationTest` back under the 500-line gate) |
+| `bash scripts/ci/verify-arch-rules-fire.sh` | **10/10 rules fired** — no fixture added or edited |
+| `bash scripts/ci/verify-quality-gates-fire.sh` | passed |
+| `bash scripts/ci/check-source-hygiene.sh` | passed |
+
+`composer validate --strict` still exits 2 locally on the pre-existing stale-`composer.lock` finding
+logged under 02-01, and still passes in CI where there is no lock to find stale. No `composer.json`
+change: production requires stay at seven, and no dependency was added for either fix.
+
+**Local green is not evidence.** The authoritative result is what GitHub reports on PR #19.

@@ -140,8 +140,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: The association category is a backed enum, not a validated string: an enum case makes the invalid value unrepresentable past construction, so no consumer downstream re-checks or trusts a string
 - [Phase ?]: Four association categories, not three — the enum's case set is asserted equal to the pinned SDK major's own allow-list at runtime, so narrower cannot reject a valid category and wider cannot leak a raw SDK exception
 - [Phase ?]: The labelled write is its own pair of methods rather than associate($pair, ?string $label = null): a nullable label would make the HTTP route and whether a type id is resolved at all depend on a parameter default
-- [Phase ?]: bidirectional ships as a plain non-nullable bool defaulting to false — FOUND-03's measured answer, pinned by reflection so reverting to ?bool cannot happen quietly
-- [Phase ?]: Bidirectional writes resolve every direction before issuing any request, so an unresolvable reverse direction writes nothing and a caller's retry is safe
+- [Phase ?]: bidirectional ships as a plain non-nullable bool defaulting to false on the UNLABELLED associate() only — FOUND-03's measured answer, pinned by reflection so reverting to ?bool cannot happen quietly. Amended 2026-07-27: the two LABELLED writes take the inverse direction's own labels (inverseLabel / inverseLabels) instead, because FOUND-03 run 2 measured a paired label carrying a different NAME in each direction (Deals forward, People inverse), so a boolean could only resolve the reversed pair under the forward label — the label-level form of falling back to the inverse typeId. A reverse write is therefore inexpressible without naming that direction's labels
+- [Phase ?]: Two-direction writes resolve every direction before issuing any request, so an unresolvable reverse direction writes nothing and a caller's retry is safe
+- [Phase ?]: Architecture rules R2-R5 allow ReyemTech\Hubspot\Exceptions as of 2026-07-27: the package exception hierarchy is a cross-cutting namespace, not a layer, so every layer must be able to throw it or STANDARDS §9's single shared hierarchy and its no-raw-SDK-exception rule are mutually impossible. No layer boundary moved and R6/R8 are untouched; tests/Arch/ResolverSeamTest.php pins the permission with a committed fixture per layer, and all ten rules still fire
 
 ### Pending Todos
 
@@ -201,7 +202,6 @@ None yet.
 
 - Mutation required check (quality.yml) will report red for the remainder of Phase 1: pest --mutate --min=80 over the deliberately-empty src/ triggers PHPUnit's failOnPhpunitWarning path (WARN + exit 1, no score computed), mirroring plan 01's already-flagged coverage-floor gap. Resolves automatically once Phase 2 adds the first mutable file under src/.
 - Git-history attribution defect: commit 022b9e6 (plan 05) accidentally includes three of plan 04's task-2 files (tests/Arch/LayerBoundariesTest.php, SecretLoggingTest.php, StrictTypesTest.php) due to concurrent git staging in a shared (non-worktree) working directory. Content is correct and both plans are green; plan 04 lacks a dedicated GREEN commit for its rule implementations in git log. See 01-05-SUMMARY.md Issues Encountered.
-- Phase 3 blocker found during 02-05: architecture rules R2-R5 forbid a non-Gateway layer from naming ReyemTech\Hubspot\Exceptions, which Phase 3's registry must do to throw AssociationTypeException. Reproduced with a throwaway fixture; logged in 02-gateway-layer/deferred-items.md. Fix is one allow-list entry per rule plus a violation fixture each.
 
 ## Deferred Items
 

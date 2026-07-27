@@ -58,35 +58,26 @@ Out-of-scope discoveries logged during execution, per the executor's scope-bound
 
 ## 02-05
 
-- **R2 (and R3, R4, R5, R6) forbid a non-Gateway layer from naming a package exception, which
-  Phase 3 must do. Reproduced, not theorised.** Plan 02-05's design claim is that Phase 3 can
-  implement `Gateway\Contracts\AssociationTypeResolver` inside `Registry` without breaking R2. Half of
-  that is confirmed by probe: a `ReyemTech\Hubspot\Registry` class implementing the Gateway-side
-  interface, returning a `Gateway\AssociationType`, passes `R2` (8 passed). The other half fails. The
-  moment that resolver does the thing the design requires of it — throw
-  `Exceptions\AssociationTypeException` on a registry miss (STANDARDS §9, 02-CONTEXT.md rule 3, and the
-  resolver contract's own docblock) — R2 fails with:
+- ~~**R2 (and R3, R4, R5) forbid a non-Gateway layer from naming a package exception, which Phase 3
+  must do.**~~ **FIXED 2026-07-27, on this branch, before merge** — see 02-05-SUMMARY.md
+  *"Post-review fixes"*. `'ReyemTech\Hubspot\Exceptions'` is now in R2 through R5's `toOnlyUse()`
+  allow-lists: the exception hierarchy is a cross-cutting namespace, not a layer, and every layer has
+  to be able to throw it or STANDARDS §9's single shared hierarchy and its no-raw-SDK-exception rule
+  are mutually impossible.
 
-  > Expecting 'ReyemTech\Hubspot\Registry' to only use 'ReyemTech\Hubspot\Gateway'. However, it also
-  > uses 'ReyemTech\Hubspot\Exceptions\AssociationTypeException'.
+  Two things in the original entry were wrong and are recorded here rather than quietly corrected. The
+  cost estimate — "one entry per rule, each of which owes a violation fixture" — was an overestimate:
+  R2 through R5's existing fixtures violate by depending on `Sync`/`Webhooks`/`Frontend`, never on
+  `Exceptions`, so all four fired unchanged and no fixture was added, edited or removed
+  (`scripts/ci/verify-arch-rules-fire.sh`: 10/10). And R6 was named in the heading but is not
+  affected: `Frontend` may depend on the public facade only, which is still right, and its exceptions
+  arrive through that facade.
 
-  `ReyemTech\Hubspot\Exceptions` is not in any layer's allow-list, and `R3`/`R4`/`R5` have the same
-  shape, so `Sync`, `Webhooks` and `Signals` all hit this the first time they throw a package
-  exception — which every one of them is designed to do. `Gateway` is unaffected only because R1 is
-  phrased in the other direction (`expect('HubSpot')->toOnlyBeUsedIn(...)`), not because it is exempt.
-
-  **Not fixed in 02-05, deliberately.** The fix is one word per rule — adding
-  `'ReyemTech\Hubspot\Exceptions'` to R2 through R5's allow-lists — but it is an amendment to four of
-  the ten architecture rules in `tests/Arch/rules.json`, each of which owes a violation fixture under
-  `tests/Arch/Fixtures/<id>/` or `FiringHarnessTest` fails the build. Widening a layer boundary is a
-  deliberate architectural decision that belongs in a change whose subject is the boundary, not a side
-  effect of a plan about labelled associations. It costs Phase 3 nothing if it is known in advance,
-  and roughly a morning of confused debugging if it is not.
-
-  The alternative — every layer wrapping its own exceptions, or the hierarchy moving into `Gateway` —
-  would be a much larger change and would contradict STANDARDS §9's four-member hierarchy rooted at a
-  package-owned interface that consumers catch. Widening the allow-lists is almost certainly right;
-  it just is not this plan's call to make.
+  Deferring it was also the wrong call on its own terms. The rule as shipped made this plan's own
+  must_have — that Phase 3 plugs a real resolver in without changing the gateway's public shape —
+  unsatisfiable, so it was not a note for a later phase; it was a defect in this one.
+  `tests/Arch/ResolverSeamTest.php` now pins the permission with a committed fixture per layer, so the
+  boundary cannot be re-narrowed without a failing build naming the reason.
 
 - **A possessive apostrophe after "HubSpot" in a single-quoted PHP string reads as a namespace
   reference to `tests/Arch/SdkSurfaceTest.php`.** `'HubSpot\'s unlabelled default association'`
