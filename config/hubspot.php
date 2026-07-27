@@ -45,16 +45,43 @@ return [
     | grep of the installed hubspot/api-client source) -- these three keys
     | make that a deliberate choice instead of a silent inheritance.
     |
-    | - timeout: total seconds allowed for one request/response round trip,
-    |   including any retries. An unbounded default (0, Guzzle's own
-    |   fallback) is rejected here on purpose: a hung HubSpot response with
-    |   no timeout pins a queue worker indefinitely, which is a real outage
-    |   in a queued sync job, not a theoretical one. Too low a value instead
-    |   fails legitimate slow-but-healthy requests (large batch payloads).
+    | - timeout: seconds allowed for a SINGLE HTTP attempt's request/response
+    |   round trip -- PER ATTEMPT, not a total budget across retries.
+    |   Verified against the installed guzzlehttp/guzzle source: every
+    |   attempt gets a freshly-built curl handle (CurlFactory::create() sets
+    |   CURLOPT_TIMEOUT_MS = timeout * 1000 on each call, and
+    |   RetryMiddleware::doRetry() re-enters the handler chain from the top
+    |   on every retry), and retry backoff sleeps entirely outside that
+    |   budget (CurlHandler::__invoke() calls usleep($options['delay'] *
+    |   1000) before the timed transfer even starts). With retries enabled
+    |   and the SDK's own default of up to 5 retries per retryable
+    |   condition (429 or 5xx -- RetryMiddlewareFactory::DEFAULT_MAX_RETRIES),
+    |   worst-case wall time is therefore on the order of `timeout` times
+    |   the number of attempts PLUS total backoff -- several multiples of
+    |   this value, never a single bounded total. An unbounded default (0,
+    |   Guzzle's own fallback) is rejected here on purpose regardless: a
+    |   hung attempt with no timeout at all pins a queue worker
+    |   indefinitely. Too low a value instead fails legitimate
+    |   slow-but-healthy requests (large batch payloads).
+    |
+    |   This package does not enforce an overall, cross-retry deadline
+    |   (Codex review, PR #14 finding P2). Doing so correctly means a
+    |   wall-clock-aware wrapper around the whole retry pipeline, which is
+    |   a transport behaviour change, not a doc fix, so it is deliberately
+    |   left out of the PR that surfaced this gap rather than bolted on
+    |   without its own tests. Until that lands, the real outer bound has
+    |   to come from the layer that already owns a total-time budget: the
+    |   queue job/worker timeout (Laravel's `$job->timeout` or
+    |   `queue:work --timeout`), which truncates the whole attempt-plus-
+    |   backoff sequence regardless of what Guzzle does internally. Size
+    |   that queue timeout comfortably above `timeout * (max_retries + 1)
+    |   + total backoff` for your retry configuration, or set `retries` to
+    |   false if a hard per-call ceiling matters more than HubSpot
+    |   rate-limit resilience.
     | - connect_timeout: seconds allowed to establish the TCP/TLS connection
-    |   before giving up, separate from the total request timeout above --
-    |   a stalled connection attempt should fail fast rather than consume
-    |   the whole request budget just reaching the server.
+    |   before giving up, separate from the per-attempt request timeout
+    |   above -- a stalled connection attempt should fail fast rather than
+    |   consume the whole request budget just reaching the server.
     | - retries: when true, the SDK's own RetryMiddlewareFactory is attached
     |   to the production handler stack for HTTP 429 (rate limited) and
     |   5xx (internal error) responses -- opt-in plumbing the SDK ships but
