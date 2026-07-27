@@ -56,6 +56,8 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * @method static CannedResponse response(array<string, mixed> $body, int $status = 200)
  * @method static CannedConnectionFailure connectionFailure()
  * @method static void assertRequestCount(int $expected)
+ * @method static void assertSynced(string $objectType, array<string, mixed> $properties = [])
+ * @method static void assertNothingSynced()
  *
  * @see HubspotManager
  */

@@ -10,6 +10,7 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
 use ReyemTech\Hubspot\Testing\HubspotFake;
+use ReyemTech\Hubspot\Testing\RequestLog;
 use RuntimeException;
 
 /**
@@ -73,6 +74,28 @@ final class HubspotManager
     public function assertRequestCount(int $expected): void
     {
         $this->fakeOrFail()->assertRequestCount($expected);
+    }
+
+    /**
+     * Asserts that a record of `$objectType` was written, optionally carrying a subset of properties.
+     *
+     * **The object type is a string, where design spec §10's example reads
+     * `Hubspot::assertSynced($deal)` with an Eloquent model.** There is no model binding in this package
+     * until Phase 4 (SYNC-01), and this is resolved forward-compatibly rather than by deferring the
+     * assertion: Phase 4 widens this first parameter to accept a bound model as well, which is safe for
+     * every existing caller and safe on this `final` class (D-17). See {@see RequestLog::assertSynced()}
+     * for the subset and strict-comparison rules.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    public function assertSynced(string $objectType, array $properties = []): void
+    {
+        $this->fakeOrFail()->assertSynced($objectType, $properties);
+    }
+
+    public function assertNothingSynced(): void
+    {
+        $this->fakeOrFail()->assertNothingSynced();
     }
 
     private function fakeOrFail(): HubspotFake

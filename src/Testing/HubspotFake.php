@@ -11,9 +11,9 @@ use GuzzleHttp\Promise\Create as PromiseCreate;
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Contracts\Container\Container;
-use PHPUnit\Framework\Assert as PHPUnitAssert;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use Throwable;
 
@@ -40,7 +40,7 @@ final class HubspotFake
      * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by object type
      */
     public function __construct(
-        Container $container,
+        private readonly Container $container,
         private readonly array $responses,
     ) {
         // Set in the constructor body, not as a property default -- a fresh Hubspot::fake()
@@ -72,13 +72,38 @@ final class HubspotFake
         return $this->history;
     }
 
+    /**
+     * Every assertion below delegates to {@see RequestLog}, which is where the reasoning for each one
+     * and each failure message lives. They are exposed here as well as on `HubspotManager` because a
+     * consumer who holds the value `Hubspot::fake()` returned should not have to go back through the
+     * facade to assert on it.
+     *
+     * The log is rebuilt on every call rather than cached, deliberately: it reads the container's
+     * currently bound {@see AssociationTypeResolver} at the moment
+     * of the assertion, so a test may rebind the registry between the write and the assertion — which
+     * is exactly how "the wire carried the inverse type id" is expressed as a test.
+     */
     public function assertRequestCount(int $expected): void
     {
-        PHPUnitAssert::assertSame(
-            $expected,
-            count($this->history),
-            sprintf('Expected %d HubSpot request(s), but %d were made.', $expected, count($this->history)),
-        );
+        $this->requestLog()->assertRequestCount($expected);
+    }
+
+    /**
+     * @param  array<string, mixed>  $properties
+     */
+    public function assertSynced(string $objectType, array $properties = []): void
+    {
+        $this->requestLog()->assertSynced($objectType, $properties);
+    }
+
+    public function assertNothingSynced(): void
+    {
+        $this->requestLog()->assertNothingSynced();
+    }
+
+    private function requestLog(): RequestLog
+    {
+        return RequestLog::fromHistory($this->history);
     }
 
     /**
