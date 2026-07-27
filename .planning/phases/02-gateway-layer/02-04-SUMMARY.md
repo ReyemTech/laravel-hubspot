@@ -523,7 +523,8 @@ Every file claimed under `key-files.created` exists on disk, and all four task c
 ## Post-review fixes — two Codex P2 findings on PR #18 (2026-07-27)
 
 Both findings were read in full and reproduced locally before anything was changed. Both are real.
-RED `72c4256`, GREEN `d9768f8`.
+RED `72c4256`, GREEN `d9768f8`, plus a second RED/GREEN pair `c4fc41f`/`82a69a1` for a grammar defect
+in the new exception message (see the message text below).
 
 ### 1. `associate()` accepted any success shape, and the docblock argued for it
 
@@ -598,7 +599,10 @@ at four members (STANDARDS §9) as the three existing ones do:
 prose `'object type'` or `'object id'`. Full message text, with `%s` filled by the side and by
 `get_debug_type($received)`:
 
-> A HubSpot object reference was built with a **{object type|object id}** of type **{int|bool|float|null|array|class@anonymous|…}**. Pass it as a string — an id held as an integer is cast at the call site with "(string) $id", never coerced. This is validated here rather than by the parameter type because declare(strict_types=1) binds at the calling file, not at this package's: in a file without it, 0 would have arrived as "0" and true as "1", addressing a record nobody meant.
+> A HubSpot object reference was built with an **{object type|object id}** of type **{int|bool|float|null|array|class@anonymous|…}**. Pass it as a string — an id held as an integer is cast at the call site with "(string) $id", never coerced. This is validated here rather than by the parameter type because declare(strict_types=1) binds at the calling file, not at this package's: in a file without it, 0 would have arrived as "0" and true as "1", addressing a record nobody meant.
+
+The article is a fixed "an" — both prose sides begin with a vowel sound — and it is asserted, because
+`d9768f8` shipped it as "a object type" and `c4fc41f`/`82a69a1` is the RED/GREEN pair that fixed it.
 
 `null` now surfaces through this member rather than as a raw `TypeError`, so it is catchable through
 `HubspotException` like every other construction fault — asserted in
