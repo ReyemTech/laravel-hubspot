@@ -52,6 +52,7 @@ key-files:
 
 key-decisions:
   - "Delete is named `archive()`, not `delete()`. GW-01's acceptance line says 'delete', but that is the capability, not the method name: HubSpot's delete IS an archive, the record is still there, and the API has no unarchive endpoint at all. `delete()` would promise permanence the call does not deliver, and would invite the `undelete()` that cannot exist. A test asserts no method matching /^(un(archive|delete)|restore|undo)/i is on the contract, and that `archive` is."
+  - "BatchResult carries `partialFailure` explicitly rather than deriving it from `errors !== []`. Raised by Codex on PR #15 (P2) and confirmed by a reproducing test: a 207 whose `errors` field is absent, empty, or undeserialisable would otherwise report full success — exactly the silent data loss the class exists to prevent. HTTP 207 is a partial write because the STATUS CODE says so; the error list is HubSpot's itemisation of it, and an itemisation can be missing while the partial write is real. `ApiException::partialBatchFailure()` takes a nullable first message and, when there is none, says HubSpot did not name the rejected records rather than reporting '0 record(s) were rejected', which reads like nothing went wrong."
   - "BatchResult goes further than 'a named accessor the caller must not ignore'. `records()` — the obvious accessor — THROWS on a partial batch; `recordsDespitePartialFailure()` is the only way to read the survivors. The plan asked for a shape where reporting success while errors exist requires deliberately ignoring a named accessor; making the default path throw means it requires a deliberate act instead of an omission, which is the stronger property and costs one extra method name."
   - "The 207 exception is `ApiException::partialBatchFailure()`, NOT a fifth hierarchy member. STANDARDS §9 fixes the hierarchy at four members and `tests/Feature/Gateway/ExceptionHierarchyTest.php` fails the build on a fifth. 207 is an HTTP status HubSpot returned, so ApiException is where it belongs; the named constructor keeps the message-names-the-fix rule (D-18)."
   - "Batch upsert gets its own narrowing routine rather than sharing one with create/read/update. The SDK answers upsert with a DIFFERENT model family (BatchResponseSimplePublicUpsertObject, results typed SimplePublicUpsertObject); sharing would mean widening one parameter to a five-member union and losing the exhaustiveness the two three-member signatures give."
@@ -195,7 +196,7 @@ status: complete
 - **Tasks:** 2 (single-object surface; batch + 207)
 - **Files created:** 7
 - **Files modified:** 7
-- **Tests:** 162 (674 assertions), up from 109
+- **Tests:** 164 (686 assertions), up from 109
 - **Line coverage:** 100% · **MSI:** 97.58% · **PHPStan:** level max, no baseline, no suppression
 
 ## Accomplishments
@@ -215,6 +216,9 @@ status: complete
 2. **Task 2: Batch operations, single-record upsert, and HTTP 207 as a first-class outcome**
    - RED: `cc8062d` — `test(02-03): red state — batch operations, single-record upsert and HTTP 207` (18 failures confirmed)
    - GREEN: `8c6596e` — `feat(02-03): green state — batch operations, one-item-batch upsert and HTTP 207`
+3. **Review fix: Codex P2 on PR #15 — a 207 that itemises no errors reported success**
+   - RED: `test(02-03): red state — a 207 that itemises no errors is still a partial failure`
+   - GREEN: `fix(02-03): green state — derive partial-batch status from the 207, not from the error list`
 
 ## What the plan asked to be recorded explicitly
 
@@ -269,13 +273,17 @@ The one complexity pressure point was `toSearchRequest()`, kept at 6 by setting 
 - **`ObjectGateway` at 427/500 lines**, with the extraction seam named.
 - Eight surviving mutants (MSI 97.58%), all equivalent: three `(string)` casts on values the SDK's `settype` re-coerces anyway, two `array_values()` calls required only for PHPStan's `list<>` inference, one `array_map()` unwrap whose serialised body is byte-identical, one `?? ''` on a path no route reaches, and one fixture field (`status: COMPLETE`) that nothing in the package reads.
 
+## Review findings acted on
+
+**Codex, PR #15, P2 — "Preserve partial status when a 207 has no parsed errors."** Correct and confirmed by a reproducing test before any fix was written. `BatchResult::isPartialFailure()` derived partial status solely from the parsed error list, so a 207 whose `errors` field HubSpot omits, sends empty, or the SDK fails to deserialise came back reporting full success and `records()` handed over the survivors without complaint — the precise failure mode the class exists to prevent, reachable through the one status code it was built for. Fixed by carrying `partialFailure` explicitly from the `WithErrors` narrowing branch (which the SDK only produces for a 207), with `ApiException::partialBatchFailure()` taking a nullable first message so an unitemised partial says so instead of claiming "0 record(s) were rejected". Two new dataset rows cover the absent-key and empty-list bodies.
+
 ## Verification
 
 All run on this branch before push:
 
 | Gate | Result |
 |---|---|
-| `vendor/bin/pest` | 162 passed, 674 assertions |
+| `vendor/bin/pest` | 164 passed, 686 assertions |
 | `vendor/bin/pest --coverage --min=95` | 100.0% |
 | `vendor/bin/pest --mutate --min=80` | MSI 97.58% |
 | `vendor/bin/phpstan analyse` | level max, no errors, no baseline, no suppression |

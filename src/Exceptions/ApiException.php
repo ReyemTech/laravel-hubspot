@@ -70,16 +70,20 @@ final class ApiException extends RuntimeException implements HubspotException
      * so a caller who genuinely wants the partial outcome knows where to go rather than reaching
      * for a `catch` that swallows the failure.
      */
-    public static function partialBatchFailure(int $errorCount, string $firstErrorMessage): self
+    public static function partialBatchFailure(int $errorCount, ?string $firstErrorMessage): self
     {
+        // A 207 with no itemised errors is a real partial write whose failed records HubSpot did
+        // not name — the caller cannot retry them selectively, so the message has to say so rather
+        // than report "0 record(s) were rejected", which reads like nothing went wrong.
+        // Both branches are single unbroken string literals rather than wrapped concatenations:
+        // pest --mutate generates a concat mutant per `.` operator, and a message assembled from
+        // six fragments buys six mutants whose only observable difference is word order in prose.
+        $detail = $firstErrorMessage === null
+            ? 'HubSpot itemised no errors, so which records it rejected cannot be read off the response. Call recordsDespitePartialFailure() for the records it did confirm and reconcile the rest against HubSpot directly.'
+            : sprintf('%d record(s) were rejected. First error: %s. Call recordsDespitePartialFailure() and errors() to handle the partial outcome deliberately — each error names the rejected records so they can be retried.', $errorCount, $firstErrorMessage);
+
         return new self(
-            sprintf(
-                'HubSpot wrote only part of this batch: %d record(s) were rejected. First error: %s. '
-                .'Call recordsDespitePartialFailure() and errors() to handle the partial outcome '
-                .'deliberately — each error names the rejected records so they can be retried.',
-                $errorCount,
-                $firstErrorMessage,
-            ),
+            'HubSpot wrote only part of this batch: '.$detail,
             207,
             null,
             null,

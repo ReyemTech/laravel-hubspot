@@ -239,8 +239,16 @@ final class ObjectGatewayBatchTest extends TestCase
             self::fail('Expected records() to refuse a 207 even when no errors were itemised.');
         } catch (ApiException $exception) {
             self::assertSame(207, $exception->status());
-            self::assertStringContainsString('itemised no errors', $exception->getMessage());
-            self::assertStringContainsString('recordsDespitePartialFailure', $exception->getMessage());
+
+            // Never "0 record(s) were rejected" — that reads like nothing went wrong. The message
+            // has to say the failures exist and that HubSpot did not name them.
+            self::assertSame(
+                'HubSpot wrote only part of this batch: HubSpot itemised no errors, so which '
+                .'records it rejected cannot be read off the response. Call '
+                .'recordsDespitePartialFailure() for the records it did confirm and reconcile the '
+                .'rest against HubSpot directly.',
+                $exception->getMessage(),
+            );
         }
     }
 
@@ -294,9 +302,18 @@ final class ObjectGatewayBatchTest extends TestCase
             ]],
         ], 207)]);
 
-        $this->expectException(ApiException::class);
+        try {
+            Hubspot::objects()->upsert('contacts', 'email', 'a@example.com', ['firstname' => 'Ada']);
+            self::fail('Expected a partially rejected single upsert to throw.');
+        } catch (ApiException $exception) {
+            self::assertSame(207, $exception->status());
 
-        Hubspot::objects()->upsert('contacts', 'email', 'a@example.com', ['firstname' => 'Ada']);
+            // Asserted on the itemisation, not just the exception class: the upsert family has its
+            // OWN response models and its own error-list narrowing, so a routine that dropped the
+            // errors on the floor would still throw here and look correct.
+            self::assertStringContainsString('1 record(s) were rejected', $exception->getMessage());
+            self::assertStringContainsString('Property values were not valid', $exception->getMessage());
+        }
     }
 
     /**

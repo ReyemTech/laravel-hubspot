@@ -25,12 +25,20 @@ use ReyemTech\Hubspot\Exceptions\ApiException;
 final readonly class BatchResult
 {
     /**
+     * `$partialFailure` is carried explicitly rather than derived from `$errors !== []`, and that
+     * distinction is load-bearing. HTTP 207 is a partial write because the STATUS CODE says so; the
+     * error list is HubSpot's itemisation of it, and an itemisation can be absent, empty, or
+     * undeserialisable while the partial write is every bit as real. Deriving partial status from
+     * the list would make exactly those responses report full success — the silent data loss this
+     * class exists to prevent (Codex review, PR #15).
+     *
      * @param  list<HubspotObject>  $records
      * @param  list<BatchError>  $errors
      */
     private function __construct(
         private array $records,
         private array $errors,
+        private bool $partialFailure,
     ) {}
 
     /**
@@ -40,23 +48,25 @@ final readonly class BatchResult
      */
     public static function complete(array $records): self
     {
-        return new self($records, []);
+        return new self($records, [], false);
     }
 
     /**
-     * HubSpot answered 207: `$records` were written, `$errors` were not.
+     * HubSpot answered 207: `$records` were written and at least one other was not. `$errors` is
+     * HubSpot's itemisation of the failures and may legitimately be empty — the batch is partial
+     * either way.
      *
      * @param  list<HubspotObject>  $records
      * @param  list<BatchError>  $errors
      */
     public static function partial(array $records, array $errors): self
     {
-        return new self($records, $errors);
+        return new self($records, $errors, true);
     }
 
     public function isPartialFailure(): bool
     {
-        return $this->errors !== [];
+        return $this->partialFailure;
     }
 
     /**
@@ -68,8 +78,8 @@ final readonly class BatchResult
      */
     public function records(): array
     {
-        if ($this->errors !== []) {
-            throw ApiException::partialBatchFailure(count($this->errors), $this->errors[0]->message);
+        if ($this->partialFailure) {
+            throw ApiException::partialBatchFailure(count($this->errors), $this->errors[0]->message ?? null);
         }
 
         return $this->records;
