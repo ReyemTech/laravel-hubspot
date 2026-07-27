@@ -340,8 +340,9 @@ final class AssociationPairTest extends TestCase
     }
 
     /**
-     * Reversal exists because plan 02-05's `bidirectional` option performs two independently
-     * resolved directed writes, and the second one needs the reversed pair as a first-class value.
+     * Reversal exists because writing the opposite direction as well — `associate()`'s `bidirectional`,
+     * or a labelled write's `inverseLabel`/`inverseLabels` — performs two independently resolved
+     * directed writes, and the second one needs the reversed pair as a first-class value.
      * It is a named operation returning a NEW pair precisely so the reversal is visible in the
      * calling code — a mutating `reverse()` would turn a direction change into a side effect on a
      * value someone else is still holding.
