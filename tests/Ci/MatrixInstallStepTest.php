@@ -73,6 +73,41 @@ function ciInstallDependenciesStepRun(): string
     throw new RuntimeException('Expected the "tests" job to declare an "Install dependencies" step.');
 }
 
+/**
+ * Tokenizes the composer command and flags any `vendor/package` (optionally
+ * `:constraint`-suffixed) token that is not directly preceded by a `--with`
+ * token. This replaces two regexes that only ever inspected the token(s)
+ * immediately following "composer update": one anchored positionally right
+ * after "update", and one whose negative lookahead for "--with anywhere
+ * later in the string" disabled itself the moment any --with flag appeared
+ * -- which the real step's --with-constrained shape always does. A
+ * positional spec appended after those legitimate flags was invisible to
+ * both, even though Composer still treats it as a partial, lockfile-
+ * dependent update.
+ */
+function ciRunHasPositionalPackageSpec(string $run): bool
+{
+    $tokens = preg_split('/\s+/', trim($run)) ?: [];
+
+    foreach ($tokens as $index => $token) {
+        if ($token === '') {
+            continue;
+        }
+
+        if (! preg_match('#^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(:\S+)?$#', $token)) {
+            continue;
+        }
+
+        $previous = $tokens[$index - 1] ?? null;
+
+        if ($previous !== '--with') {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 it('never passes a positional package argument to composer update, since that requires a preexisting lock file', function (): void {
     $run = ciInstallDependenciesStepRun();
 
