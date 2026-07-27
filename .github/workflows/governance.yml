@@ -11,7 +11,7 @@ jobs:
     name: Repository governance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check repository governance files
         run: bash scripts/ci/check-repo-governance.sh
 
@@ -34,7 +34,7 @@ jobs:
       # just the head commit or the PR title (D-25, D-26) -- merge commits
       # are the merge strategy, so a stray `feat:` buried in a branch would
       # otherwise reach `main` undetected and bump the minor version.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: wagoid/commitlint-github-action@v6
