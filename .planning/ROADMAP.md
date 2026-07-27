@@ -94,7 +94,7 @@ Plans:
   4. `Hubspot::fake()` runs a complete test with zero HTTP: a Guzzle `MockHandler` sits under the SDK, canned responses can be supplied per object type, and `assertSynced`, `assertAssociated($deal, $contact, label:)` (asserting the **directional** typeId), `assertNothingSynced` and `assertRequestCount` all work, with ids from a counter and time frozen.
   5. The architecture test suite proves `Gateway` is the only namespace in the package that references `HubSpot\*`, and the build fails if any other layer imports one.
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans executed
 
 Plans:
 
@@ -103,7 +103,7 @@ Plans:
 - [x] 02-03-PLAN.md — The full generic object surface over any object type, batching, and HTTP 207 as partial success
 - [x] 02-04-PLAN.md — `AssociationPair(from, to)` and unlabelled directional writes through `createDefault()`
 - [x] 02-05-PLAN.md — Labelled associations, the registry resolver seam, and the never-the-inverse guarantee
-- [ ] 02-06-PLAN.md — The fake's full assertion surface, directional `assertAssociated`, and determinism
+- [x] 02-06-PLAN.md — The fake's full assertion surface, directional `assertAssociated`, and determinism
 
 **Sequential by construction.** Every plan modifies at least one file an earlier plan owns
 (`ServiceProvider.php`, `Facades/Hubspot.php`, `Testing/HubspotFake.php`), so no two share a wave;
@@ -294,7 +294,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Gates | 7/7 | In Progress|  |
-| 2. Gateway Layer | 5/6 | In Progress|  |
+| 2. Gateway Layer | 6/6 | In Progress|  |
 | 3. Registry & Stores | 0/TBD | Not started | - |
 | 4. Model Sync | 0/TBD | Not started | - |
 | 5. Inbound Webhooks | 0/TBD | Not started | - |
