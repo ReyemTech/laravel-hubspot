@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
+use ReflectionProperty;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Exceptions\ObjectTypeException;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
@@ -96,6 +97,132 @@ final class AssociationPairTest extends TestCase
     }
 
     /**
+     * The values a weak-mode caller can smuggle past a `string` parameter. `declare(strict_types=1)`
+     * binds at the CALLING file, never at the declaring one, so a typical Laravel consumer file —
+     * which does not declare it — gets every one of these coerced *before* the constructor body runs:
+     * `0` becomes `"0"`, `true` becomes `"1"`, and a large float becomes `"1.2345678901235E+19"`,
+     * a real-looking path segment with silent precision loss. Two of them (`false`, `null`) were
+     * already rejected, but for the wrong reason and with the wrong message — an empty-string
+     * complaint and a raw `TypeError` respectively.
+     *
+     * `1.2345678901234568E+19` is included precisely because it is the case with no loud failure
+     * anywhere: it coerces to a syntactically valid id addressing a record nobody meant.
+     *
+     * @return array<string, array{mixed, string}>
+     */
+    public static function nonStringValueProvider(): array
+    {
+        return [
+            'an integer id' => [527152015051, 'int'],
+            'the integer zero, which coerces to the string "0"' => [0, 'int'],
+            'true, which coerces to the string "1"' => [true, 'bool'],
+            'false, which coerces to the empty string' => [false, 'bool'],
+            'null, which raises a raw TypeError instead' => [null, 'null'],
+            'a float that loses precision as a string' => [1.2345678901234568E+19, 'float'],
+            'an array' => [['527152015051'], 'array'],
+            'a Stringable, which weak mode accepts outright' => [
+                new class
+                {
+                    public function __toString(): string
+                    {
+                        return '527152015051';
+                    }
+                },
+                'class@anonymous',
+            ],
+        ];
+    }
+
+    #[DataProvider('nonStringValueProvider')]
+    public function test_a_non_string_object_type_is_rejected_and_the_message_names_that_side(mixed $notAString, string $expectedDebugType): void
+    {
+        try {
+            new ObjectRef($notAString, '527152015051');
+            self::fail('Expected a non-string object type to be rejected at construction.');
+        } catch (ObjectTypeException $exception) {
+            self::assertStringContainsString('object type', $exception->getMessage());
+            self::assertStringNotContainsString('object id', $exception->getMessage());
+            self::assertStringContainsString($expectedDebugType, $exception->getMessage());
+            self::assertStringContainsString('Pass it as a string', $exception->getMessage());
+        }
+    }
+
+    #[DataProvider('nonStringValueProvider')]
+    public function test_a_non_string_object_id_is_rejected_and_the_message_names_that_side(mixed $notAString, string $expectedDebugType): void
+    {
+        try {
+            new ObjectRef('contacts', $notAString);
+            self::fail('Expected a non-string object id to be rejected at construction.');
+        } catch (ObjectTypeException $exception) {
+            self::assertStringContainsString('object id', $exception->getMessage());
+            self::assertStringContainsString($expectedDebugType, $exception->getMessage());
+            self::assertStringContainsString('Pass it as a string', $exception->getMessage());
+        }
+    }
+
+    /**
+     * The deliberate DX consequence, stated as a test so it is a decision rather than an oversight:
+     * an integer id is **rejected, not cast**. Casting would reintroduce exactly the `0`/`"0"` blur
+     * this class's docblock condemns, and this package's doctrine is to throw rather than guess. A
+     * consumer holding an id as an integer writes `(string) $id`, which the message tells them to do.
+     */
+    public function test_an_integer_id_is_rejected_rather_than_cast_and_the_message_names_the_remedy(): void
+    {
+        try {
+            new ObjectRef('contacts', 527152015051);
+            self::fail('Expected an integer object id to be rejected rather than cast.');
+        } catch (ObjectTypeException $exception) {
+            self::assertStringContainsString('(string)', $exception->getMessage());
+        }
+
+        $ref = new ObjectRef('contacts', (string) 527152015051);
+
+        self::assertSame('527152015051', $ref->id);
+    }
+
+    /**
+     * **The invariant cannot be delegated to `declare(strict_types=1)`, so it is not.**
+     * That declaration binds at the file making the call, not at the file declaring the constructor,
+     * which means promoted `string` parameters would enforce the rule only for consumers who happen
+     * to declare strict types in the file where they build the reference — and coerce silently for
+     * everyone else. Native `mixed` plus an explicit `is_string()` check is what makes the rejection
+     * unconditional.
+     *
+     * Pinned by reflection because the tempting refactor — collapsing this back to two promoted
+     * `string` parameters — reads like a tidy-up and would silently restore the coercion. Note that
+     * no narrowing `@param string` docblock may be added over the natives either: PHPStan at level
+     * max would then constant-fold the `is_string()` checks into tautologies, and this repository
+     * forbids a baseline and allows a per-line suppression only with a written reason.
+     */
+    public function test_an_object_ref_validates_its_own_types_rather_than_trusting_the_callers_strict_types_mode(): void
+    {
+        $constructor = (new ReflectionClass(ObjectRef::class))->getConstructor();
+
+        self::assertNotNull($constructor);
+
+        foreach ($constructor->getParameters() as $parameter) {
+            $type = $parameter->getType();
+
+            self::assertInstanceOf(ReflectionNamedType::class, $type);
+            self::assertSame(
+                'mixed',
+                $type->getName(),
+                "ObjectRef::__construct()'s \${$parameter->getName()} is declared as a native type, so whether a "
+                .'non-string is rejected or silently coerced now depends on the CALLING file\'s strict_types setting.',
+            );
+        }
+
+        foreach (['objectType', 'id'] as $name) {
+            $property = new ReflectionProperty(ObjectRef::class, $name);
+            $type = $property->getType();
+
+            self::assertInstanceOf(ReflectionNamedType::class, $type);
+            self::assertSame('string', $type->getName(), "ObjectRef::\${$name} must still be a string once assigned.");
+            self::assertTrue($property->isReadOnly(), "ObjectRef::\${$name} must remain readonly.");
+        }
+    }
+
+    /**
      * Every rejection an `ObjectRef` or an `AssociationPair` can raise is catchable through the
      * package's own root interface. A consumer writing one `catch (HubspotException)` block must
      * not have a blank id escape it while a blank type is caught (STANDARDS §9).
@@ -105,6 +232,12 @@ final class AssociationPairTest extends TestCase
         $rejections = [
             static fn (): mixed => new ObjectRef('', '1'),
             static fn (): mixed => new ObjectRef('contacts', ''),
+            // The non-string forms belong in this list too: a consumer's single `catch` block must
+            // not catch a blank id and miss an integer one. `null` in particular used to escape as a
+            // raw TypeError, which no `catch (HubspotException)` block would ever see.
+            static fn (): mixed => new ObjectRef(0, '1'),
+            static fn (): mixed => new ObjectRef('contacts', 1),
+            static fn (): mixed => new ObjectRef('contacts', null),
             static fn (): mixed => new AssociationPair(
                 from: new ObjectRef('contacts', '1'),
                 to: new ObjectRef('contacts', '1'),

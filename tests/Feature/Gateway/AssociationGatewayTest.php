@@ -427,6 +427,52 @@ final class AssociationGatewayTest extends TestCase
     }
 
     /**
+     * The same guard on the WRITE path, which matters more than on the read.
+     *
+     * `createDefaultWithHttpInfo()` switches on the status code with `case 200:` returning
+     * `BatchResponsePublicDefaultAssociation` and `default:` returning `Model\Error`, and that
+     * switch *returns* before the `if ($statusCode < 200 || $statusCode > 299) { throw }` below it —
+     * so that throw is dead code and any other 2xx (a 202, a 204) deserialises quietly into
+     * `Model\Error`. Without narrowing, `associate()` reports success for a response that describes
+     * no association at all: a silent false success on an association write, which is the exact
+     * failure class this package exists to prevent.
+     */
+    public function test_an_unexpected_success_status_on_an_associate_throws_a_plain_runtime_exception(): void
+    {
+        Hubspot::fake([
+            'notes' => Hubspot::response(['message' => 'unexpected shape'], 202),
+        ]);
+
+        try {
+            Hubspot::associations()->associate(self::notePair());
+            self::fail('Expected an unexpected success status on a write to throw rather than report success.');
+        } catch (Throwable $exception) {
+            // Exact class, not merely instanceof — the package's own ApiException also extends
+            // RuntimeException, and these two failures are not the same thing.
+            self::assertSame(RuntimeException::class, $exception::class);
+            self::assertStringContainsString('Unexpected response shape from the HubSpot SDK', $exception->getMessage());
+            self::assertStringContainsString('BatchResponsePublicDefaultAssociation', $exception->getMessage());
+        }
+    }
+
+    /**
+     * The asymmetry, pinned so nobody "completes" it. `archiveWithHttpInfo()` is declared
+     * `@return array of null` and returns `[null, $statusCode, $headers]` for every 2xx — there is no
+     * union to narrow and no model to expect, so a shape guard on `dissociate()` would be the
+     * permanently uncovered line the associate guard is sometimes mistaken for.
+     */
+    public function test_an_unexpected_success_status_on_a_dissociate_has_no_shape_to_reject(): void
+    {
+        Hubspot::fake([
+            'notes' => Hubspot::response(['message' => 'unexpected shape'], 202),
+        ]);
+
+        Hubspot::associations()->dissociate(self::notePair());
+
+        Hubspot::assertRequestCount(1);
+    }
+
+    /**
      * Rule 2 again, this time as a shape assertion rather than a payload one: there is no way to
      * hand a type id to the unlabelled path, because no method on this contract accepts one. The
      * labelled path is a different method, arriving in plan 02-05.
