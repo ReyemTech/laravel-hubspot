@@ -145,6 +145,31 @@ final class HubspotClientFactoryTest extends TestCase
     }
 
     /**
+     * Codex review (PR #14, P2): `fromConfig()` is public and not `@internal`, so the previously
+     * valid single-argument call `fromConfig($token)` must keep working rather than throwing
+     * `ArgumentCountError`. The three transport parameters default to the same values
+     * `config/hubspot.php` documents (`hubspot.transport.timeout` / `connect_timeout` /
+     * `retries`), not to the SDK's own unbounded/no-retry defaults -- a compatibility fix must
+     * not resurrect the unbounded-timeout and silent-retry-absence risks (T-02-03/T-02-07,
+     * threat register) that this plan exists to close.
+     */
+    public function test_from_config_called_with_only_a_token_defaults_to_the_documented_transport_values(): void
+    {
+        $factory = HubspotClientFactory::fromConfig('a-real-token');
+
+        $client = $this->guzzleClientFrom($factory);
+
+        self::assertSame(10.0, $client->getConfig('timeout'));
+        self::assertSame(5.0, $client->getConfig('connect_timeout'));
+
+        /** @var HandlerStack $stack */
+        $stack = $client->getConfig('handler');
+
+        self::assertStringContainsString('rate_limit_retry', (string) $stack);
+        self::assertStringContainsString('internal_errors_retry', (string) $stack);
+    }
+
+    /**
      * `RetryMiddlewareFactory::create*Middleware()` always returns a real callable in practice
      * (it is the SDK's own, already-tested code) -- this guard is unreachable through normal
      * `fromConfig()` usage, exactly like `ObjectGateway::create()`'s own `Model|Error` narrowing
