@@ -34,10 +34,21 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  *
  * Until Phase 3 binds a registry, the default resolver resolves nothing and throws with a message
  * naming the direction that failed, the label, and the container key that would fix it — it never
- * guesses a type id, and it never substitutes the inverse direction's. `bidirectional: true` is
- * available and performs two independently resolved directed writes; it defaults to `false` because
- * FOUND-03 measured on 2026-07-27 that HubSpot maintains the inverse direction itself
- * (`docs/probes/association-inverse-probe.md`).
+ * guesses a type id, and it never substitutes the inverse direction's.
+ *
+ * The reverse direction can be written too, and on the labelled path it is asked for by naming the
+ * label THAT direction carries:
+ *
+ * ```php
+ * Hubspot::associations()->associateWithLabel($dealToContact, label: 'Deals', inverseLabel: 'People');
+ * ```
+ *
+ * `Deals` and `People` are the two names of one paired label, measured in a real portal on 2026-07-27
+ * (`docs/probes/association-inverse-probe.md`): a paired label is asymmetric in its name as well as in
+ * its type id, so there is no boolean here to reuse the forward label with. The unlabelled write has
+ * no labels at all and therefore does take one — `associate($pair, bidirectional: true)`. Both default
+ * to writing the stated direction only, because the same probe measured that HubSpot maintains the
+ * opposite direction itself.
  *
  * @method static ObjectGatewayContract objects()
  * @method static AssociationGatewayContract associations()

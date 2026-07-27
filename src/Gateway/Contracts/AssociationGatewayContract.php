@@ -48,8 +48,11 @@ interface AssociationGatewayContract
      *
      * `true` issues a second default-association write for the reversed pair. There is still no type
      * id in either request — this path resolves nothing at all — so the two writes are independent by
-     * construction rather than by discipline. See {@see self::associateWithLabels()} for the full
-     * `$bidirectional` rationale and the probe that set its default.
+     * construction rather than by discipline. **This is the only write method that takes a boolean for
+     * the reverse direction, and it can only do so because there are no labels here**: with no label
+     * text in play there is nothing for a paired label's asymmetric naming to break. The labelled
+     * methods take the reverse direction's own labels instead; see {@see self::associateWithLabels()}
+     * for that reasoning and for the probe that set this default.
      *
      * @throws ApiException if HubSpot rejects the write
      */
@@ -68,11 +71,17 @@ interface AssociationGatewayContract
      * Sugar over {@see self::associateWithLabels()} with one entry, so there is one implementation of
      * the write.
      *
+     * `$inverseLabel` names the label the OPPOSITE direction carries, and passing one is how a second,
+     * reverse write is requested. It is `null` by default, which writes the stated direction only. See
+     * {@see self::associateWithLabels()} for why the reverse direction is asked for by name rather
+     * than by a boolean, and for the probe that measured it.
+     *
      * @throws AssociationTypeException if the bound resolver cannot resolve this direction under this
-     *                                  label. Nothing is written in that case
+     *                                  label, or the reversed direction under `$inverseLabel`. Nothing
+     *                                  is written in either case
      * @throws ApiException if HubSpot rejects the write
      */
-    public function associateWithLabel(AssociationPair $pair, string $label, bool $bidirectional = false): void;
+    public function associateWithLabel(AssociationPair $pair, string $label, ?string $inverseLabel = null): void;
 
     /**
      * Associates the pair in the stated direction under several labels, in **one** request.
@@ -87,31 +96,44 @@ interface AssociationGatewayContract
      * including the labels that did resolve — a partially written labelled association is
      * indistinguishable from a complete one on a later read.
      *
-     * ### `$bidirectional`
+     * ### `$inverseLabels` — the reverse write, requested by naming that direction's labels
      *
-     * Defaults to `false`, and that default is **measured rather than reasoned to**. FOUND-03's probe
-     * ran on 2026-07-27 against a developer test account and observed that HubSpot materialises the
-     * inverse association itself: one `deals -> contacts` write made the `contacts -> deals`
-     * direction readable immediately, with its own distinct type id, for both the unlabelled default
-     * type and a paired user-defined label (`docs/probes/association-inverse-probe.md`). `false`
-     * therefore issues the one write that is actually needed.
+     * Empty by default, which writes the stated direction only. That default is **measured rather than
+     * reasoned to**: FOUND-03's probe ran on 2026-07-27 against a developer test account and observed
+     * that HubSpot materialises the inverse association itself — one `deals -> contacts` write made
+     * the `contacts -> deals` direction readable immediately, with its own distinct type id, for both
+     * the unlabelled default type and a paired user-defined label
+     * (`docs/probes/association-inverse-probe.md`). One write is the one that is actually needed.
      *
-     * `true` stays available because that behaviour was observed on one object-type pair, in one
-     * portal, on one date — a caller who wants the reverse direction written explicitly can ask for
-     * it. When they do, the reverse direction is **resolved independently**: its own pair, its own
-     * lookup, its own type id. Nothing about the forward direction's id is reused, derived from, or
-     * assumed for it, and if the reverse direction cannot be resolved the call throws naming *that*
-     * direction and writes nothing at all — in either direction.
+     * Writing the reverse direction explicitly stays available, because that behaviour was observed on
+     * one object-type pair, in one portal, on one date. **It is requested by naming the labels that
+     * direction carries, not by a boolean**, and that is a safety decision with the probe's own data
+     * behind it: run 2 used a *paired* label, whose two directions have different NAMES as well as
+     * different type ids — `Deals` for `deals -> contacts` and `People` for `contacts -> deals`. A
+     * `bool $bidirectional` would leave the gateway resolving the reversed pair under the forward
+     * direction's label text, and a directional registry populated from that portal holds no
+     * `(contacts -> deals, "Deals")` row at all: the boolean's only outcomes were throwing for every
+     * asymmetric paired label, or quietly reusing the forward label — which is the label-level form of
+     * falling back to the inverse type id, the one substitution this package exists to refuse. Naming
+     * the inverse labels makes the wrong request unrepresentable rather than validated.
+     *
+     * When the reverse direction is asked for, it is **resolved independently**: its own pair, its own
+     * labels, its own lookup, its own type ids. Nothing about the forward direction is reused, derived
+     * from, or assumed for it, and if the reverse direction cannot be resolved the call throws naming
+     * *that* direction and writes nothing at all — in either direction.
      *
      * @param  list<string>  $labels  at least one; an empty list throws rather than sending an empty
      *                                spec array or quietly falling through to the default association
+     * @param  list<string>  $inverseLabels  the labels the REVERSED pair carries; empty means "do not
+     *                                       write the reverse direction", and is the default
      *
-     * @throws AssociationTypeException if the list is empty, or if the bound resolver cannot resolve
-     *                                  this direction under any one of these labels. Nothing is
-     *                                  written in either case
+     * @throws AssociationTypeException if `$labels` is empty, or if the bound resolver cannot resolve
+     *                                  this direction under any one of `$labels`, or the reversed
+     *                                  direction under any one of `$inverseLabels`. Nothing is written
+     *                                  in any of those cases
      * @throws ApiException if HubSpot rejects the write
      */
-    public function associateWithLabels(AssociationPair $pair, array $labels, bool $bidirectional = false): void;
+    public function associateWithLabels(AssociationPair $pair, array $labels, array $inverseLabels = []): void;
 
     /**
      * Archives the association for the stated direction only.

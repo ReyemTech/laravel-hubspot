@@ -43,9 +43,15 @@ use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
  *    reversed, and never followed by a consultation of any other source. It is also raised *before*
  *    any request is built, so an unresolvable direction issues zero requests rather than a wrong one
  *    followed by an exception.
- * 3. **Every direction and every label resolves before the first request goes out.** A bidirectional
+ * 3. **Every direction and every label resolves before the first request goes out.** A two-direction
  *    write whose reverse direction cannot be resolved therefore writes nothing at all, rather than
  *    leaving half a request pair behind for someone to discover later.
+ *
+ * The reverse direction is requested by naming ITS OWN labels (`$inverseLabel`, `$inverseLabels`)
+ * rather than by a boolean, because a paired HubSpot label is asymmetric in its name: FOUND-03 run 2
+ * wrote `deals -> contacts` as `Deals` and read the inverse direction back as `People`. A boolean
+ * would leave this class resolving the reversed pair under the forward direction's label, which is
+ * the label-level form of falling back to the inverse type id.
  */
 final class AssociationGateway implements AssociationGatewayContract
 {
@@ -66,15 +72,20 @@ final class AssociationGateway implements AssociationGatewayContract
         }
     }
 
-    public function associateWithLabel(AssociationPair $pair, string $label, bool $bidirectional = false): void
+    public function associateWithLabel(AssociationPair $pair, string $label, ?string $inverseLabel = null): void
     {
-        $this->associateWithLabels($pair, [$label], $bidirectional);
+        $this->associateWithLabels(
+            $pair,
+            [$label],
+            $inverseLabel === null ? [] : [$inverseLabel],
+        );
     }
 
     /**
      * @param  list<string>  $labels
+     * @param  list<string>  $inverseLabels
      */
-    public function associateWithLabels(AssociationPair $pair, array $labels, bool $bidirectional = false): void
+    public function associateWithLabels(AssociationPair $pair, array $labels, array $inverseLabels = []): void
     {
         if ($labels === []) {
             throw AssociationTypeException::noLabelsGiven();
@@ -85,18 +96,22 @@ final class AssociationGateway implements AssociationGatewayContract
         // unresolvable direction cannot leave a plausible-looking wrong association behind it.
         $forwardSpecs = $this->specsFor($pair, $labels);
 
-        if (! $bidirectional) {
+        if ($inverseLabels === []) {
             $this->writeLabelled($pair, $forwardSpecs);
 
             return;
         }
 
-        // Two INDEPENDENTLY resolved directed writes. The reversed pair is resolved on its own terms
-        // and derives nothing from the forward direction's answer -- no inverse arithmetic, no reuse
-        // of $forwardSpecs, no assumption that HubSpot mirrored anything. If this direction does not
-        // resolve, the throw lands before either write, so neither happens.
+        // Two INDEPENDENTLY resolved directed writes. The reversed pair is resolved under the labels
+        // the caller named for THAT direction, and derives nothing from the forward direction's
+        // answer -- no inverse arithmetic, no reuse of $forwardSpecs, no reuse of $labels, no
+        // assumption that HubSpot mirrored anything. Reusing $labels here would be the label-level
+        // form of falling back to the inverse type id: FOUND-03 run 2 measured a paired label named
+        // `Deals` one way and `People` the other, so the forward label is not this direction's name
+        // and a registry holding the portal's real rows cannot answer for it. If this direction does
+        // not resolve, the throw lands before either write, so neither happens.
         $reversedPair = $pair->reversed();
-        $reversedSpecs = $this->specsFor($reversedPair, $labels);
+        $reversedSpecs = $this->specsFor($reversedPair, $inverseLabels);
 
         $this->writeLabelled($pair, $forwardSpecs);
         $this->writeLabelled($reversedPair, $reversedSpecs);
