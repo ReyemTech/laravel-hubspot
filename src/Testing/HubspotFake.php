@@ -290,6 +290,13 @@ final class HubspotFake
      * does not know what the labels are called — resolving an id back to a name is the registry's job
      * (Phase 3), and faking it here would let a test assert a label the package never sent. The field
      * is present because the model requires it to be; it is empty because that is the honest answer.
+     *
+     * The four captures are zipped onto their field names with `array_combine` rather than read out as
+     * `$matches[1] ?? ''` four times over. Four `?? ''` fallbacks would be four branches no test can
+     * reach — every request arriving here is a labelled-association PUT, so the pattern always matches
+     * — and an unreachable branch is how a coverage floor stops meaning anything. It is also how
+     * mutants survive: `EmptyStringToNotEmpty` rewrites each `''` and nothing notices, which is
+     * exactly what `pest --mutate` reported before this was rewritten.
      */
     private function labelledAssociationResponse(RequestInterface $request): ResponseInterface
     {
@@ -300,13 +307,15 @@ final class HubspotFake
             $matches,
         );
 
-        return $this->jsonResponse(201, [
-            'fromObjectTypeId' => $matches[1] ?? '',
-            'fromObjectId' => $matches[2] ?? '',
-            'toObjectTypeId' => $matches[3] ?? '',
-            'toObjectId' => $matches[4] ?? '',
-            'labels' => [],
-        ]);
+        // Field names are LabelsBetweenObjectPair's own serialised keys, read from the model's
+        // $attributeMap rather than guessed: a body whose keys do not match deserialises into empty
+        // fields and the assertion passes for the wrong reason.
+        $pair = array_combine(
+            ['fromObjectTypeId', 'fromObjectId', 'toObjectTypeId', 'toObjectId'],
+            array_slice($matches, 1),
+        );
+
+        return $this->jsonResponse(201, [...$pair, 'labels' => []]);
     }
 
     private function defaultCreatedResponse(RequestInterface $request): ResponseInterface

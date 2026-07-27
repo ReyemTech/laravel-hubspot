@@ -55,3 +55,47 @@ Out-of-scope discoveries logged during execution, per the executor's scope-bound
   expected directional id rather than taking the first or the only one — the probe observed two types
   per record in a non-guaranteed order. Recorded here so neither is implemented against a "first
   type" assumption that would pass regardless of which id was written.
+
+## 02-05
+
+- **R2 (and R3, R4, R5, R6) forbid a non-Gateway layer from naming a package exception, which
+  Phase 3 must do. Reproduced, not theorised.** Plan 02-05's design claim is that Phase 3 can
+  implement `Gateway\Contracts\AssociationTypeResolver` inside `Registry` without breaking R2. Half of
+  that is confirmed by probe: a `ReyemTech\Hubspot\Registry` class implementing the Gateway-side
+  interface, returning a `Gateway\AssociationType`, passes `R2` (8 passed). The other half fails. The
+  moment that resolver does the thing the design requires of it — throw
+  `Exceptions\AssociationTypeException` on a registry miss (STANDARDS §9, 02-CONTEXT.md rule 3, and the
+  resolver contract's own docblock) — R2 fails with:
+
+  > Expecting 'ReyemTech\Hubspot\Registry' to only use 'ReyemTech\Hubspot\Gateway'. However, it also
+  > uses 'ReyemTech\Hubspot\Exceptions\AssociationTypeException'.
+
+  `ReyemTech\Hubspot\Exceptions` is not in any layer's allow-list, and `R3`/`R4`/`R5` have the same
+  shape, so `Sync`, `Webhooks` and `Signals` all hit this the first time they throw a package
+  exception — which every one of them is designed to do. `Gateway` is unaffected only because R1 is
+  phrased in the other direction (`expect('HubSpot')->toOnlyBeUsedIn(...)`), not because it is exempt.
+
+  **Not fixed in 02-05, deliberately.** The fix is one word per rule — adding
+  `'ReyemTech\Hubspot\Exceptions'` to R2 through R5's allow-lists — but it is an amendment to four of
+  the ten architecture rules in `tests/Arch/rules.json`, each of which owes a violation fixture under
+  `tests/Arch/Fixtures/<id>/` or `FiringHarnessTest` fails the build. Widening a layer boundary is a
+  deliberate architectural decision that belongs in a change whose subject is the boundary, not a side
+  effect of a plan about labelled associations. It costs Phase 3 nothing if it is known in advance,
+  and roughly a morning of confused debugging if it is not.
+
+  The alternative — every layer wrapping its own exceptions, or the hierarchy moving into `Gateway` —
+  would be a much larger change and would contradict STANDARDS §9's four-member hierarchy rooted at a
+  package-owned interface that consumers catch. Widening the allow-lists is almost certainly right;
+  it just is not this plan's call to make.
+
+- **A possessive apostrophe after "HubSpot" in a single-quoted PHP string reads as a namespace
+  reference to `tests/Arch/SdkSurfaceTest.php`.** `'HubSpot\'s unlabelled default association'`
+  compiles to a token whose text contains `HubSpot\`, which is the exact needle
+  `reyemtech_hubspot_sdk_surface_references_sdk()` searches for — so an exception message in
+  `src/Exceptions/` failed R1's non-vacuity test for prose, not for code. It cost ten minutes here and
+  the prose was rephrased ("the unlabelled default association type"), which is the right fix for one
+  occurrence. The scan is conservative in the safe direction — it produces a false failure, never a
+  false pass — so it is not urgent. A precise fix would require the character after `HubSpot\` to be
+  an identifier character; that is a change to a gate file and needs its own justification, and
+  "relax the arch test so my sentence fits" is exactly the move this repository forbids, so it was not
+  attempted opportunistically.
