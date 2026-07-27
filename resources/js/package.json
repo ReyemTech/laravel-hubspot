@@ -1,0 +1,18 @@
+{
+    "name": "hubspot-frontend",
+    "private": true,
+    "version": "0.0.0",
+    "description": "Frontend-layer JavaScript for reyemtech/laravel-hubspot. Houses the Phase 8 booking-widget postMessage listener that validates event.origin before trusting a payload -- the most security-sensitive code in the package, and completely invisible to PHP line coverage. This workspace's own 95% Vitest line-coverage floor exists to guard exactly that file.",
+    "type": "module",
+    "engines": {
+        "node": "^20.0.0 || ^22.0.0 || >=24.0.0"
+    },
+    "scripts": {
+        "test": "vitest run",
+        "test:coverage": "vitest run --coverage"
+    },
+    "devDependencies": {
+        "vitest": "4.1.10",
+        "@vitest/coverage-v8": "4.1.10"
+    }
+}

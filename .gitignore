@@ -4,3 +4,9 @@
 /build/
 composer.lock
 .DS_Store
+
+# JavaScript (resources/js/, site/) -- pnpm-lock.yaml IS committed; this is application-shaped
+# JS, not a published library, so --frozen-lockfile in CI depends on the lockfile existing.
+node_modules/
+resources/js/coverage/
+site/dist/
