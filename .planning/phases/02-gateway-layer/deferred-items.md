@@ -80,7 +80,7 @@ Out-of-scope discoveries logged during execution, per the executor's scope-bound
   boundary cannot be re-narrowed without a failing build naming the reason.
 
 - **A possessive apostrophe after "HubSpot" in a single-quoted PHP string reads as a namespace
-  reference to `tests/Arch/SdkSurfaceTest.php`.** `'HubSpot\'s unlabelled default association'`
+  reference to `tests/Arch/SdkSurfaceTest.php`.** (02-05) `'HubSpot\'s unlabelled default association'`
   compiles to a token whose text contains `HubSpot\`, which is the exact needle
   `reyemtech_hubspot_sdk_surface_references_sdk()` searches for — so an exception message in
   `src/Exceptions/` failed R1's non-vacuity test for prose, not for code. It cost ten minutes here and
@@ -90,3 +90,53 @@ Out-of-scope discoveries logged during execution, per the executor's scope-bound
   an identifier character; that is a change to a gate file and needs its own justification, and
   "relax the arch test so my sentence fits" is exactly the move this repository forbids, so it was not
   attempted opportunistically.
+
+## 02-06
+
+- **`assertWebhookHandled` is deferred to Phase 5, and it is a decision rather than an omission.**
+  GW-04's acceptance criteria and design spec §10 both name it, and Phase 2 ships
+  `assertSynced`, `assertNothingSynced`, `assertAssociated` and `assertRequestCount` without it.
+  Four reasons, in order of weight:
+
+  1. **There is nothing to assert against.** 02-CONTEXT.md's phase boundary excludes webhooks
+     explicitly — they are Phase 5 — so no webhook route, controller, signature verifier or
+     dispatched event exists in `src/` for an assertion to observe. The one data source every
+     assertion on this surface reads is the `Middleware::history()` request log, which records
+     **outgoing** requests; an inbound webhook produces no entry in it, so `assertWebhookHandled`
+     is not a variation on the assertions shipped here at all. It needs its own record of what the
+     package received, and that record is part of the webhook pipeline Phase 5 builds.
+  2. **A stub would be worse than the absence.** The only implementations available today are a
+     no-op that passes and proves nothing, or a stub that always fails. The first is precisely the
+     vacuous pass this plan's mutation floor and threat T-02-17 exist to catch — a consumer would
+     write `Hubspot::assertWebhookHandled(...)`, see green, and have been told nothing. The second
+     is an assertion nobody can use. Both would also be unreachable code dragging on the 95%
+     coverage and 80% MSI floors, which is how a floor stops meaning anything.
+  3. **Deferring costs nothing, because adding it later is semver-safe.** `HubspotFake` and
+     `HubspotManager` are both `final`, and adding a method to a `final` class is additive (D-17);
+     `roave/backward-compatibility-check` does not flag an addition. There is no shape decision
+     being postponed either — `assertSynced`'s and `assertAssociated`'s signatures are the ones
+     that had to be got right now, and both were (see 02-06-SUMMARY.md).
+  4. **The two assertions it would resemble are already load-bearing elsewhere.** A webhook
+     assertion's real subject is "the package dispatched the right event for the right object",
+     which is a `Signals` question (Phases 6-7) as much as a `Webhooks` one. Designing it against a
+     pipeline that does not exist would be designing against a guess.
+
+  **Phase 5 owns it (WEBHOOK-*).** Two constraints inherited from this plan that its implementation
+  must honour, recorded so they are not rediscovered: the assertion must read what the package
+  actually received and dispatched rather than what a handler reports about itself (the
+  observe-the-wire rule that makes every assertion here trustworthy), and its failure message must
+  name what WAS handled, as `assertSynced`'s and `assertNothingSynced`'s do — a bare "no webhook was
+  handled" is the message a developer immediately replaces with their own debugging output.
+
+- **`src/Testing/HubspotFake.php` is 460 lines against the 500-line hard gate and the 300-line
+  review target.** Not fixed in 02-06: this plan already extracted the assertion surface out of it
+  into `RecordedRequest` and `RequestLog` rather than appending (STANDARDS §6b), and what remains is
+  one coherent job — answering each route with the shape the SDK's generated switch expects, with
+  the reasoning for each answer in the docblocks. The next person to add a response shape should
+  extract rather than append, and the natural seam is the default-response family
+  (`defaultResponseFor`, `defaultBatchResponse`, `defaultAssociationResponse`,
+  `labelledAssociationResponse`, `defaultCreatedResponse`, `timestamps`, `clock`), which is ~180
+  lines and would move out as a stateless collaborator taking the id counter and the clock — the
+  shape `RequestLog` and `ExceptionTranslator` already establish. It was not done here because the
+  counter is mutable state the fake owns, and moving it is a change whose subject should be that
+  state rather than a side effect of a plan about assertions.
