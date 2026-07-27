@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Feature\Gateway;
 
+use HubSpot\Client\Crm\Objects\ApiException as SdkObjectsApiException;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Facades\Hubspot;
@@ -15,6 +16,11 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * Task 2 (02-01): the same single create path, under every failure shape — no raw
  * `HubSpot\Client\...\ApiException` reaches userland, including on a connection failure that
  * never produced any HTTP response at all (02-RESEARCH.md Pitfall 2).
+ *
+ * Task 3 (02-02) adds the information-disclosure confirmation (T-02-01, threat register): not
+ * just the package `ApiException`'s own message/`__toString()`, but the retained *previous* SDK
+ * exception it wraps -- proving concretely, not assuming, that neither carries the
+ * `Authorization` header or the raw token anywhere reachable from a caught exception.
  */
 mutates(ExceptionTranslator::class, ObjectGateway::class, ApiException::class);
 
@@ -160,6 +166,44 @@ final class ExceptionTranslationTest extends TestCase
         self::assertStringNotContainsString('No response was received', $result->getMessage());
     }
 
+    public function test_the_previous_sdk_exception_never_carries_the_authorization_header_or_the_token(): void
+    {
+        config(['hubspot.token' => 'shh-do-not-log-me-99999']);
+
+        Hubspot::fake([
+            'deals' => Hubspot::response(['message' => 'deal not found', 'correlationId' => 'corr-404'], 404),
+        ]);
+
+        try {
+            Hubspot::objects()->create('deals', ['dealname' => 'Test Deal']);
+            self::fail('Expected a canned 404 to throw.');
+        } catch (ApiException $exception) {
+            $previous = $exception->getPrevious();
+
+            // The SDK's own ApiException class only ever carries RESPONSE-side data (status,
+            // response headers, response body) -- confirmed reading
+            // vendor/hubspot/api-client/codegen/Crm/Objects/ApiException.php, which has no
+            // constructor parameter and no property for the outgoing REQUEST (where the
+            // Authorization header actually lives). This asserts that confirmed absence
+            // concretely against a real translated exception, rather than trusting the source
+            // read alone.
+            self::assertInstanceOf(SdkObjectsApiException::class, $previous);
+
+            self::assertStringNotContainsString('shh-do-not-log-me-99999', $previous->getMessage());
+            self::assertStringNotContainsString('Authorization', $previous->getMessage());
+
+            $body = $previous->getResponseBody();
+            self::assertIsString($body);
+            self::assertStringNotContainsString('shh-do-not-log-me-99999', $body);
+            self::assertStringNotContainsString('Authorization', $body);
+
+            $headers = $previous->getResponseHeaders();
+            $flattenedHeaders = json_encode($headers, JSON_THROW_ON_ERROR);
+            self::assertStringNotContainsString('shh-do-not-log-me-99999', $flattenedHeaders);
+            self::assertStringNotContainsString('Authorization', $flattenedHeaders);
+        }
+    }
+
     public function test_the_translator_never_calls_get_correlation_id_on_a_null_response_object(): void
     {
         // Built directly against the real SDK exception constructor (public, and not the
@@ -167,7 +211,7 @@ final class ExceptionTranslationTest extends TestCase
         // deliberately never called, proving the null-check guard on a genuine non-zero-status
         // HTTP error, not only on the connection-failure (status 0) path where the SDK itself
         // never sets one either.
-        $sdkException = new \HubSpot\Client\Crm\Objects\ApiException('boom', 502, [], 'raw body');
+        $sdkException = new SdkObjectsApiException('boom', 502, [], 'raw body');
 
         $translator = new ExceptionTranslator;
         $result = $translator->translate($sdkException);
