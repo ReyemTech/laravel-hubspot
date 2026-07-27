@@ -113,6 +113,20 @@ final readonly class RequestLog
      * exists here to prevent (STANDARDS §4). The failure message names the type of both sides for the
      * same reason: `100` and `"100"` are indistinguishable in a message that prints only the value.
      *
+     * **Carried by ONE record.** Two assertions do that work, in this order, because they diagnose
+     * different failures and the first one is by far the common case:
+     *
+     * 1. Per property, was this value written **anywhere**? A "no" is almost always a wrong value or a
+     *    property the package never sent, and the message names the property, the expected value with its
+     *    type, and every value actually recorded for it.
+     * 2. Then: did **one** record carry all of them **together**? Checking only step 1 is a false positive
+     *    Codex caught on PR #20 — writes of `{dealname: One, amount: 10}` and `{dealname: Two, amount: 20}`
+     *    would satisfy an expectation of `{dealname: One, amount: 20}`, a combination neither record holds.
+     *    A multi-record sync that transposed two records' fields, or wrote the right values against the
+     *    wrong ids, would pass while the CRM holds neither record the caller described. This second
+     *    message has to be its own, because at that point no single property is to blame: every one of
+     *    them was written.
+     *
      * @param  array<string, mixed>  $properties
      */
     public function assertSynced(string $objectType, array $properties = []): void
@@ -132,8 +146,14 @@ final readonly class RequestLog
             ),
         );
 
+        if ($properties === []) {
+            return;
+        }
+
+        $records = self::recordsWrittenBy($writes);
+
         foreach ($properties as $name => $expected) {
-            $recorded = $this->valuesRecordedFor($writes, $name);
+            $recorded = self::valuesRecordedFor($records, $name);
 
             PHPUnitAssert::assertTrue(
                 in_array($expected, $recorded, true),
@@ -146,6 +166,16 @@ final readonly class RequestLog
                 ),
             );
         }
+
+        PHPUnitAssert::assertTrue(
+            self::someRecordCarriesAll($records, $properties),
+            sprintf(
+                "Expected HubSpot to have synced object type '%s' with %s on one record, but no single record carried all of them. Records written: %s.",
+                $objectType,
+                self::describeRecord($properties),
+                self::describeRecords($records),
+            ),
+        );
     }
 
     /**
@@ -254,24 +284,82 @@ final readonly class RequestLog
     }
 
     /**
+     * Every property set submitted by these writes, flattened: one entry per **record**, since a batch
+     * write submits several in one request and a single write submits one.
+     *
      * @param  array<int, RecordedRequest>  $writes
+     * @return list<array<string, mixed>>
+     */
+    private static function recordsWrittenBy(array $writes): array
+    {
+        $records = [];
+
+        foreach ($writes as $write) {
+            foreach ($write->submittedProperties() as $record) {
+                $records[] = $record;
+            }
+        }
+
+        return $records;
+    }
+
+    /**
+     * Every value recorded for one property name, across every record — which is what makes the
+     * per-property failure message useful, and is deliberately NOT sufficient on its own to satisfy the
+     * assertion. See {@see self::assertSynced()} for why.
+     *
+     * @param  list<array<string, mixed>>  $records
      * @return list<mixed>
      */
-    private function valuesRecordedFor(array $writes, string $name): array
+    private static function valuesRecordedFor(array $records, string $name): array
     {
         $values = [];
 
-        foreach ($writes as $write) {
-            // One entry per record, because a batch write submits several in one request and the
-            // property being asserted may legitimately belong to any of them.
-            foreach ($write->submittedProperties() as $record) {
-                if (array_key_exists($name, $record)) {
-                    $values[] = $record[$name];
-                }
+        foreach ($records as $record) {
+            if (array_key_exists($name, $record)) {
+                $values[] = $record[$name];
             }
         }
 
         return $values;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $records
+     * @param  array<string, mixed>  $properties
+     */
+    private static function someRecordCarriesAll(array $records, array $properties): bool
+    {
+        foreach ($records as $record) {
+            if (self::recordCarriesAll($record, $properties)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * `array_key_exists` before the comparison rather than `($record[$name] ?? null) === $expected`: a
+     * property the package never sent and a property it sent as `null` are different facts, and conflating
+     * them would let an expectation of `null` be satisfied by an absence.
+     *
+     * @param  array<string, mixed>  $record
+     * @param  array<string, mixed>  $properties
+     */
+    private static function recordCarriesAll(array $record, array $properties): bool
+    {
+        foreach ($properties as $name => $expected) {
+            if (! array_key_exists($name, $record)) {
+                return false;
+            }
+
+            if ($record[$name] !== $expected) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -345,5 +433,26 @@ final readonly class RequestLog
     private static function describeValue(mixed $value): string
     {
         return sprintf('%s (%s)', json_encode($value), get_debug_type($value));
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $records
+     */
+    private static function describeRecords(array $records): string
+    {
+        return implode('; ', array_map(self::describeRecord(...), $records));
+    }
+
+    /**
+     * A whole property set, rendered without the `(array)` suffix {@see self::describeValue()} would add —
+     * the type of a property SET is never the question, only the types of the values inside it, which the
+     * JSON itself distinguishes. Wrapped in `sprintf` rather than cast, because `json_encode` is typed
+     * `string|false` and a `(string)` cast would be a mutant nothing can kill.
+     *
+     * @param  array<string, mixed>  $record
+     */
+    private static function describeRecord(array $record): string
+    {
+        return sprintf('%s', json_encode($record));
     }
 }

@@ -203,6 +203,31 @@ final class FakeSyncedPropertiesTest extends TestCase
     }
 
     /**
+     * A record that carries the right value for one expected property and **does not carry the other at
+     * all** is not a match. Distinct from the value-mismatch case above, and worth its own test: records in
+     * one batch legitimately have different property sets — a partial update sends only what changed — so
+     * "absent" is a state the one-record check meets in practice rather than only in principle.
+     */
+    public function test_a_record_missing_one_expected_property_does_not_carry_the_subset(): void
+    {
+        Hubspot::fake();
+
+        Hubspot::objects()->createMany('deals', [
+            ['dealname' => 'One', 'amount' => '10'],
+            ['dealname' => 'Two'],
+        ]);
+
+        self::assertSame(
+            'Expected HubSpot to have synced object type \'deals\' with {"dealname":"Two","amount":"10"} '
+            .'on one record, but no single record carried all of them. Records written: '
+            .'{"dealname":"One","amount":"10"}; {"dealname":"Two"}.',
+            FailedAssertion::messageOf(
+                static fn () => Hubspot::assertSynced('deals', ['dealname' => 'Two', 'amount' => '10']),
+            ),
+        );
+    }
+
+    /**
      * The same rule across two separate single-record writes, not only within one batch. A consumer who
      * syncs two models in two calls has the same claim to make and the same false positive to avoid.
      */
