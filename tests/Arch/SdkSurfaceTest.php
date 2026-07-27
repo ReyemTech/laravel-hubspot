@@ -9,10 +9,10 @@ declare(strict_types=1);
  *
  *   1. Non-vacuity: at least one file under `src/` actually references the SDK namespace, and
  *      every file that does resolves to a path under `src/Gateway/`.
- *   2. Boundary-safe return shapes: no file under `src/Gateway/Contracts/`, and none of the
- *      package-owned result objects the Gateway hands back to a caller, reference the SDK
- *      namespace at all -- this is what stops Phase 3/4 importing an SDK type merely by
- *      consuming a Gateway method, which would break R1 in a layer not allowed to name it.
+ *   2. Boundary-safe shapes: no file under `src/Gateway/Contracts/`, and none of the package-owned
+ *      shapes that cross the Gateway boundary in either direction, reference the SDK namespace at
+ *      all -- this is what stops Phase 3/4 importing an SDK type merely by consuming a Gateway
+ *      method, which would break R1 in a layer not allowed to name it.
  *
  * Deliberately NOT a new entry in tests/Arch/rules.json: it asserts the non-vacuity of an
  * existing rule (R1) rather than adding a new boundary rule, and
@@ -38,17 +38,20 @@ use Composer\Autoload\ClassLoader;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 
 /**
- * Package-owned result objects the Gateway hands back to a caller. Update this list when a
- * later Phase 2 plan adds another one (e.g. an association read result) -- the list is
- * deliberately explicit rather than auto-derived, since "what the Gateway returns" is a design
- * decision, not something safely inferred from a directory scan.
+ * Package-owned shapes that cross the Gateway boundary -- both the results it hands back and the
+ * query shapes callers hand in. Update this list when a later Phase 2 plan adds another one (e.g.
+ * an association read result) -- the list is deliberately explicit rather than auto-derived, since
+ * "what crosses the boundary" is a design decision, not something safely inferred from a directory
+ * scan.
  *
  * @return list<string>
  */
-function reyemtech_hubspot_sdk_surface_result_object_files(string $gatewayRoot): array
+function reyemtech_hubspot_sdk_surface_boundary_shape_files(string $gatewayRoot): array
 {
     return [
         $gatewayRoot.'/HubspotObject.php',
+        $gatewayRoot.'/HubspotObjectPage.php',
+        $gatewayRoot.'/SearchQuery.php',
     ];
 }
 
@@ -151,14 +154,14 @@ test('R1 is non-vacuous: at least one src/ file references the SDK, and only fil
     }
 });
 
-test('boundary-safe return shapes: Contracts/ and package-owned Gateway result objects never reference the SDK', function (): void {
+test('boundary-safe return shapes: Contracts/ and package-owned Gateway boundary shapes never reference the SDK', function (): void {
     $needle = reyemtech_hubspot_sdk_surface_namespace_needle();
     $root = reyemtech_hubspot_sdk_surface_src_root();
     $gatewayRoot = $root.'/Gateway';
 
     $candidatePaths = [
         ...reyemtech_hubspot_sdk_surface_php_files($gatewayRoot.'/Contracts'),
-        ...reyemtech_hubspot_sdk_surface_result_object_files($gatewayRoot),
+        ...reyemtech_hubspot_sdk_surface_boundary_shape_files($gatewayRoot),
     ];
 
     $violations = array_values(array_filter(

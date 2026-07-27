@@ -127,13 +127,66 @@ final class HubspotFake
     {
         $this->mockHandler->append($this->respondTo(...));
 
-        $objectType = basename($request->getUri()->getPath());
+        $objectType = $this->objectTypeOf($request);
 
         if (isset($this->responses[$objectType])) {
             return $this->cannedResponseFor($this->responses[$objectType], $request);
         }
 
-        return $this->defaultCreatedResponse($request);
+        return $this->defaultResponseFor($request);
+    }
+
+    /**
+     * The object type is the path segment immediately after `objects`, for every route the Gateway
+     * calls: `/crm/v3/objects/deals`, `/crm/v3/objects/deals/1`, `/crm/v3/objects/deals/search`,
+     * `/crm/v3/objects/deals/batch/create`. Reading the LAST segment instead would key a canned
+     * response on the record id or on the verb.
+     *
+     * Written as a match rather than a search-then-guard so there is no branch here that no test
+     * can reach: every route this double serves is a `/objects/` route, and a guard for the
+     * impossible case would sit permanently uncovered, which is how coverage floors stop meaning
+     * anything.
+     */
+    private function objectTypeOf(RequestInterface $request): string
+    {
+        preg_match('#/objects/([^/]+)#', $request->getUri()->getPath(), $matches);
+
+        return $matches[1] ?? '';
+    }
+
+    /**
+     * Answers each route with the shape the SDK's generated switch actually expects for it. This
+     * matters more than it looks: the SDK deserialises on the status code, so a 201 create body
+     * answered to a `getById` falls into the generated `default` branch and comes back as
+     * `Model\Error`, which surfaces as an unexpected-shape error rather than as "you forgot to can
+     * a response". Routing is by HTTP method and route shape only — never by object type, which
+     * would put the per-type branching this package exists to avoid inside its own test double.
+     */
+    private function defaultResponseFor(RequestInterface $request): ResponseInterface
+    {
+        $path = $request->getUri()->getPath();
+
+        if (str_ends_with($path, '/search')) {
+            return $this->jsonResponse(200, ['total' => 0, 'results' => []]);
+        }
+
+        if ($request->getMethod() === 'POST') {
+            return $this->defaultCreatedResponse($request);
+        }
+
+        if ($request->getMethod() === 'GET') {
+            return $this->jsonResponse(200, ['id' => basename($path), 'properties' => []]);
+        }
+
+        if ($request->getMethod() === 'PATCH') {
+            return $this->jsonResponse(200, [
+                'id' => basename($path),
+                'properties' => $this->submittedProperties($request),
+            ]);
+        }
+
+        // DELETE — HubSpot's archive answers 204 with no body.
+        return new Response(204);
     }
 
     private function cannedResponseFor(CannedResponse|CannedConnectionFailure $canned, RequestInterface $request): ResponseInterface|Throwable
@@ -142,29 +195,39 @@ final class HubspotFake
             return $canned->toException($request);
         }
 
-        return new Response(
-            $canned->status,
-            ['Content-Type' => 'application/json'],
-            (string) json_encode($canned->body, JSON_THROW_ON_ERROR),
-        );
+        return $this->jsonResponse($canned->status, $canned->body);
     }
 
     private function defaultCreatedResponse(RequestInterface $request): ResponseInterface
     {
         $this->idCounter++;
 
+        return $this->jsonResponse(201, [
+            'id' => (string) $this->idCounter,
+            'properties' => $this->submittedProperties($request),
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function submittedProperties(RequestInterface $request): array
+    {
         /** @var array{properties?: array<string, mixed>}|null $submitted */
         $submitted = json_decode((string) $request->getBody(), true);
 
-        $properties = $submitted['properties'] ?? [];
+        return $submitted['properties'] ?? [];
+    }
 
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    private function jsonResponse(int $status, array $body): ResponseInterface
+    {
         return new Response(
-            201,
+            $status,
             ['Content-Type' => 'application/json'],
-            (string) json_encode([
-                'id' => (string) $this->idCounter,
-                'properties' => $properties,
-            ], JSON_THROW_ON_ERROR),
+            (string) json_encode($body, JSON_THROW_ON_ERROR),
         );
     }
 }
