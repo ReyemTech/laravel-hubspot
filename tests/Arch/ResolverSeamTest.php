@@ -166,20 +166,33 @@ test('a layer that throws the package exception hierarchy passes its own boundar
     // needle. Every assertion here is therefore written as a boolean with a message, which is also what
     // makes the child process's own output readable in the failure — without it, a red run here reports
     // only "false is not true" about a process nobody can see.
+    //
+    // **Nothing here asserts pest's summary line, and that is deliberate.** The first version of this
+    // test required `Tests: 1 passed` in the child output and failed on the PHP 8.5 `prefer-lowest`
+    // matrix legs only — where `pest-plugin-arch` at its lowest resolvable version trips a PHP 8.5
+    // deprecation (`Method ReflectionProperty::…`), so PHPUnit labels the *passing* test `DEPR` and the
+    // summary reads `Tests: 1 deprecated`. That deprecation is pre-existing on those legs — the shipped
+    // `StrictTypesTest` reports it too — and this project does not fail a build on deprecations, so the
+    // rule had passed and only the wording assertion was wrong. Exit code plus a vacuity guard says the
+    // same thing without depending on how a run is labelled.
     expect(str_contains($result['output'], 'No tests found'))->toBeFalse(
         "The {$rule} filter matched no test, so this proof would have been vacuous.\n\n{$result['output']}",
     );
 
-    // Matched loosely on the whitespace: pest pads that summary label, and pinning the exact number of
-    // spaces would make this test a hostage to a patch release across the `prefer-lowest` matrix legs.
-    expect(preg_match('/Tests:\s+1 passed/', $result['output']) === 1)->toBeTrue(
-        "{$rule} did not pass with tests/Arch/{$fixture} present. If the message below names "
+    expect(str_contains($result['output'], $rule.':'))->toBeTrue(
+        "The child run never named {$rule}, so the rule under proof did not run. Every rule's arch() "
+        ."description begins with its id, which is also what --filter matches on.\n\n".$result['output'],
+    );
+
+    // Zero means every test that ran passed: PHPUnit exits non-zero on any failure or error, and this
+    // project's phpunit.xml.dist additionally fails on warnings, risky, skipped and incomplete tests.
+    expect($result['exitCode'])->toBe(
+        0,
+        "{$rule} did not pass with tests/Arch/{$fixture} present. If the output below names "
         ."'ReyemTech\\Hubspot\\Exceptions', the layer allow-lists have been narrowed again and the layer can no "
         ."longer throw the package's own exceptions — which STANDARDS §9 requires of every one of them.\n\n"
         .$result['output'],
     );
-
-    expect($result['exitCode'])->toBe(0, $result['output']);
 })->with([
     // The resolver seam itself: what REG-02 ships, and the case plan 02-05 reproduced as a blocker.
     'R2, a Registry resolver that throws on a miss' => [
