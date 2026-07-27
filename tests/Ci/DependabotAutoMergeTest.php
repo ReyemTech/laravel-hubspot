@@ -32,41 +32,92 @@ function dependabotAutoMergeWorkflow(): array
     return $workflow;
 }
 
+/**
+ * @param  array<array-key, mixed>  $value
+ * @return array<string, mixed>
+ */
+function dependabotAutoMergeEnsureStringKeyedArray(array $value, string $context): array
+{
+    $result = [];
+
+    foreach ($value as $key => $item) {
+        if (! is_string($key)) {
+            throw new RuntimeException("Expected {$context} to have only string keys.");
+        }
+
+        $result[$key] = $item;
+    }
+
+    return $result;
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function dependabotAutoMergeJob(): array
+{
+    $jobs = dependabotAutoMergeWorkflow()['jobs'] ?? null;
+
+    if (! is_array($jobs)) {
+        throw new RuntimeException('Expected dependabot-auto-merge.yml to declare a "jobs" map.');
+    }
+
+    $job = dependabotAutoMergeEnsureStringKeyedArray($jobs, '"jobs"')['auto-merge'] ?? null;
+
+    if (! is_array($job)) {
+        throw new RuntimeException('Expected dependabot-auto-merge.yml to declare an "auto-merge" job.');
+    }
+
+    /** @var array<string, mixed> $job */
+    return $job;
+}
+
+/**
+ * @return list<array<string, mixed>>
+ */
+function dependabotAutoMergeJobSteps(): array
+{
+    $steps = dependabotAutoMergeJob()['steps'] ?? null;
+
+    if (! is_array($steps)) {
+        throw new RuntimeException('Expected the "auto-merge" job to declare "steps".');
+    }
+
+    $result = [];
+
+    foreach ($steps as $step) {
+        if (! is_array($step)) {
+            throw new RuntimeException('Expected every step to be an associative array.');
+        }
+
+        /** @var array<string, mixed> $step */
+        $result[] = $step;
+    }
+
+    return $result;
+}
+
 it('triggers on pull_request_target, not the plain pull_request event that always gets a read-only token for Dependabot PRs', function (): void {
     $workflow = dependabotAutoMergeWorkflow();
 
-    // YAML parses the bare key `on:` to the boolean `true` under some parsers; Symfony's
-    // Yaml component keeps it as the literal string "on" here since the workflow always
-    // writes it unquoted as a mapping key, so read it defensively either way.
-    $on = $workflow['on'] ?? $workflow[true] ?? null;
-
-    expect($on)->toBe('pull_request_target');
+    // YAML 1.1 parses the bare scalar `on` to the boolean `true` in some parsers; Symfony's
+    // Yaml component (YAML 1.2-oriented) keeps mapping keys as the literal string "on" here,
+    // which is what every other workflow-parsing test in this suite already relies on.
+    expect($workflow['on'] ?? null)->toBe('pull_request_target');
 });
 
 it('never checks out the pull request head -- pull_request_target must not execute PR-controlled code', function (): void {
-    $workflow = dependabotAutoMergeWorkflow();
+    foreach (dependabotAutoMergeJobSteps() as $step) {
+        $uses = $step['uses'] ?? null;
 
-    $jobs = $workflow['jobs'] ?? null;
-    expect($jobs)->toBeArray();
-
-    foreach ($jobs as $job) {
-        $steps = $job['steps'] ?? [];
-
-        foreach ($steps as $step) {
-            $uses = $step['uses'] ?? null;
-
-            if (is_string($uses)) {
-                expect($uses)->not->toStartWith('actions/checkout');
-            }
+        if (is_string($uses)) {
+            expect($uses)->not->toStartWith('actions/checkout');
         }
     }
 });
 
 it('still gates on the dependabot actor', function (): void {
-    $workflow = dependabotAutoMergeWorkflow();
-
-    $job = $workflow['jobs']['auto-merge'] ?? null;
-    expect($job)->toBeArray();
+    $job = dependabotAutoMergeJob();
 
     expect($job['if'] ?? null)->toBe("github.actor == 'dependabot[bot]'");
 });
@@ -81,20 +132,24 @@ it('keeps write permissions scoped to contents and pull-requests only', function
 });
 
 it('still restricts auto-merge to patch/minor direct:development bumps, never production, never major', function (): void {
-    $workflow = dependabotAutoMergeWorkflow();
-
-    $steps = $workflow['jobs']['auto-merge']['steps'] ?? [];
     $mergeStep = null;
 
-    foreach ($steps as $step) {
+    foreach (dependabotAutoMergeJobSteps() as $step) {
         if (($step['name'] ?? null) === 'Auto-merge eligible Dependabot PRs') {
             $mergeStep = $step;
         }
     }
 
-    expect($mergeStep)->toBeArray();
+    if ($mergeStep === null) {
+        throw new RuntimeException('Expected the "auto-merge" job to declare an "Auto-merge eligible Dependabot PRs" step.');
+    }
 
     $condition = $mergeStep['if'] ?? '';
+
+    if (! is_string($condition)) {
+        throw new RuntimeException('Expected the merge step\'s "if" to be a string.');
+    }
+
     expect($condition)->toContain('semver-patch');
     expect($condition)->toContain('semver-minor');
     expect($condition)->toContain('direct:development');
