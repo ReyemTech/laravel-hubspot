@@ -1,0 +1,90 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Tests\Feature;
+
+use Illuminate\Database\Migrations\Migrator;
+use Illuminate\Foundation\Application;
+use Illuminate\Support\Facades\File;
+use Illuminate\Testing\PendingCommand;
+use ReyemTech\Hubspot\ServiceProvider;
+use ReyemTech\Hubspot\Tests\TestCase;
+
+/**
+ * PHPUnit-style test class rather than a Pest closure test (CLAUDE.md: "Pest runs on
+ * PHPUnit, so PHPUnit-style test classes are valid here if you prefer them"). This is
+ * deliberate here: `getPackageProviders()` must register `ServiceProvider::class` for
+ * this file only, without touching the shared `Tests\TestCase::getPackageProviders()`
+ * every other Feature/Unit test relies on -- keeping this test self-contained instead
+ * of widening the shared fixture's registered-providers surface.
+ *
+ * Boots a real Laravel application under orchestra/testbench (per the design decision:
+ * "test it through orchestra/testbench so the provider is actually booted") and asserts
+ * the three things this pulled-forward ServiceProvider must do: merge config defaults
+ * without requiring a publish step, make the config publishable, and never load
+ * migrations under the default (cache) store -- zero-migration install must hold.
+ */
+final class ServiceProviderTest extends TestCase
+{
+    /**
+     * @param  Application  $app
+     * @return array<int, class-string>
+     */
+    protected function getPackageProviders($app): array
+    {
+        return [ServiceProvider::class];
+    }
+
+    public function test_it_merges_config_hubspot_php_default_values_without_publishing(): void
+    {
+        self::assertNull(config('hubspot.token'));
+        self::assertSame('cache', config('hubspot.store'));
+        self::assertFalse(config('hubspot.disabled'));
+        self::assertTrue(config('hubspot.webhooks.enforce'));
+        self::assertNull(config('hubspot.webhooks.secret'));
+        self::assertSame(300, config('hubspot.webhooks.tolerance'));
+    }
+
+    public function test_it_publishes_config_hubspot_php_under_the_hubspot_config_tag(): void
+    {
+        $published = config_path('hubspot.php');
+
+        if (File::exists($published)) {
+            File::delete($published);
+        }
+
+        try {
+            $result = $this->artisan('vendor:publish', [
+                '--tag' => 'hubspot-config',
+                '--force' => true,
+            ]);
+
+            if ($result instanceof PendingCommand) {
+                $result->assertExitCode(0);
+            } else {
+                self::assertSame(0, $result);
+            }
+
+            self::assertFileExists($published);
+        } finally {
+            if (File::exists($published)) {
+                File::delete($published);
+            }
+        }
+    }
+
+    public function test_it_never_loads_migrations_when_the_default_cache_store_is_active(): void
+    {
+        $migrationsPath = realpath(dirname(__DIR__, 2).'/database/migrations');
+
+        $migrator = app(Migrator::class);
+
+        $registeredPaths = array_map(
+            static fn (string $path): string|false => realpath($path),
+            $migrator->paths()
+        );
+
+        self::assertNotContains($migrationsPath, $registeredPaths);
+    }
+}
