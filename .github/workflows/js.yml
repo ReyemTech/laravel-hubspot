@@ -10,10 +10,14 @@ permissions:
 
 jobs:
   coverage:
-    # Node major pinned to the lowest version resources/js/node_modules/vitest's own
-    # package.json "engines" field permits: '^20.0.0 || ^22.0.0 || >=24.0.0' (read via
-    # `npm view vitest engines` against the installed 4.1.10, not copied from the stint
-    # reference, which pins Node 20 for an older Vitest major).
+    # Node major pinned to the higher of the two floors this job's tools declare:
+    # resources/js/node_modules/vitest's own package.json "engines" permits
+    # '^20.0.0 || ^22.0.0 || >=24.0.0' (`npm view vitest engines` against the installed
+    # 4.1.10), but pnpm 11.17.0 itself requires Node >=22.13 regardless of any
+    # workspace's engines field (`npm view pnpm@11.17.0 engines`) -- Node 20 satisfies
+    # Vitest but crashes pnpm at runtime with `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite`.
+    # Node 22 satisfies both. See docs.yml, pinned to Node 22 for the same reason
+    # against Astro's >=22.12.0 floor.
     name: js coverage (95% floor, resources/js only)
     runs-on: ubuntu-latest
     steps:
@@ -28,7 +32,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
 
       # Filtered to resources/js's own dependency tree so this install never has to satisfy
