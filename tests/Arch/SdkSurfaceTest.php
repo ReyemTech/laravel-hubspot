@@ -57,6 +57,12 @@ function reyemtech_hubspot_sdk_surface_boundary_shape_files(string $gatewayRoot)
         $gatewayRoot.'/ObjectRef.php',
         $gatewayRoot.'/AssociationPair.php',
         $gatewayRoot.'/AssociationRow.php',
+        // Both cross the boundary INBOUND, which is the direction that matters most here: Phase 3's
+        // registry constructs an AssociationType and hands it to the Gateway, and Registry may not
+        // name a `HubSpot\*` class (R1). If either of these grew an SDK reference -- an
+        // `AssociationSpec` field, say -- implementing the resolver would force a layer violation.
+        $gatewayRoot.'/AssociationType.php',
+        $gatewayRoot.'/AssociationCategory.php',
     ];
 }
 

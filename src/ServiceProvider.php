@@ -8,10 +8,12 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
 use ReyemTech\Hubspot\Gateway\AssociationGateway;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
+use ReyemTech\Hubspot\Gateway\UnresolvedAssociationTypeResolver;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -49,6 +51,17 @@ final class ServiceProvider extends BaseServiceProvider
         });
 
         $this->app->singleton(ExceptionTranslator::class);
+
+        // The association-type resolver seam. Shared, unlike the gateways: the default
+        // implementation holds no state and no transport, so there is nothing for Hubspot::fake()
+        // to invalidate by swapping the client factory underneath it.
+        //
+        // This one line is the whole extension point (decision #5). Phase 3 (REG-02) rebinds this
+        // key to a registry-backed implementation and every labelled write in the package starts
+        // resolving instead of throwing — with no change to any Gateway signature, because the
+        // gateway takes its resolver from the container rather than constructing one. Until then the
+        // honest answer to "what type id is this?" is an exception naming the direction that failed.
+        $this->app->singleton(AssociationTypeResolver::class, UnresolvedAssociationTypeResolver::class);
 
         $this->app->singleton(HubspotManager::class);
 
