@@ -33,7 +33,7 @@ tech-stack:
     - "Validation in a readonly value object's constructor rather than at use, because the invalid value is silently encodable into a real-looking request path"
     - "Reversal as a named operation returning a new value, never a mutator — the direction change is visible in the caller's own source"
     - "Flattening a nested SDK list rather than choosing an element from it: one AssociationRow per reported type, because 'the first' or 'the only' type would report success regardless of which id was written (FOUND-03 finding 3)"
-    - "Deliberately NOT narrowing an SDK response union when the return type is void — a guard no route can reach is a permanently uncovered line, which is how a coverage floor stops meaning anything"
+    - "**CORRECTED 2026-07-27:** narrowing EVERY SDK response union, including where the wrapper returns void — a `void` return means no value to hand back, not no shape to check, and the SDK's generated `switch` sends every unexpected 2xx to `Model\\Error` before its own status guard can throw. The uncoverable-guard reasoning applies only to a call declared `@return array of null` (`archive()`), which has no union at all"
     - "Ordering an assertion before the assertion that narrows its subject, so PHPStan level max cannot constant-fold the first into a tautology"
 
 key-files:
@@ -65,7 +65,7 @@ key-decisions:
   - "Whitespace-only counts as blank. `\" \"` URL-encodes to `%20`, a perfectly valid path segment, so nothing about it fails loudly downstream — the SDK's `toPathValue()` encodes and does nothing else, and HubSpot performs no server-side validation on the object type either."
   - "`read()` takes an `AssociationPair` even though HubSpot's endpoint has no parameter for the to-side id. `getPage()` lists everything the FROM record is associated to of the TO side's object type; there is no per-pair read. The pair stays the accepted shape because the caller's subject IS a direction, and a test asserts the to-side id is absent from the recorded URI so the omission is documented rather than discovered."
   - "One `AssociationRow` per reported association TYPE, not per related record. FOUND-03 observed a single record carrying both a USER_DEFINED label and the HUBSPOT_DEFINED default, in an order HubSpot does not guarantee. Collapsing them would force a choice between 'the first' and 'the only', and either would report success regardless of which id was actually written."
-  - "`associate()` returns void and deliberately does NOT narrow the SDK's `BatchResponsePublicDefaultAssociation|Error` union. The response describes the association the caller already fully specified, and the Error branch is unreachable through this route, so a narrowing guard would be a permanently uncovered line. `read()` does narrow, because it consumes the response and the branch is reachable with a canned 2xx."
+  - "**CORRECTED 2026-07-27 (Codex P2 on PR #18, commit `d9768f8`).** `associate()` returns void and DOES narrow the SDK's `BatchResponsePublicDefaultAssociation|Error` union, raising `ExceptionTranslator::unexpectedResponseShape()` otherwise — the same call `read()` makes. The original decision recorded here (\"the Error branch is unreachable through this route, so a narrowing guard would be a permanently uncovered line\") was wrong on both halves: `createDefaultWithHttpInfo()` returns from its status-code `switch` before the `if ($statusCode < 200 || $statusCode > 299) { throw }` beneath it, so that throw is dead code and any other 2xx deserialises quietly into `Model\\Error`; and the branch is demonstrably coverable, because `read()`'s identical guard is covered by a canned 202. A `void` return type means there is no value to hand back, not that there is no shape to check. `dissociate()` still has no guard and must not gain one: `archiveWithHttpInfo()` is declared `@return array of null`, which is where a genuinely uncoverable guard would sit."
   - "`ExceptionTranslator` gained a shared `public static unexpectedResponseShape()`; `ObjectGateway`'s private `unexpectedShape()` is now a one-line delegation to it. Two classes asking the same question become one implementation immediately, not on the third occurrence (STANDARDS §6b), and `recognisedSdkApiExceptions()` already set the precedent for a static on this class. The message is byte-identical, so 02-03's assertions on it still hold."
   - "`HubspotFake` had to learn the association route family, which the plan's files_modified did not anticipate — the same class of unavoidable change 02-03 hit. The object-route defaults answer associations wrongly in two ways that both read like package bugs: a PUT (no object route uses one) falls through to the archive branch's 204 and lands in the SDK's `default` switch arm as `Model\\Error`, and a GET receives `{\"id\": ..., \"properties\": {}}` which deserialises into a collection with no `results` at all — a TypeError raised inside the SDK. Routed on HTTP method and route shape only, never on object type."
   - "The `Unit` testsuite registration, the Ci lock test's expected set and the first `tests/Unit/` file all land in the RED commit, because `failOnWarning` turns a declared-but-empty testsuite into a build failure. A sentence in the Ci test's header now says so, so the next person does not register a suite ahead of its first test."
@@ -75,7 +75,7 @@ requirements-completed: []
 
 coverage:
   - id: D1
-    description: "An ObjectRef rejects a blank or whitespace-only object type and a blank or whitespace-only id at construction, with a message naming which side was blank"
+    description: "An ObjectRef rejects a blank or whitespace-only object type and a blank or whitespace-only id at construction, with a message naming which side was blank — and, since the PR #18 review fixes, rejects a NON-STRING on either side too, independently of the calling file's strict_types setting"
     requirement: "GW-02"
     verification:
       - kind: unit
@@ -83,6 +83,18 @@ coverage:
         status: pass
       - kind: unit
         ref: "tests/Unit/Gateway/AssociationPairTest.php#test_a_blank_object_id_is_rejected_and_the_message_names_that_side"
+        status: pass
+      - kind: unit
+        ref: "tests/Unit/Gateway/AssociationPairTest.php#test_a_non_string_object_type_is_rejected_and_the_message_names_that_side"
+        status: pass
+      - kind: unit
+        ref: "tests/Unit/Gateway/AssociationPairTest.php#test_a_non_string_object_id_is_rejected_and_the_message_names_that_side"
+        status: pass
+      - kind: unit
+        ref: "tests/Unit/Gateway/AssociationPairTest.php#test_an_integer_id_is_rejected_rather_than_cast_and_the_message_names_the_remedy"
+        status: pass
+      - kind: unit
+        ref: "tests/Unit/Gateway/AssociationPairTest.php#test_an_object_ref_validates_its_own_types_rather_than_trusting_the_callers_strict_types_mode"
         status: pass
       - kind: unit
         ref: "tests/Unit/Gateway/AssociationPairTest.php#test_every_construction_rejection_is_a_package_exception"
@@ -196,7 +208,7 @@ coverage:
         status: pass
     human_judgment: false
   - id: D12
-    description: "Every failure on the association paths surfaces as the package ApiException, never the SDK's; an unexpected success status on a read surfaces as a plain RuntimeException naming the expected model"
+    description: "Every failure on the association paths surfaces as the package ApiException, never the SDK's; an unexpected success status on a read — and, since the PR #18 review fixes, on an associate — surfaces as a plain RuntimeException naming the expected model"
     requirement: "GW-02"
     verification:
       - kind: unit
@@ -204,6 +216,12 @@ coverage:
         status: pass
       - kind: unit
         ref: "tests/Feature/Gateway/AssociationGatewayTest.php#test_an_unexpected_success_status_on_a_read_throws_a_plain_runtime_exception"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/AssociationGatewayTest.php#test_an_unexpected_success_status_on_an_associate_throws_a_plain_runtime_exception"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Gateway/AssociationGatewayTest.php#test_an_unexpected_success_status_on_a_dissociate_has_no_shape_to_reject"
         status: pass
     human_judgment: false
   - id: D13
@@ -499,3 +517,121 @@ authoritative result is what GitHub reports on the PR.
 
 Every file claimed under `key-files.created` exists on disk, and all four task commits
 (`3bd6e4f`, `7a192ff`, `61ecafd`, `21bb30e`) are present in `git log`.
+
+---
+
+## Post-review fixes — two Codex P2 findings on PR #18 (2026-07-27)
+
+Both findings were read in full and reproduced locally before anything was changed. Both are real.
+RED `72c4256`, GREEN `d9768f8`.
+
+### 1. `associate()` accepted any success shape, and the docblock argued for it
+
+**The finding was right and the original decision was wrong on both halves.** The `key-decisions`
+entry above has been corrected in place rather than left standing with a note.
+
+`createDefaultWithHttpInfo()` switches on the status code — `case 200:` returns
+`BatchResponsePublicDefaultAssociation`, `default:` returns `Model\Error` — and **that switch
+returns before** the `if ($statusCode < 200 || $statusCode > 299) { throw ... }` written below it, so
+that throw is unreachable code. Guzzle does not throw for a 2xx either. A 202 or a 204 therefore
+deserialised into `Model\Error`, `associate()` discarded it, and the method returned normally: a
+silent false success on an association **write**, which is the precise failure class this package
+exists to prevent.
+
+The claim that a guard would be "a permanently uncovered guard" was disproved by the file it was
+written in: `read()` carries the identical guard and it is covered by
+`test_an_unexpected_success_status_on_a_read_throws_a_plain_runtime_exception`, using
+`Hubspot::response(['message' => 'unexpected shape'], 202)`. That test is now mirrored exactly for
+the associate route. The general lesson: **a `void` return type means there is no value to hand
+back, not that there is no shape to check.**
+
+`dissociate()` deliberately gained nothing, and a companion test pins that asymmetry so nobody
+"completes" it: `archiveWithHttpInfo()` is declared `@return array of null` and returns
+`[null, $status, $headers]` for every 2xx, so it has no union to narrow and no model to expect. A
+guard *there* would be the uncoverable line the old docblock wrongly claimed for `associate()`.
+
+### 2. `ObjectRef` relied on the package's own `strict_types`, which is not the file that decides
+
+`declare(strict_types=1)` binds at the file making the **call**, never at the file declaring the
+constructor. This package declaring it in every file (STANDARDS §4) therefore bought nothing for its
+typical consumer: a Laravel application file, which does not declare it. Measured against the
+pre-fix code from a weak-mode file:
+
+| passed | result before the fix |
+|---|---|
+| `new ObjectRef('contacts', 0)` | accepted as `'0'` |
+| `new ObjectRef('contacts', true)` | accepted as `'1'` |
+| `new ObjectRef('contacts', 1.2345678901234568E+19)` | accepted as `'1.2345678901235E+19'` — silent precision loss into a real-looking path segment |
+| `new ObjectRef(0, '123')` | accepted with object type `'0'` |
+| `new ObjectRef('contacts', false)` | rejected, but as a *blank* id |
+| `new ObjectRef('contacts', null)` | rejected as a raw `TypeError` no `catch (HubspotException)` sees |
+
+The class docblock already condemned exactly this — "coercive typing makes `"0"`, `0` and `""`
+silent equivalents" — so the invariant was defeated for the consumer it was written for.
+
+Both constructor parameters are now native `mixed`; `objectType` and `id` are declared `string`
+properties (readonly by virtue of the readonly class) assigned only after `is_string()` passes, ahead
+of the existing blank checks. The docblock now states that validation does not depend on the caller's
+`strict_types` setting and why that distinction matters.
+
+Three consequences recorded deliberately:
+
+- **A non-string is rejected, never cast.** `new ObjectRef('contacts', 12345)` now throws. Casting
+  would reintroduce the `0`/`"0"` blur the docblock condemns, and this package's doctrine is to throw
+  rather than guess. **DX cost:** a consumer holding an id as an int must write `(string) $id` — which
+  the exception message tells them to do, and which `test_an_integer_id_is_rejected_rather_than_cast_and_the_message_names_the_remedy`
+  documents as a decision rather than an oversight.
+- **No narrowing `@param string` docblock sits over the `mixed` natives.** PHPStan at level max would
+  then read the `is_string()` checks as tautologies, and this repo forbids a baseline (STANDARDS §3)
+  and permits a per-line suppression only with a written reason. Leaving them `mixed` keeps the
+  analysis honest. **Accepted consequence:** a strict-mode consumer who previously got a static type
+  error now gets a runtime `ObjectTypeException` with a better message.
+- **The fix is pinned by reflection.** Collapsing this back into two promoted `string` parameters
+  reads like a tidy-up and would silently restore the coercion, so
+  `test_an_object_ref_validates_its_own_types_rather_than_trusting_the_callers_strict_types_mode`
+  asserts both parameters are `mixed` and both properties are readonly `string`.
+
+**New exception member — a fourth named constructor on `ObjectTypeException`**, keeping the hierarchy
+at four members (STANDARDS §9) as the three existing ones do:
+
+`ObjectTypeException::nonStringObjectReference(string $side, mixed $received)`, where `$side` is the
+prose `'object type'` or `'object id'`. Full message text, with `%s` filled by the side and by
+`get_debug_type($received)`:
+
+> A HubSpot object reference was built with a **{object type|object id}** of type **{int|bool|float|null|array|class@anonymous|…}**. Pass it as a string — an id held as an integer is cast at the call site with "(string) $id", never coerced. This is validated here rather than by the parameter type because declare(strict_types=1) binds at the calling file, not at this package's: in a file without it, 0 would have arrived as "0" and true as "1", addressing a record nobody meant.
+
+`null` now surfaces through this member rather than as a raw `TypeError`, so it is catchable through
+`HubspotException` like every other construction fault — asserted in
+`test_every_construction_rejection_is_a_package_exception`, which grew three cases.
+
+### Nothing else changed
+
+No existing test or fixture constructed an `ObjectRef` with a non-string: all 23 call sites in `src/`
+and `tests/` pass string literals, checked before the fix. No new dependency, no `TODO`/`FIXME`, no
+suppression, no baseline, and the two files named in the findings are the only source files touched
+besides `src/Exceptions/ObjectTypeException.php`, which had to gain the member because the class has a
+private constructor and only named constructors.
+
+### Verification after the fixes
+
+| Gate | Before | After |
+|---|---|---|
+| `vendor/bin/pest` | 198 passed, 805 assertions | **218 passed, 881 assertions** |
+| `vendor/bin/pest --coverage --min=95` | 100.0% | **100.0%** |
+| `vendor/bin/pest --mutate --min=80` | MSI 97.80% (8 untested, 356 tested) | **MSI 97.84% (8 untested, 363 tested)** |
+| `vendor/bin/phpstan analyse --no-progress` | no errors | **no errors** |
+| `vendor/bin/pint --test` | passed | **passed** |
+| `vendor/bin/phpcs --standard=phpcs.xml -q` | passed | **passed** |
+| `scripts/ci/verify-arch-rules-fire.sh` | 10/10 | **10/10** |
+| `scripts/ci/verify-quality-gates-fire.sh` | passed | **passed** |
+| `scripts/ci/check-source-hygiene.sh` | passed | **passed** |
+
+**Zero new surviving mutants.** The 8 survivors are byte-for-byte the same pre-existing, equivalent
+ones documented above — five in `HubspotFake` (lines 154, 231, 237, 275, 299) and three in
+`ObjectGateway` (lines 204, 322, 334). Every mutant generated for `ObjectRef`, `ObjectTypeException`
+and `AssociationGateway` was killed, including `InstanceOfToTrue`/`InstanceOfToFalse` on the new
+associate guard and the `IfNegated` mutants on both `is_string()` checks — which is why the new tests
+assert the exception **messages** rather than merely that something threw.
+
+`composer validate --strict` still exits 2 locally on the pre-existing stale-`composer.lock` finding
+logged under 02-01. Unreachable in CI, where there is no lock file. No `composer.json` change.
