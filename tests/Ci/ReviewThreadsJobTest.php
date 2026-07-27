@@ -13,11 +13,14 @@ use Symfony\Component\Yaml\Yaml;
  * which the default `contents: read` alone does not cover -- the same gap
  * GovernancePermissionsTest proves for governance.yml's `commitlint` job).
  *
- * review-threads has its own workflow file (not governance.yml, where it started --
- * see PR #10, discussion_r3657716045) because it needs a trigger set the other
- * governance jobs do not: `pull_request_review_thread` (resolved/unresolved), so the
- * check re-evaluates when a thread's resolution state changes with no new commit,
- * not only on the workflow's own `on: pull_request` review comments.
+ * review-threads has its own workflow file, not governance.yml, purely so its
+ * `permissions`/`env` (needed for the `gh api graphql` call) do not spread onto
+ * governance.yml's other jobs, which need neither. It does NOT re-trigger on a
+ * thread being resolved without a new commit -- see review-threads.yml's own
+ * header comment (and PR #10, discussion_r3657716045) for why that was attempted,
+ * found to rely on a GitHub Actions trigger that does not exist
+ * (`pull_request_review_thread` is a real webhook event but not an Actions `on:`
+ * trigger, confirmed empirically against this repository), and reverted.
  *
  * @return array<string, mixed>
  */
@@ -102,23 +105,6 @@ function reviewThreadsStepsRunCommand(array $steps, string $needle): bool
     return false;
 }
 
-/**
- * @param  list<array<string, mixed>>  $steps
- * @return array<string, mixed>
- */
-function reviewThreadsFindCheckoutStep(array $steps): array
-{
-    foreach ($steps as $step) {
-        $uses = $step['uses'] ?? null;
-
-        if (is_string($uses) && str_starts_with($uses, 'actions/checkout@')) {
-            return $step;
-        }
-    }
-
-    throw new RuntimeException('Expected the "review-threads" job to declare a step using "actions/checkout@".');
-}
-
 it('grants pull-requests: read so the job can query reviewThreads via the GitHub API', function (): void {
     // Workflow-level, not job-level: review-threads.yml has exactly one job,
     // matching js.yml's and docs.yml's convention of declaring permissions
@@ -135,6 +121,19 @@ it('grants pull-requests: read so the job can query reviewThreads via the GitHub
     expect($permissions['pull-requests'])->toBe('read');
 });
 
+it('triggers only on pull_request, since pull_request_review_thread is not a valid Actions trigger', function (): void {
+    $workflow = reviewThreadsWorkflow();
+
+    $on = $workflow['on'] ?? null;
+
+    if (! is_array($on)) {
+        throw new RuntimeException('Expected review-threads.yml to declare an "on" map.');
+    }
+
+    expect($on)->toHaveKey('pull_request');
+    expect($on)->not->toHaveKey('pull_request_review_thread');
+});
+
 it('runs check-review-threads.sh against the real PR', function (): void {
     $steps = reviewThreadsJobSteps(reviewThreadsJob());
 
@@ -149,39 +148,4 @@ it('proves the violation rule fires via --self-test, matching the source-hygiene
     expect(reviewThreadsStepsRunCommand($steps, 'scripts/ci/check-review-threads.sh --self-test'))->toBeTrue(
         'Expected a step to run scripts/ci/check-review-threads.sh --self-test.'
     );
-});
-
-it('re-triggers on pull_request_review_thread resolved/unresolved, not only pull_request', function (): void {
-    $workflow = reviewThreadsWorkflow();
-
-    $on = $workflow['on'] ?? null;
-
-    if (! is_array($on)) {
-        throw new RuntimeException('Expected review-threads.yml to declare an "on" map.');
-    }
-
-    expect($on)->toHaveKey('pull_request_review_thread');
-
-    $threadTrigger = $on['pull_request_review_thread'];
-
-    if (! is_array($threadTrigger) || ! isset($threadTrigger['types']) || ! is_array($threadTrigger['types'])) {
-        throw new RuntimeException('Expected "pull_request_review_thread" to declare a "types" list.');
-    }
-
-    expect($threadTrigger['types'])->toContain('resolved');
-    expect($threadTrigger['types'])->toContain('unresolved');
-    expect($on)->toHaveKey('pull_request');
-});
-
-it('checks out the PR head SHA explicitly, since pull_request_review_thread is not in the pull_request family', function (): void {
-    $steps = reviewThreadsJobSteps(reviewThreadsJob());
-
-    $checkout = reviewThreadsFindCheckoutStep($steps);
-    $with = $checkout['with'] ?? null;
-
-    if (! is_array($with)) {
-        throw new RuntimeException('Expected the checkout step to declare "with".');
-    }
-
-    expect($with['ref'] ?? null)->toBe('${{ github.event.pull_request.head.sha }}');
 });

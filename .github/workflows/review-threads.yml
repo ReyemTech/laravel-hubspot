@@ -2,50 +2,35 @@ name: review-threads
 
 # STANDARDS.md §12, "Automated review is review": scripts/ci/check-review-threads.sh
 # fails the build when a resolved review thread has no reply from a human author.
+# Its own workflow file (not governance.yml) so it has its own `permissions:` and
+# `env:` for the `gh api graphql` call the script makes, without those spreading
+# onto governance.yml's other jobs, which do not need them.
 #
-# Two triggers, deliberately:
+# CORRECTED (PR #10, discussion_r3657716045): this workflow originally also
+# declared `pull_request_review_thread: types: [resolved, unresolved]`, intended
+# to re-run the check when a thread's resolution state changes without a new
+# commit -- otherwise a stale "success" from the previous push stands even after
+# a finding is silently resolved. That trigger does not exist. Confirmed
+# empirically, not assumed: a minimal workflow file declaring only
+# `on: pull_request_review_thread` was pushed to a throwaway branch on this
+# repository and GitHub rejected it outright as an invalid workflow file (no job
+# ever scheduled); a control file using the same structure with the genuinely
+# valid `pull_request_review` trigger was accepted with no error. Both scratch
+# branches/refs were deleted immediately after.
 #
-# - `pull_request` (default activity types: opened, synchronize, reopened) covers
-#   the normal case -- a push updates the PR, the check re-evaluates against it.
-# - `pull_request_review_thread` (resolved/unresolved) exists because a thread can
-#   be resolved -- or unresolved -- with no new commit at all. `pull_request`'s
-#   default activity types never fire for that, so without this second trigger a
-#   stale "success" result from the *previous* push would remain the check's last
-#   word, and branch protection would allow a merge even though a finding was
-#   silently resolved after the fact -- precisely the failure this gate exists to
-#   catch, just slipping in through its own CI wiring instead of a contributor's
-#   silence.
-#
-# This second trigger is a genuine improvement but its coverage has NOT been
-# empirically confirmed end-to-end, and that gap is deliberately not hidden:
-#
-# 1. Workflows triggered by events outside the push/pull_request(/_target) family
-#    are only evaluated using the copy of the workflow file present on the
-#    *default* branch -- confirmed empirically against this repository (not
-#    assumed): a throwaway branch carrying only this trigger, with a real
-#    resolveReviewThread mutation fired against a throwaway PR from it, produced
-#    no workflow run at all. That means this trigger cannot take effect, or be
-#    further verified, until this file merges to main.
-# 2. Once merged, `github.sha` for a `pull_request_review_thread`-triggered run is
-#    documented by GitHub to resolve to the *default branch's* tip, not the PR's
-#    head -- which is why the checkout step below pins an explicit ref rather than
-#    trusting the default. What is NOT yet confirmed is whether the Checks API
-#    still attaches the *automatic* per-job check run GitHub Actions creates for
-#    this job to the PR's head commit (what branch protection's required-checks
-#    list actually reads) when the run itself was scheduled against a different
-#    `github.sha`. If it does not, closing this gap fully needs an explicit Check
-#    Run created via `gh api repos/{owner}/{repo}/check-runs -f head_sha=...`
-#    rather than relying on the automatic one -- a materially different mechanism
-#    from every other required check in this repository, deliberately not
-#    introduced speculatively in the same change that adds the trigger.
-#
-# See docs/repo/owner-gated-checklist.md's "review-threads.yml" section for the
-# owner-verification step this leaves open, and PR #10 (discussion_r3657716045)
-# for the review finding this responds to.
+# GitHub Actions has no built-in trigger for "a review thread was resolved with
+# no accompanying comment or review" -- the closest events, `pull_request_review`
+# (a review submitted/edited/dismissed) and `pull_request_review_comment` (a
+# review comment created/edited/deleted), both fire on *authoring* something, not
+# on the "Resolve conversation" UI action itself. `pull_request_review_thread` is
+# real, but only as a webhook/GitHub-App event, not as an Actions `on:` trigger --
+# closing this gap natively would need a webhook receiver (a GitHub App or a
+# small external service) outside Actions entirely, which is materially more
+# infrastructure than this PR's scope. See
+# docs/repo/owner-gated-checklist.md's "review-threads.yml" section for the
+# resulting residual gap, recorded for the owner rather than silently dropped.
 on:
   pull_request:
-  pull_request_review_thread:
-    types: [resolved, unresolved]
 
 permissions:
   contents: read
@@ -58,16 +43,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      # pull_request_review_thread is not in the pull_request family, so
-      # actions/checkout@v4's default ref (github.sha) would check out the
-      # default branch's tip for that trigger, not this PR -- running the
-      # *base* branch's copy of this very script against the wrong commit.
-      # Both event payloads carry pull_request.head.sha, so pin to it
-      # explicitly on every trigger, not only the one where it happens to
-      # matter, so there is exactly one code path instead of two.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
       - name: Check this PR's resolved review threads for a human reply
         run: bash scripts/ci/check-review-threads.sh
       - name: Prove the violation rule fires

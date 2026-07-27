@@ -152,14 +152,8 @@ resolve_pr_number() {
         return 0
     fi
 
-    # pull_request_review_thread (resolved/unresolved) is included alongside
-    # the pull_request family: its webhook payload carries a top-level
-    # `pull_request` object with the same `.number` field (GitHub's
-    # documented payload shape), so the same jq lookup below reads it
-    # unchanged. See review-threads.yml's own header comment for why this
-    # trigger exists and what about it is still unverified.
     case "${GITHUB_EVENT_NAME:-}" in
-        pull_request | pull_request_target | pull_request_review_thread) ;;
+        pull_request | pull_request_target) ;;
         *)
             return 1
             ;;

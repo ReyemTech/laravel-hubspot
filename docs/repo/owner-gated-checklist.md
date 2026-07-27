@@ -66,19 +66,26 @@ and the manifest-shape lock:
 **`.github/workflows/review-threads.yml`** — STANDARDS §12, "Automated review is review":
 
 - `review-threads` — fails when a resolved review thread has no reply from a human author
-  (`scripts/ci/check-review-threads.sh`). Its own workflow file, not governance.yml, because it
-  needs a trigger the other governance jobs do not: *pull_request_review_thread*
-  (resolved/unresolved), alongside the usual *pull_request*, so the check re-evaluates when a
-  thread's resolution state changes without a new commit. **That second trigger's coverage is
-  not fully verified yet** — see the script's own header comment and review-threads.yml's header
-  comment for exactly what was empirically confirmed (a throwaway-branch workflow never received
-  the event at all; this requires the workflow to exist on the default branch first) versus what is
-  documented-but-unverified GitHub behaviour (whether the automatic per-job check run this
-  triggers still attaches to the PR's head commit for branch-protection purposes, or whether
-  closing that fully needs an explicit Check Run created via the Checks API instead). **Owner
-  action once this merges:** watch the first real occurrence of a thread being resolved with no
-  accompanying push on an open PR, and confirm a corresponding check run appears against that
-  PR's head commit before treating this gap as closed.
+  (`scripts/ci/check-review-threads.sh`). Its own workflow file, not governance.yml, purely so its
+  *permissions*/*env* (for the `gh api graphql` call the script makes) do not spread onto
+  governance.yml's other jobs, which need neither.
+
+  **Known gap, accepted rather than closed (PR #10, discussion_r3657716045).** This check runs on
+  *pull_request*'s default activity types (opened, synchronize, reopened) only. A review thread
+  resolved via the GitHub UI with no accompanying commit does not re-trigger it, so a stale
+  "success" from the previous push stands even after a finding is silently resolved — branch
+  protection would allow the merge regardless. An attempt to fix this by also triggering on
+  *pull_request_review_thread* (resolved/unresolved) was made and reverted: that event is real as
+  a webhook/GitHub-App delivery but is **not a valid GitHub Actions "on:" trigger**, confirmed
+  empirically against this repository (a minimal workflow file declaring only that trigger was
+  pushed to a throwaway branch and GitHub rejected it outright as an invalid workflow file; a
+  control file using the genuinely valid *pull_request_review* trigger was accepted). Natively
+  closing this gap would need a webhook receiver (a GitHub App or a small external service)
+  subscribed to that event, entirely outside GitHub Actions — materially more infrastructure than
+  this phase's scope. **Owner decision needed:** accept this gap (branch protection's
+  conversation-resolution requirement still blocks an *unresolved* thread from merging; this only
+  degrades to "checked at last push" for threads resolved afterward), or scope a webhook-based
+  follow-up.
 
 **`.github/workflows/js.yml`** — the frontend coverage floor:
 
