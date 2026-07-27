@@ -15,7 +15,7 @@ then `Registry` on top of it, then `Sync` and `Webhooks` on top of both. Phases 
 paid ad spend traceable to pipeline across a 3-10 week sales cycle. Phase 8 adds `Frontend`, a leaf
 layer that talks to the same public facade a consumer would. Phase 9 makes the package adoptable.
 
-Every phase ships green against the full 16-job CI matrix with the coverage and MSI floors met. No
+Every phase ships green against the full 12-job CI matrix with the coverage and MSI floors met. No
 phase merges with a gate disabled "temporarily".
 
 **Recorded, not reopened:** shipping v1 at phase 5 — the originally specced scope, the part that
@@ -37,7 +37,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 
 ## Phases
 
-- [ ] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 16-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
+- [ ] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 12-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
 - [ ] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
 - [ ] **Phase 3: Registry & Stores** - Directional `(from, to, label) → typeId` resolution, cache and database stores, zero-migration install, diagnostics
 - [ ] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
@@ -56,10 +56,11 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 **Requirements**: FOUND-01, FOUND-02, FOUND-03, FOUND-04, FOUND-05, REL-01
 **Success Criteria** (what must be TRUE):
 
-  1. A pull request against `main` cannot merge unless all eleven required checks pass on the empty package: tests across the **full 16-job matrix** (the eight valid PHP × Laravel combinations — L11 on PHP 8.3-8.4, L12 on 8.3-8.5, L13 on 8.3-8.5 — each on `prefer-stable` **and** `prefer-lowest`), Pint, PHPStan at the pinned major's maximum level with no baseline, `pest --mutate`, architecture tests, Vitest, the docs-site build, `composer audit`, BC check, commitlint, and `composer validate --strict`.
-     - **Amended during Phase 1 planning (2026-07-26)** to track `STANDARDS.md` §1, whose PHP floor was raised from `^8.2` to `^8.3` the same day so Pest 4 could be the only Pest. Eight combinations, not ten; 16 jobs, not 20. `.planning/REQUIREMENTS.md` FOUND-01 and `.planning/PROJECT.md` D-01 still carry the superseded numbers and need the same correction. Ten and twenty are stale copies of a superseded amendment, not a competing decision.
+  1. A pull request against `main` cannot merge unless all eleven required checks pass on the empty package: tests across the **full 12-job matrix** (the six valid PHP × Laravel combinations — L12 and L13 each on PHP 8.3, 8.4 and 8.5, no invalid cells — each on `prefer-stable` **and** `prefer-lowest`), Pint, PHPStan at the pinned major's maximum level with no baseline, `pest --mutate`, architecture tests, Vitest, the docs-site build, `composer audit`, BC check, commitlint, and `composer validate --strict`.
+     - **Amended during Phase 1 planning (2026-07-26)** to track `STANDARDS.md` §1, whose PHP floor was raised from `^8.2` to `^8.3` the same day so Pest 4 could be the only Pest. Eight combinations, not ten; 16 jobs, not 20.
+     - **Amended again 2026-07-27**: Laravel 11 dropped outright — every published `11.x` release is blocked by unpatchable security advisories (`PKSA-m5cs-t1y6-qpcs`, `PKSA-3r5d-mb8f-1qw9`, `PKSA-mdq4-51ck-6kdq`), which put the migration-reach rationale for keeping it in direct conflict with STANDARDS §12c's zero-tolerance `composer audit` gate. The matrix is now **rectangular**: six combinations, not eight; 12 jobs, not 16. `.planning/REQUIREMENTS.md` FOUND-01 and `.planning/PROJECT.md` D-01 track this current number; any remaining reference to eight/ten combinations or 16/20 jobs elsewhere is a stale copy of a superseded amendment, not a competing decision.
   2. The architecture tests encode all six layers and both new rules, and a deliberate violation fixture fails the build for each: `Signals` importing from `Sync` or `Webhooks` fails; `Frontend` importing `HubSpot\*`, `Gateway`, `Registry`, `Sync`, `Webhooks` or `Signals` fails; any layer outside `Gateway` naming `HubSpot\*` fails; a file without `declare(strict_types=1)` fails.
-  3. `composer.json` declares exactly seven production requires — `php`, `hubspot/api-client`, `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `laravel/prompts`, `illuminate/view` — with the Illuminate constraint `^11.0|^12.0|^13.0`; `composer validate --strict` passes; and release-please is configured to derive the version bump and `CHANGELOG.md` from Conventional Commits on `main`.
+  3. `composer.json` declares exactly seven production requires — `php`, `hubspot/api-client`, `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `laravel/prompts`, `illuminate/view` — with the Illuminate constraint `^12.0|^13.0`; `composer validate --strict` passes; and release-please is configured to derive the version bump and `CHANGELOG.md` from Conventional Commits on `main`.
   4. A developer can clone the repository, run `composer install` and `pnpm install`, then run `vendor/bin/pest`, `pnpm test` and `pnpm build` with no HubSpot credentials and no internet connection, and all three are green.
   5. `SECURITY.md` with a private disclosure address, `CODEOWNERS`, Dependabot, and the PR and issue templates carrying the seven-box Definition of Done are all present in the repository before any code lands.
 
@@ -72,7 +73,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 
 Plans:
 
-- [x] 01-01-PLAN.md — Package skeleton, Pest bootstrap, the 16-job matrix and `composer validate --strict`
+- [x] 01-01-PLAN.md — Package skeleton, Pest bootstrap, the 12-job matrix and `composer validate --strict`
 - [x] 01-02-PLAN.md — `SECURITY.md`, Dependabot, `CODEOWNERS`, PR/issue templates and commitlint
 - [x] 01-03-PLAN.md — Node/pnpm toolchain and the 95% Vitest coverage floor, proven to fail
 - [x] 01-04-PLAN.md — The ten architecture rules and a permanent harness proving each one fires
@@ -228,8 +229,8 @@ breaks one is not complete.
 
 | Invariant | Source |
 |---|---|
-| Full 16-job CI matrix green — eight PHP × Laravel combinations, each on `prefer-stable` and `prefer-lowest` — with PHP line coverage ≥95%, JS line coverage ≥95%, and MSI ≥80% | D-01, D-30, D-43, STANDARDS §1, §6 |
-| No framework API introduced in Laravel 12 or 13 is used without a compatibility shim — the Illuminate constraint is `^11.0\|^12.0\|^13.0` and review checks this | D-01, STANDARDS §1 |
+| Full 12-job CI matrix green — six PHP × Laravel combinations (Laravel 11 dropped 2026-07-27), each on `prefer-stable` and `prefer-lowest` — with PHP line coverage ≥95%, JS line coverage ≥95%, and MSI ≥80% | D-01, D-30, D-43, STANDARDS §1, §6 |
+| No framework API introduced in Laravel 13 is used without a compatibility shim — the Illuminate constraint is `^12.0\|^13.0` and review checks this | D-01, STANDARDS §1 |
 | No gate disabled "temporarily". Turning gates on later never happens | core spec §13, BRIEF.md |
 | The RED test commit precedes the GREEN implementation commit, visible in `git log` on `main` | D-13, D-25, CON-tdd-sequence |
 | Default suite performs zero real network I/O and runs green with no credentials and no internet | D-12, CON-no-network-io |

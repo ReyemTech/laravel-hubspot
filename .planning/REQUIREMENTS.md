@@ -32,8 +32,8 @@ REL-02.
   — `REQ-repo-scaffolding` (core spec §13 Phase 0; BRIEF.md; STANDARDS §12b)
 
   - Acceptance: `git init`, the composer skeleton, the CI matrix, and branch protection on `main`.
-    Every required check configured and green on an empty package: tests across the **full 16-job
-    matrix** (the eight valid PHP × Laravel combinations of STANDARDS §1, each on `prefer-stable`
+    Every required check configured and green on an empty package: tests across the **full 12-job
+    matrix** (the six valid PHP × Laravel combinations of STANDARDS §1, each on `prefer-stable`
     **and** `prefer-lowest`), Pint, PHPStan level 9 with no baseline, `pest --mutate`, architecture
     tests, Vitest, the docs-site build, `composer audit`, BC check, commitlint, and
     `composer validate --strict`. Plus `CODEOWNERS`, PR and issue templates carrying the Definition
@@ -41,10 +41,12 @@ REL-02.
 
   - Acceptance (dependencies): `composer.json` declares **exactly seven** production requires —
     `php`, `hubspot/api-client`, `illuminate/contracts`, `illuminate/support`, `illuminate/database`,
-    `laravel/prompts`, `illuminate/view`. The Illuminate constraint is `^11.0|^12.0|^13.0`.
+    `laravel/prompts`, `illuminate/view`. The Illuminate constraint is `^12.0|^13.0`.
 
-  - Note: the matrix is **not rectangular**. Laravel 11 accepts PHP 8.3–8.4, Laravel 12 accepts
-    8.2–8.5, Laravel 13 requires 8.3+. Ten combinations, not twelve.
+  - Note: **amended 2026-07-27** — Laravel 11 was dropped entirely (unpatchable security
+    advisories `PKSA-m5cs-t1y6-qpcs`, `PKSA-3r5d-mb8f-1qw9`, `PKSA-mdq4-51ck-6kdq`; EOSS
+    2026-03-12), so the matrix is **rectangular for the first time**: every PHP version supports
+    every remaining Laravel major. Six combinations, twelve jobs, no `exclude:` entries.
 
   - Note: **branch protection configuration is owner action** — see *Blocked / owner-gated* below.
 

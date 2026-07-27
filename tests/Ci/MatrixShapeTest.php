@@ -275,24 +275,14 @@ function ciMatrixCombinations(): array
     return expandGithubActionsMatrix(ensureStringKeyedArray($matrix, 'ci.yml "tests" job strategy matrix'));
 }
 
-it('expands the tests job matrix to exactly 16 jobs', function (): void {
-    expect(ciMatrixCombinations())->toHaveCount(16);
+it('expands the tests job matrix to exactly 12 jobs', function (): void {
+    expect(ciMatrixCombinations())->toHaveCount(12);
 });
 
-it('excludes the one invalid cell: PHP 8.5 on Laravel 11', function (): void {
-    $invalid = array_filter(
-        ciMatrixCombinations(),
-        static fn (array $c): bool => ($c['php'] ?? null) === '8.5' && ($c['laravel'] ?? null) === '11.*'
-    );
-
-    expect($invalid)->toBeEmpty();
-});
-
-it('includes every one of the eight valid PHP x Laravel combinations on both stability settings', function (): void {
+it('is rectangular: every PHP version supports every Laravel major, since Laravel 11 was dropped', function (): void {
     $combinations = ciMatrixCombinations();
 
     $validPhpByLaravel = [
-        '11.*' => ['8.3', '8.4'],
         '12.*' => ['8.3', '8.4', '8.5'],
         '13.*' => ['8.3', '8.4', '8.5'],
     ];
@@ -315,9 +305,17 @@ it('includes every one of the eight valid PHP x Laravel combinations on both sta
     }
 });
 
+it('never includes Laravel 11, dropped 2026-07-27 for unpatchable security advisories', function (): void {
+    $laravel11 = array_filter(
+        ciMatrixCombinations(),
+        static fn (array $c): bool => ($c['laravel'] ?? null) === '11.*'
+    );
+
+    expect($laravel11)->toBeEmpty();
+});
+
 it('maps each Laravel major to its correct testbench major', function (): void {
     $expectedTestbench = [
-        '11.*' => '9.*',
         '12.*' => '10.*',
         '13.*' => '11.*',
     ];

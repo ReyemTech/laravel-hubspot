@@ -74,12 +74,12 @@ it('requires exactly the seven approved packages, no eighth', function (): void 
     ]);
 });
 
-it('constrains every illuminate package to ^11.0|^12.0|^13.0', function (): void {
+it('constrains every illuminate package to ^12.0|^13.0, since Laravel 11 was dropped', function (): void {
     $require = composerManifestRequires();
 
     foreach (['illuminate/contracts', 'illuminate/support', 'illuminate/database', 'illuminate/view'] as $package) {
         expect($require)->toHaveKey($package);
-        expect($require[$package])->toBe('^11.0|^12.0|^13.0');
+        expect($require[$package])->toBe('^12.0|^13.0');
     }
 });
 

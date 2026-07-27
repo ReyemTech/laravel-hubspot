@@ -6,10 +6,10 @@
     "require": {
         "php": "^8.3",
         "hubspot/api-client": "^14.1",
-        "illuminate/contracts": "^11.0|^12.0|^13.0",
-        "illuminate/support": "^11.0|^12.0|^13.0",
-        "illuminate/database": "^11.0|^12.0|^13.0",
-        "illuminate/view": "^11.0|^12.0|^13.0",
+        "illuminate/contracts": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
+        "illuminate/database": "^12.0|^13.0",
+        "illuminate/view": "^12.0|^13.0",
         "laravel/prompts": "^0.3.21"
     },
     "require-dev": {
@@ -20,7 +20,7 @@
         "phpstan/phpstan": "^2.2",
         "larastan/larastan": "^3.10",
         "phpstan/extension-installer": "^1.4",
-        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "orchestra/testbench": "^10.0|^11.0",
         "squizlabs/php_codesniffer": "^4.0",
         "slevomat/coding-standard": "^8.31",
         "laravel/pint": "^1.0",
