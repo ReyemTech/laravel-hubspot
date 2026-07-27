@@ -140,7 +140,10 @@ final class AssociationPairTest extends TestCase
             new ObjectRef($notAString, '527152015051');
             self::fail('Expected a non-string object type to be rejected at construction.');
         } catch (ObjectTypeException $exception) {
-            self::assertStringContainsString('object type', $exception->getMessage());
+            // "an object type", article included: this message is read by a consumer debugging their
+            // own call site, and D-18 says a message names the fix rather than just the fault. A
+            // message that cannot manage the indefinite article is not doing that job convincingly.
+            self::assertStringContainsString('an object type', $exception->getMessage());
             self::assertStringNotContainsString('object id', $exception->getMessage());
             self::assertStringContainsString($expectedDebugType, $exception->getMessage());
             self::assertStringContainsString('Pass it as a string', $exception->getMessage());
@@ -154,7 +157,7 @@ final class AssociationPairTest extends TestCase
             new ObjectRef('contacts', $notAString);
             self::fail('Expected a non-string object id to be rejected at construction.');
         } catch (ObjectTypeException $exception) {
-            self::assertStringContainsString('object id', $exception->getMessage());
+            self::assertStringContainsString('an object id', $exception->getMessage());
             self::assertStringContainsString($expectedDebugType, $exception->getMessage());
             self::assertStringContainsString('Pass it as a string', $exception->getMessage());
         }
