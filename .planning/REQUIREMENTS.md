@@ -153,7 +153,7 @@ REL-02.
     **never** falls back to the inverse id. `associate($from, $to, label:, bidirectional:)` is the
     surface.
 
-- [ ] **GW-03**: Typed exception hierarchy, no raw SDK exception to userland
+- [x] **GW-03**: Typed exception hierarchy, no raw SDK exception to userland
   — `REQ-error-hierarchy` (core spec §9, §13 Phase 1; STANDARDS §9)
 
   - Acceptance: `ConfigurationException`, `AssociationTypeException`, `ObjectTypeException` and
@@ -164,11 +164,12 @@ REL-02.
   - Note: signals spec §11 adds a fifth member, `SignalException`, in Phase 6 (SIG-05). The interface
     and the four core members ship here.
 
-  - Progress: 02-01 ships `HubspotException` (the interface) and `ApiException` (wrapping the SDK's,
-    preserving status/body/correlation id; no raw SDK exception reaches userland on the `create()`
-    path). `ConfigurationException`, `AssociationTypeException` and `ObjectTypeException` are still
-    pending (plan 02-02 adds `ConfigurationException`) — do not mark complete until all four members
-    ship.
+  - Progress: Complete as of 02-02. 02-01 shipped `HubspotException` (the interface) and `ApiException`
+    (wrapping the SDK's, preserving status/body/correlation id; no raw SDK exception reaches userland
+    on the `create()` path). 02-02 adds the remaining three members — `ConfigurationException`,
+    `ObjectTypeException`, `AssociationTypeException` — and extends the translator to the associations
+    v4 namespace, with a source-derived arch test proving the translator's recognised-namespace list
+    stays complete against what `src/Gateway/` actually calls.
 
 - [ ] **GW-04**: `Hubspot::fake()` — a real test double with direction assertions
   — `REQ-test-double` (core spec §2 goal 4, §10, §13 Phase 1)
@@ -635,7 +636,7 @@ Deferred. Tracked but not in the current roadmap.
 | REL-01 | Phase 1 | Complete |
 | GW-01 | Phase 2 | Pending — In progress, 02-01 tracer ships `create()` only |
 | GW-02 | Phase 2 | Pending |
-| GW-03 | Phase 2 | Pending — In progress, 02-01 ships `HubspotException`/`ApiException` only |
+| GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
 | GW-04 | Phase 2 | Pending — In progress, 02-01 ships the fake transport + `assertRequestCount` only |
 | REG-01 | Phase 3 | Pending — acceptance absent in source |
 | REG-02 | Phase 3 | Pending |

@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: Gateway Layer
 status: executing
-stopped_at: Completed 02-01-PLAN.md (Gateway tracer)
-last_updated: "2026-07-27T04:56:29.196Z"
-last_activity: 2026-07-26
-last_activity_desc: roadmap **regenerated from six phases to nine** after the approval of `docs/superpowers/specs/2026-07-26-signals-attribution-and-frontend-design.md` and five `STANDARDS.md` amendments. PROJECT.md, REQUIREMENTS.md, ROADMAP.md and STATE.md rewritten. Requirements went from 24 to 44.
+stopped_at: Completed 02-02-PLAN.md (Gateway errors & transport)
+last_updated: "2026-07-27T16:03:09.954Z"
+last_activity: 2026-07-27
+last_activity_desc: "executed 02-02-PLAN.md (Gateway errors & transport): completed the four-member `HubspotException` hierarchy (`ConfigurationException`, `ObjectTypeException`, `AssociationTypeException` alongside `ApiException`), extended `ExceptionTranslator` to the associations v4 namespace with a source-derived arch coverage guard, and made the production Guzzle transport deliberate (explicit timeout/connect-timeout, the SDK's own retry middleware, a `ConfigurationException` before any client is built when the token is missing). GW-03 is now **complete**. GW-01/GW-04 remain **partially** delivered — see `.planning/REQUIREMENTS.md`'s Progress notes; do not treat them as complete until their remaining plans (02-03..02-06) ship."
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 13
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State
@@ -32,11 +32,11 @@ request lifecycle.
 ## Current Position
 
 Phase: 2 of 9 (Gateway Layer)
-Plan: 1 of 6 in current phase
-Status: Plan 02-01 (Gateway tracer) complete — PR #8 open, 28/28 required checks green, not yet merged. 5 plans remain in Phase 2 (02-02..02-06).
-Last activity: 2026-07-27 — executed 02-01-PLAN.md (Gateway tracer): `ObjectGateway::create()` end-to-end through `Hubspot::fake()`, the typed exception hierarchy's first member (`ApiException`), and the R1 non-vacuity architecture proof. GW-01/GW-03/GW-04 are **partially** delivered by this plan only — see `.planning/REQUIREMENTS.md`'s Progress notes; do not treat them as complete until their remaining plans (02-02..02-06) ship.
+Plan: 3 of 6 in current phase
+Status: Plan 02-01 (Gateway tracer) merged (PR #8). Plan 02-02 (Gateway errors & transport) complete — branch pushed, PR not yet opened/merged at time of writing. 4 plans remain in Phase 2 (02-03..02-06).
+Last activity: 2026-07-27 — executed 02-02-PLAN.md (Gateway errors & transport): completed the four-member `HubspotException` hierarchy, extended `ExceptionTranslator` to the associations v4 namespace with a source-derived coverage guard, and made the production Guzzle transport deliberate (timeout, connect timeout, retry middleware, missing-token `ConfigurationException`). GW-03 is now **complete**. GW-01/GW-04 remain **partially** delivered — see `.planning/REQUIREMENTS.md`'s Progress notes; do not treat them as complete until their remaining plans (02-03..02-06) ship.
 
-Progress: [██████░░░░] 62%
+Progress: [███████░░░] 69%
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [██████░░░░] 62%
 | Phase 01-foundation-gates P06 | ~35min | 2 tasks | 11 files |
 | Phase 01 P07 | 30min | 4 tasks | 12 files |
 | Phase 02 P01 | 45min | 3 tasks | 18 files |
+| Phase 02 P02 | 22min | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -126,6 +127,10 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: Required-checks list (17 jobs) machine-checked bidirectionally against docs/repo/owner-gated-checklist.md
 - [Phase ?]: MockHandler callable-per-request routing (self-appending queue entry, inspecting the request's own object-type path) correctly serves per-object-type canned responses regardless of call order — retires 02-RESEARCH.md's one unverified finding
 - [Phase ?]: ObjectGatewayContract bound non-shared (transient), not singleton — lets Hubspot::fake() swap the HubspotClientFactory instance without needing Container::forgetInstance(), which isn't on the Illuminate Container contract this package is typed against
+- [Phase ?]: AssociationTypeException extends RuntimeException (registry resolution failure, ApiException's own family); ConfigurationException/ObjectTypeException extend LogicException/InvalidArgumentException (caller mistake detectable before any I/O)
+- [Phase ?]: ExceptionTranslator::recognisedSdkApiExceptions() is public static so the arch coverage guard reads the real list, not a hand-copied duplicate; the guard is one-directional (referenced-by-Gateway implies recognised, not the reverse)
+- [Phase ?]: Retry-middleware presence on the production Guzzle handler stack is asserted via HandlerStack::__toString() with explicitly-named pushes, not a mock 429-then-200 sequence, since RetryMiddlewareFactory's decider/delay functions are already-tested SDK code
+- [Phase ?]: config/hubspot.php transport defaults: 10s timeout, 5s connect timeout, retries enabled -- honest for a queued job, unbounded default explicitly rejected in the inline comment
 
 ### Pending Todos
 
@@ -193,6 +198,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-27T04:56:29.175Z
-Stopped at: Completed 02-01-PLAN.md (Gateway tracer)
+Last session: 2026-07-27T16:03:09.935Z
+Stopped at: Completed 02-02-PLAN.md (Gateway errors & transport)
 Resume file: None
