@@ -81,21 +81,39 @@ green — it just falls back to the token that cannot trigger the next stage. A 
 `deploy-docs.yml` run is not evidence the site was actually published; checking `docs-pages`'s own
 commit history and `deploy-pages.yml`'s run history is.
 
-## The `docs-pages` branch preserve-list
+## The `docs-pages` branch preserve-list, and the unconditional workflow copy
+
+**Corrected 2026-07-27 (Codex review P1-B):** the paragraphs below originally described the
+`.github/` preserve-list as the *only* mechanism keeping `deploy-pages.yml` on `docs-pages`. It
+is not sufficient on its own: the documented bootstrap below (see "Reference commands") creates
+`docs-pages` as a genuinely empty orphan branch with no `.github/` at all, and the Astro build
+output copied on top of it doesn't produce one either. A preserve-only strategy stashes and
+restores whatever `.github/` *already exists* on the branch being published to — on the very
+first publish there is nothing there yet to stash, so nothing gets restored, and
+`deploy-pages.yml` would silently never land on `docs-pages` at all. The push still succeeds and
+reports green; the Pages deploy trigger simply never exists to fire. `publish-docs.sh` now also
+copies `.github/workflows/deploy-pages.yml` from this checkout **unconditionally, on every
+publish**, after the preserve-restore step so the fresh copy always wins — this is what actually
+guarantees the file's presence, including on that first publish. The preserve-list mechanism
+below is retained as a courtesy for any other content someone places under `.github/` on
+`docs-pages` directly; it is no longer the thing this workflow file's presence depends on.
 
 The publish script does not replace the `docs-pages` branch wholesale. It clones the branch,
 **stashes a fixed list of paths**, wipes everything else, copies the fresh build output on top,
-then restores the stashed paths — because the branch carries content the build output does not
-produce and must not lose.
+then restores the stashed paths, then re-copies `deploy-pages.yml` from this checkout — because
+the branch carries content the build output does not produce and must not lose, and because the
+workflow file must never depend on having already existed on that branch.
 
-**`.github/` is the one entry every project on this pattern must keep.** The `docs-pages` branch
-carries its own `.github/workflows/deploy-pages.yml` — a separate workflow file living on that
-branch, not on `main` — and that file is what actually performs the Pages deployment when pushed
-to. If the publish script wipes `.github/` along with everything else, the push to `docs-pages`
-still succeeds (git doesn't care that a workflow file vanished), but the deploy trigger is gone
-with it. Same failure shape as the PAT issue above: a green publish job, a real commit, and a site
-that silently stops updating — except this one is worse, because it isn't fixed by rotating a
-token; it requires re-adding the workflow file to the branch by hand.
+**`.github/` is the one entry every project on this pattern preserves as a courtesy.** The
+`docs-pages` branch carries its own `.github/workflows/deploy-pages.yml` — a separate workflow
+file living on that branch, not on `main` — and that file is what actually performs the Pages
+deployment when pushed to. Before the fix above, if the publish script wiped `.github/` along
+with everything else and the branch had no prior copy to stash, the push to `docs-pages` still
+succeeded (git doesn't care that a workflow file never existed), but the deploy trigger was gone.
+Same failure shape as the PAT issue above: a green publish job, a real commit, and a site that
+silently stops updating — except this one was worse, because it wasn't fixed by rotating a token;
+it required re-adding the workflow file to the branch by hand. The unconditional copy closes that
+gap structurally rather than relying on the branch already carrying the file.
 
 `stint`'s preserve-list additionally carries `install.sh`, `install.sh.sha256` and `CNAME` —
 a curl-installer script and its checksum, and a custom-domain record. **Neither applies to this
@@ -112,7 +130,8 @@ readonly -a PRESERVE=(
 
 If a custom domain is added later, `CNAME` must be added to this list at the same time, or the
 first subsequent publish will silently drop it and the custom domain will stop resolving to Pages
-content until someone notices and re-adds the file.
+content until someone notices and re-adds the file. (`CNAME` is not a workflow file, so it would
+still need the preserve-list — only `deploy-pages.yml` gets the unconditional re-copy.)
 
 ## Reference commands (Phase 9, once both blockers clear)
 
@@ -137,13 +156,16 @@ gh workflow run deploy-pages.yml --ref docs-pages
   `check-pages-enabled` job that skips the deploy cleanly (a loud warning, not a red X) until
   GitHub Pages is actually enabled. This file must also exist **on the `docs-pages` branch
   itself**, not only on `main` — GitHub reads workflow files from the ref being pushed to for
-  branch-triggered workflows; `publish-docs.sh`'s preserve-list keeps it there across every
-  publish.
+  branch-triggered workflows; `publish-docs.sh` copies it there fresh from this checkout on
+  every publish (see "The `docs-pages` branch preserve-list, and the unconditional workflow
+  copy" above — this is stronger than merely preserving whatever `docs-pages` already carries).
 - `scripts/release/publish-docs.sh` — the preserve-list-aware publish script, adapted from
   `apps/stint`'s script with this package's own (shorter) preserve-list (`.github` only — no
-  `install.sh`/`CNAME`). Guards, loudly rather than silently, against each of the three
-  not-yet-ready conditions in order: missing build output, a not-yet-bootstrapped `docs-pages`
-  branch, and a missing `RELEASE_TOKEN` secret (falls back to `GITHUB_TOKEN`).
+  `install.sh`/`CNAME`), plus an unconditional re-copy of `deploy-pages.yml` from this checkout
+  so the workflow file's presence never depends on the branch already carrying it. Guards,
+  loudly rather than silently, against each of the three not-yet-ready conditions in order:
+  missing build output, a not-yet-bootstrapped `docs-pages` branch, and a missing
+  `RELEASE_TOKEN` secret (falls back to `GITHUB_TOKEN`).
 
 Neither workflow triggers on `pull_request`, so neither needed an entry in
 `tests/Ci/RequiredChecksTest.php`'s required-checks comparison or its explicit exclusion
