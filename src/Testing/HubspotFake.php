@@ -170,6 +170,10 @@ final class HubspotFake
             return $this->jsonResponse(200, ['total' => 0, 'results' => []]);
         }
 
+        if (str_contains($path, '/batch/')) {
+            return $this->defaultBatchResponse($request);
+        }
+
         if ($request->getMethod() === 'POST') {
             return $this->defaultCreatedResponse($request);
         }
@@ -196,6 +200,39 @@ final class HubspotFake
         }
 
         return $this->jsonResponse($canned->status, $canned->body);
+    }
+
+    /**
+     * Echoes each submitted batch input back as a result, keeping its own id where it had one (a
+     * read, update or upsert) and drawing one from the counter where it did not (a create). The
+     * status code matters: batch create answers 201 and the rest answer 200, and the SDK's
+     * generated switch deserialises on exactly that — a uniform 200 would push every batch create
+     * into the `default` branch and back out as `Model\Error`.
+     */
+    private function defaultBatchResponse(RequestInterface $request): ResponseInterface
+    {
+        $path = $request->getUri()->getPath();
+
+        if (str_ends_with($path, '/batch/archive')) {
+            return new Response(204);
+        }
+
+        /** @var array{inputs?: list<array{id?: string, properties?: array<string, mixed>}>}|null $submitted */
+        $submitted = json_decode((string) $request->getBody(), true);
+
+        $results = [];
+
+        foreach ($submitted['inputs'] ?? [] as $input) {
+            $results[] = [
+                'id' => $input['id'] ?? (string) ++$this->idCounter,
+                'properties' => $input['properties'] ?? [],
+            ];
+        }
+
+        return $this->jsonResponse(str_ends_with($path, '/batch/create') ? 201 : 200, [
+            'status' => 'COMPLETE',
+            'results' => $results,
+        ]);
     }
 
     private function defaultCreatedResponse(RequestInterface $request): ResponseInterface

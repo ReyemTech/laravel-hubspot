@@ -45,7 +45,7 @@ final class ObjectGatewayBatchTest extends TestCase
      * Every batch route, each driven with THREE records. The expected request count is 1 in every
      * row — that is the whole point.
      *
-     * @return array<string, array{string, string, callable(): mixed}>  route suffix, HTTP method, the call
+     * @return array<string, array{string, string, callable(): mixed}> route suffix, HTTP method, the call
      */
     public static function batchOperationProvider(): array
     {
@@ -92,6 +92,19 @@ final class ObjectGatewayBatchTest extends TestCase
         self::assertCount(3, $body['inputs'], 'All three records must travel in the single request, not one request each.');
     }
 
+    public function test_the_uncanned_fake_answers_a_batch_archive_with_204_and_no_body(): void
+    {
+        $fake = Hubspot::fake();
+
+        Hubspot::objects()->archiveMany('contacts', ['1', '2', '3']);
+
+        $response = $fake->recordedRequests()[0]['response'];
+
+        self::assertNotNull($response);
+        self::assertSame(204, $response->getStatusCode(), 'HubSpot answers a batch archive with 204 — there is no per-record outcome to report.');
+        self::assertSame('', (string) $response->getBody());
+    }
+
     public function test_a_fully_successful_batch_reports_completion_with_every_record_and_no_errors(): void
     {
         Hubspot::fake([
@@ -115,7 +128,6 @@ final class ObjectGatewayBatchTest extends TestCase
         self::assertFalse($result->isPartialFailure());
         self::assertSame([], $result->errors());
         self::assertCount(2, $result->records());
-        self::assertContainsOnlyInstancesOf(HubspotObject::class, $result->records());
         self::assertSame('1', $result->records()[0]->id);
         self::assertSame('deals', $result->records()[0]->objectType);
         self::assertSame('First', $result->records()[0]->properties['dealname']);
@@ -170,9 +182,17 @@ final class ObjectGatewayBatchTest extends TestCase
             self::fail('Expected records() to refuse to report a partially failed batch as success.');
         } catch (ApiException $exception) {
             self::assertSame(207, $exception->status());
-            self::assertStringContainsString('1', $exception->getMessage());
-            self::assertStringContainsString('Property values were not valid', $exception->getMessage());
-            self::assertStringContainsString('recordsDespitePartialFailure', $exception->getMessage());
+
+            // The whole message, not a substring of it: it has to say how many records were lost,
+            // quote HubSpot's own reason, AND name the accessor that hands back the survivors, all
+            // in one readable sentence (D-18 — the message names the fix, not just the fault).
+            self::assertSame(
+                'HubSpot wrote only part of this batch: 1 record(s) were rejected. '
+                .'First error: Property values were not valid. '
+                .'Call recordsDespitePartialFailure() and errors() to handle the partial outcome '
+                .'deliberately — each error names the rejected records so they can be retried.',
+                $exception->getMessage(),
+            );
         }
     }
 
@@ -232,15 +252,51 @@ final class ObjectGatewayBatchTest extends TestCase
     }
 
     /**
+     * A batch that reports neither a record nor an error for the one input it was given is not a
+     * successful upsert with nothing to show for it — it is a response this wrapper cannot make
+     * sense of, and returning null or a placeholder would push the ambiguity into Phase 4's sync.
+     */
+    public function test_a_single_upsert_answered_with_no_record_at_all_throws_rather_than_inventing_one(): void
+    {
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'status' => 'COMPLETE',
+            'results' => [],
+        ], 200)]);
+
+        try {
+            Hubspot::objects()->upsert('contacts', 'email', 'a@example.com', ['firstname' => 'Ada']);
+            self::fail('Expected an upsert answered with no record to throw.');
+        } catch (\Throwable $exception) {
+            self::assertSame(\RuntimeException::class, $exception::class);
+            self::assertStringContainsString('Unexpected response shape from the HubSpot SDK', $exception->getMessage());
+        }
+    }
+
+    /**
      * A 2xx batch response the SDK cannot map to either the success or the WithErrors model leaves
      * the third arm of the three-way union — `Model\Error` — and must not fall through unhandled.
      */
-    public function test_an_unexpected_batch_response_shape_throws_a_plain_runtime_exception(): void
+    /**
+     * Upsert answers with its own model family, so it has its own three-way union and its own
+     * third arm. One test per family, or the second family's `Model\Error` branch is never taken.
+     *
+     * @return array<string, array{string, callable(): mixed}> object type, the call
+     */
+    public static function unexpectedBatchShapeProvider(): array
     {
-        Hubspot::fake(['tickets' => Hubspot::response(['message' => 'unexpected shape'], 202)]);
+        return [
+            'the SimplePublicObject family' => ['tickets', static fn (): mixed => Hubspot::objects()->createMany('tickets', [['subject' => 'Broken']])],
+            'the SimplePublicUpsertObject family' => ['contacts', static fn (): mixed => Hubspot::objects()->upsertMany('contacts', 'email', [['id' => 'a@example.com', 'properties' => []]])],
+        ];
+    }
+
+    #[DataProvider('unexpectedBatchShapeProvider')]
+    public function test_an_unexpected_batch_response_shape_throws_a_plain_runtime_exception(string $objectType, callable $call): void
+    {
+        Hubspot::fake([$objectType => Hubspot::response(['message' => 'unexpected shape'], 202)]);
 
         try {
-            Hubspot::objects()->createMany('tickets', [['subject' => 'Broken']]);
+            $call();
             self::fail('Expected an unexpected batch response shape to throw.');
         } catch (\Throwable $exception) {
             self::assertSame(\RuntimeException::class, $exception::class);
@@ -249,7 +305,7 @@ final class ObjectGatewayBatchTest extends TestCase
     }
 
     /**
-     * @return array<string, array{string, callable(): mixed}>  object type, the call
+     * @return array<string, array{string, callable(): mixed}> object type, the call
      */
     public static function batchServerErrorProvider(): array
     {
@@ -285,12 +341,35 @@ final class ObjectGatewayBatchTest extends TestCase
 
         Hubspot::objects()->findMany('contacts', ['a@example.com'], ['firstname'], 'email');
 
-        /** @var array{inputs: list<array{id: string}>, properties: list<string>, idProperty: string} $body */
+        /** @var array<string, mixed> $body */
         $body = json_decode((string) $fake->recordedRequests()[0]['request']->getBody(), true);
 
         self::assertSame([['id' => 'a@example.com']], $body['inputs']);
         self::assertSame(['firstname'], $body['properties']);
         self::assertSame('email', $body['idProperty']);
+
+        // The SDK's own validation declares propertiesWithHistory non-nullable, so it must travel
+        // even when nobody asked for history — omitting it is a 400 from HubSpot, not a smaller body.
+        self::assertArrayHasKey('propertiesWithHistory', $body);
+        self::assertSame([], $body['propertiesWithHistory']);
+    }
+
+    public function test_batch_update_sends_each_record_id_alongside_its_properties(): void
+    {
+        $fake = Hubspot::fake();
+
+        Hubspot::objects()->updateMany('deals', [
+            ['id' => '1', 'properties' => ['dealname' => 'First']],
+            ['id' => '2', 'properties' => ['dealname' => 'Second']],
+        ]);
+
+        /** @var array{inputs: list<array{id: string, properties: array<string, string>}>} $body */
+        $body = json_decode((string) $fake->recordedRequests()[0]['request']->getBody(), true);
+
+        self::assertSame([
+            ['id' => '1', 'properties' => ['dealname' => 'First']],
+            ['id' => '2', 'properties' => ['dealname' => 'Second']],
+        ], $body['inputs'], 'An update carrying an id but no properties is a no-op HubSpot accepts silently.');
     }
 
     /**

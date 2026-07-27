@@ -62,6 +62,31 @@ final class ApiException extends RuntimeException implements HubspotException
         );
     }
 
+    /**
+     * HubSpot answered a batch request with 207: some records were written and some were not.
+     * Reported as an exception rather than a return value because it is raised from the one
+     * accessor that promises a fully written batch — see `Gateway\BatchResult::records()`. The
+     * message names the fix (D-18): it points at the accessor that does hand back the survivors,
+     * so a caller who genuinely wants the partial outcome knows where to go rather than reaching
+     * for a `catch` that swallows the failure.
+     */
+    public static function partialBatchFailure(int $errorCount, string $firstErrorMessage): self
+    {
+        return new self(
+            sprintf(
+                'HubSpot wrote only part of this batch: %d record(s) were rejected. First error: %s. '
+                .'Call recordsDespitePartialFailure() and errors() to handle the partial outcome '
+                .'deliberately — each error names the rejected records so they can be retried.',
+                $errorCount,
+                $firstErrorMessage,
+            ),
+            207,
+            null,
+            null,
+            null,
+        );
+    }
+
     public function status(): ?int
     {
         return $this->status;
