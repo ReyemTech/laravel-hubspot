@@ -37,7 +37,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 
 ## Phases
 
-- [ ] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 12-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
+- [x] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 12-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
 - [ ] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
 - [ ] **Phase 3: Registry & Stores** - Directional `(from, to, label) → typeId` resolution, cache and database stores, zero-migration install, diagnostics
 - [ ] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
