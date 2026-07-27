@@ -33,7 +33,7 @@ request lifecycle.
 
 Phase: 2 of 9 (Gateway Layer)
 Plan: 4 of 6 in current phase
-Status: Plans 02-01 and 02-02 merged. Plan 02-03 (the generic object core) complete on branch `feat/02-03-generic-object-core` — PR open, awaiting GitHub checks. 3 plans remain in Phase 2 (02-04..02-06).
+Status: Plans 02-01, 02-02 and 02-03 merged (PRs #8, #14, #15). FOUND-03 unblocked and answered — the association-inverse probe was run 2026-07-27 and its result is recorded, so `bidirectional:`'s default is measured rather than reserved (02-05-PLAN.md amended accordingly). 3 plans remain in Phase 2 (02-04..02-06).
 Last activity: 2026-07-27 — executed 02-03-PLAN.md (the generic object core): the full generic object surface over any object type, batch operations, one-item-batch upsert, and HTTP 207 as a first-class partial-failure outcome. GW-01 is now **complete**. GW-04 remains **partially** delivered until 02-06 ships the fake's assertions.
 
 Progress: [███████░░░] 69%
