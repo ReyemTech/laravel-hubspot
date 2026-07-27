@@ -201,7 +201,7 @@ REL-02.
     v4 namespace, with a source-derived arch test proving the translator's recognised-namespace list
     stays complete against what `src/Gateway/` actually calls.
 
-- [ ] **GW-04**: `Hubspot::fake()` — a real test double with direction assertions
+- [x] **GW-04**: `Hubspot::fake()` — a real test double with direction assertions
   — `REQ-test-double` (core spec §2 goal 4, §10, §13 Phase 1)
 
   - Acceptance: Installs a Guzzle `MockHandler` under the SDK so no HTTP occurs; supports canned
@@ -667,7 +667,7 @@ Deferred. Tracked but not in the current roadmap.
 | GW-01 | Phase 2 | Complete — 02-03 ships the full generic object surface incl. batch and HTTP 207 |
 | GW-02 | Phase 2 | Complete — 02-04 ships the directed pair and the unlabelled path; 02-05 ships the labelled write, the resolver seam and `NeverTheInverseTest`'s throw-and-zero-requests guarantee |
 | GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
-| GW-04 | Phase 2 | Pending — In progress, 02-01 ships the fake transport + `assertRequestCount` only |
+| GW-04 | Phase 2 | **Complete** — 02-01 shipped the fake transport and `assertRequestCount`; 02-06 shipped `assertSynced`, `assertNothingSynced` and `assertAssociated` with its directional type-id check, plus determinism by default. `assertWebhookHandled` is deferred to Phase 5 as a recorded decision (see `phases/02-gateway-layer/deferred-items.md`) |
 | REG-01 | Phase 3 | Pending — acceptance absent in source |
 | REG-02 | Phase 3 | Pending |
 | REG-03 | Phase 3 | Pending |

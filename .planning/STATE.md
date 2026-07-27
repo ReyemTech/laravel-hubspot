@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: Gateway Layer
 status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-07-27T21:32:06.614Z"
+stopped_at: "Completed 02-06-PLAN.md — Phase 2 complete, PR #20 open"
+last_updated: "2026-07-27T23:22:35.157Z"
 last_activity: 2026-07-27
-last_activity_desc: "executed 02-04-PLAN.md (the directed pair and the unlabelled association path): `ObjectRef`, `AssociationPair(from, to)` with its names and order pinned by reflection, the unlabelled `createDefault()` write that sends no body and therefore no type id, dissociate, and a read that emits one row per reported association type. GW-02 is **half** delivered; 02-05 owns the labelled write and the never-the-inverse throw. GW-04 remains **partially** delivered until 02-06."
+last_activity_desc: "executed 02-06-PLAN.md (the fake's assertion surface): assertSynced, assertNothingSynced, assertAssociated with a directional type-id check read from the recorded request body, and determinism by default. GW-04 delivered; **all six Phase 2 plans are executed** and the phase is ready for verification. assertWebhookHandled is deferred to Phase 5 as a recorded decision."
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State
@@ -33,10 +33,10 @@ request lifecycle.
 
 Phase: 2 of 9 (Gateway Layer)
 Plan: 6 of 6 in current phase
-Status: Plans 02-01, 02-02 and 02-03 merged (PRs #8, #14, #15). Plan 02-04 (the directed pair and the unlabelled association path) complete on branch `feat/02-04-directed-pair-unlabelled-associations` — PR open, awaiting GitHub checks. 2 plans remain in Phase 2 (02-05, 02-06).
-Last activity: 2026-07-27 — executed 02-04-PLAN.md (the directed pair and the unlabelled association path): `ObjectRef`, `AssociationPair(from, to)` with its names and order pinned by reflection, the unlabelled `createDefault()` write that sends no body and therefore no type id, dissociate, and a read that emits one row per reported association type. GW-02 is **half** delivered; 02-05 owns the labelled write and the never-the-inverse throw. GW-04 remains **partially** delivered until 02-06.
+Status: Plans 02-01 through 02-05 merged (PRs #8, #14, #15, #18, #19). Plan 02-06 (the fake's assertion surface, directional assertAssociated, determinism) complete on branch `feat/02-06-fake-assertion-surface` — PR #20 open, awaiting GitHub checks and Codex review. **No plans remain in Phase 2.**
+Last activity: 2026-07-27 — executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 351 tests / 1557 assertions, 100.0% coverage, MSI 98.79%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision.
 
-Progress: [█████████░] 92%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -73,6 +73,7 @@ Progress: [█████████░] 92%
 | Phase 02 P02 | 22min | 3 tasks | 13 files |
 | Phase 02 P04 | ~20min | 2 tasks | 19 files |
 | Phase 02 P05 | ~75min | 3 tasks | 19 files |
+| Phase 02 P06 | ~95min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -143,6 +144,11 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: bidirectional ships as a plain non-nullable bool defaulting to false on the UNLABELLED associate() only — FOUND-03's measured answer, pinned by reflection so reverting to ?bool cannot happen quietly. Amended 2026-07-27: the two LABELLED writes take the inverse direction's own labels (inverseLabel / inverseLabels) instead, because FOUND-03 run 2 measured a paired label carrying a different NAME in each direction (Deals forward, People inverse), so a boolean could only resolve the reversed pair under the forward label — the label-level form of falling back to the inverse typeId. A reverse write is therefore inexpressible without naming that direction's labels
 - [Phase ?]: Two-direction writes resolve every direction before issuing any request, so an unresolvable reverse direction writes nothing and a caller's retry is safe
 - [Phase ?]: Architecture rules R2-R5 allow ReyemTech\Hubspot\Exceptions as of 2026-07-27: the package exception hierarchy is a cross-cutting namespace, not a layer, so every layer must be able to throw it or STANDARDS §9's single shared hierarchy and its no-raw-SDK-exception rule are mutually impossible. No layer boundary moved and R6/R8 are untouched; tests/Arch/ResolverSeamTest.php pins the permission with a committed fixture per layer, and all ten rules still fire
+- [Phase ?]: assertSynced takes the object type as a string and Phase 4 widens it to accept a bound model; widening a parameter is caller-safe and semver-safe on a final class (D-17)
+- [Phase ?]: assertAssociated takes an AssociationPair, not two object references — an assertion whose arguments can be transposed cannot be trusted about a direction; Phase 4 adds a model-pair factory instead
+- [Phase ?]: No fake assertion reads a response; RecordedRequest holds none, because an association read returns associationTypes in no guaranteed order and proves nothing about what was written
+- [Phase ?]: With no frozen clock the fake stamps one fixed instant rather than the real one, and never mutates the global clock — determinism must hold across processes, not only within one
+- [Phase ?]: assertWebhookHandled deferred to Phase 5 with recorded reasoning: no webhook path exists, a no-op stub would pass and prove nothing, and adding it later is semver-safe
 
 ### Pending Todos
 
@@ -214,6 +220,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-27T21:31:51.128Z
-Stopped at: Completed 02-05-PLAN.md
+Last session: 2026-07-27T23:22:23.018Z
+Stopped at: Completed 02-06-PLAN.md — Phase 2 complete, PR #20 open
 Resume file: None
