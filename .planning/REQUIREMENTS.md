@@ -69,7 +69,7 @@ REL-02.
     other part of Phase 1 proceeds without it. Do **not** substitute reasoning for the probe — the
     procedure is prescribed precisely because the docs do not state the answer.
 
-- [ ] **FOUND-04**: Node/pnpm toolchain, JavaScript coverage gate and docs-site build, green on an
+- [x] **FOUND-04**: Node/pnpm toolchain, JavaScript coverage gate and docs-site build, green on an
       empty package
   — signals spec §12, §13, §15; STANDARDS §6 (amended 2026-07-26)
 
@@ -611,7 +611,7 @@ Deferred. Tracked but not in the current roadmap.
 | FOUND-01 | Phase 1 | Complete |
 | FOUND-02 | Phase 1 | Complete |
 | FOUND-03 | Phase 1 | Pending — **blocked** (developer account token) |
-| FOUND-04 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Complete |
 | FOUND-05 | Phase 1 | Complete |
 | REL-01 | Phase 1 | Complete |
 | GW-01 | Phase 2 | Pending |
