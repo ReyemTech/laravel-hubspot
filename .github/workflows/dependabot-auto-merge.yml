@@ -5,17 +5,31 @@ name: dependabot-auto-merge
 # dependency bumps -- the locked seven-package `require` list -- and any major bump always
 # require a human, and this job never touches either.
 #
-# Triggers on `pull_request` (not `pull_request_target`): Dependabot opens its PRs from
-# branches inside this repository, never from a fork, so the default GITHUB_TOKEN already
-# carries write permissions here without reaching for pull_request_target's broader (and
-# for a fork-facing workflow, riskier) trust model. Matches packages/sail's existing
-# `on: pull_request` convention.
+# Triggers on `pull_request_target`, not the plain `pull_request` event: GitHub Actions
+# workflow runs triggered by Dependabot on `pull_request` always receive a read-only
+# GITHUB_TOKEN with no access to secrets, treated exactly as if the PR were opened from a
+# fork -- regardless of this workflow's `permissions:` block. (See
+# https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions-for-workflow-runs-triggered-by-dependabot
+# and dependabot/fetch-metadata's own README, which documents the identical restriction and
+# recommends `pull_request_target` for exactly this reason.) Since the actor guard below
+# selects precisely the Dependabot PRs this restriction applies to, `gh pr merge --auto
+# --merge` could never succeed under `pull_request` -- it would always fail with a
+# permissions error.
+#
+# `pull_request_target` runs the workflow definition from the base branch (this file, as
+# committed to `main`) rather than the PR branch, and grants the elevated token that
+# `pull_request` cannot for Dependabot events. That is safe here specifically because this
+# job never checks out or executes anything from the PR: `dependabot/fetch-metadata` reads
+# PR metadata via the GitHub API, and `gh pr merge` operates on the PR by URL. Any future
+# change to this workflow that adds `actions/checkout` of the PR head, or otherwise runs
+# PR-controlled code, would reintroduce the exact privilege-escalation risk
+# `pull_request_target` is normally criticised for -- don't add one.
 #
 # Deliberately excluded from tests/Ci/RequiredChecksTest.php's required-checks comparison,
 # via that test's explicit allowlist (see requiredChecksAllowlistedWorkflowFiles()) -- this
 # job is PR-triggered automation gated on `github.actor == 'dependabot[bot]'`, not a status
 # check every contributor's own PR needs to pass.
-on: pull_request
+on: pull_request_target
 
 permissions:
   contents: write
