@@ -36,6 +36,42 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Transport
+    |--------------------------------------------------------------------------
+    |
+    | The production Guzzle client's request behaviour. The SDK itself sets no
+    | default timeout, no default connect timeout and no default retry
+    | handling anywhere (02-RESEARCH.md Pitfall 5, verified by exhaustive
+    | grep of the installed hubspot/api-client source) -- these three keys
+    | make that a deliberate choice instead of a silent inheritance.
+    |
+    | - timeout: total seconds allowed for one request/response round trip,
+    |   including any retries. An unbounded default (0, Guzzle's own
+    |   fallback) is rejected here on purpose: a hung HubSpot response with
+    |   no timeout pins a queue worker indefinitely, which is a real outage
+    |   in a queued sync job, not a theoretical one. Too low a value instead
+    |   fails legitimate slow-but-healthy requests (large batch payloads).
+    | - connect_timeout: seconds allowed to establish the TCP/TLS connection
+    |   before giving up, separate from the total request timeout above --
+    |   a stalled connection attempt should fail fast rather than consume
+    |   the whole request budget just reaching the server.
+    | - retries: when true, the SDK's own RetryMiddlewareFactory is attached
+    |   to the production handler stack for HTTP 429 (rate limited) and
+    |   5xx (internal error) responses -- opt-in plumbing the SDK ships but
+    |   never wires in automatically. Set false only to debug a transient
+    |   failure without HubSpot's retry/backoff masking it; the fake
+    |   transport built by Hubspot::fake() never carries retries regardless
+    |   of this key, so canned-response request counts always stay exact.
+    |
+    */
+    'transport' => [
+        'timeout' => (float) env('HUBSPOT_TIMEOUT', 10.0),
+        'connect_timeout' => (float) env('HUBSPOT_CONNECT_TIMEOUT', 5.0),
+        'retries' => (bool) env('HUBSPOT_RETRIES', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Disabled
     |--------------------------------------------------------------------------
     |
