@@ -12,11 +12,12 @@ declare(strict_types=1);
  *
  * The config keys are named explicitly rather than pattern-matched on the word
  * "secret" or "token", per the plan's instruction — a key that does not contain
- * either word must still be caught. config/hubspot.php does not exist until Phase 2
- * (Gateway starts then); these two keys are the ones the design spec
- * (docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md §7/§9) names
- * explicitly today. This list is provisional and MUST be reconciled against the
- * real config/hubspot.php the moment it ships.
+ * either word must still be caught. config/hubspot.php shipped in Phase 1 (01-08,
+ * pulled forward with the ServiceProvider so the coverage/mutation floors have a
+ * real file to evaluate) with exactly these two keys under these exact dot paths —
+ * 'hubspot.token' and 'hubspot.webhooks.secret' — confirmed reconciled against the
+ * real file. The Gateway layer (Phase 2) may add further secret-holding keys; this
+ * list MUST be reconciled again if it does.
  */
 
 use Composer\Autoload\ClassLoader;

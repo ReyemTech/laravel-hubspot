@@ -187,7 +187,8 @@ by ensuring the suite passes in a clean environment with no `.env`.
 - **GitHub Pages deploy.** Needs a paid plan on private repositories. The docs site should build in
   CI; the deploy step can exist but will not run until the repository is public.
 
-### Open decision, not blocking
-Decision #5 (`final` by default) is still unsigned. Working default is `final`. It shapes Phase 2
-onward rather than Phase 1's gates, so it does not block this phase.
+### Formerly open decision — signed off 2026-07-27
+Decision #5 (`final` by default) is signed off: every class is `final` unless extension is an
+explicit, documented feature. First applied to `ReyemTech\Hubspot\ServiceProvider` (plan 01-08),
+the package's first shipped class.
 </deferred>

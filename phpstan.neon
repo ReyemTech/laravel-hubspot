@@ -6,14 +6,15 @@ parameters:
     # phpstan/phpstan 2.2.5 (installed): 10. See 01-05-SUMMARY.md.
     level: max
 
-    # `src/` holds nothing but `.gitkeep` files until Phase 2. Analysing only
-    # `src/` would give PHPStan an empty path set and report green over
-    # nothing -- the same vacuity trap the architecture-rules harness (plan
-    # 04) closes for empty namespaces. Including `tests/` gives the analyser
-    # real files from day one, so this gate means something before any
-    # package code exists. Do NOT drop `tests/` to quiet a future error here;
-    # fix the error or suppress it per-line with a written reason instead
-    # (D-04 forbids a baseline for exactly this kind of "quiet the noise").
+    # `src/` held nothing but `.gitkeep` files until plan 01-08 added
+    # `ServiceProvider` (pulled forward from Phase 2, so the coverage and
+    # mutation floors have a real file to evaluate). `tests/` stays in this
+    # list regardless -- analysing only `src/` would still give PHPStan a
+    # thin path set, the same vacuity trap the architecture-rules harness
+    # (plan 04) closes for empty namespaces. Do NOT drop `tests/` to quiet a
+    # future error here; fix the error or suppress it per-line with a
+    # written reason instead (D-04 forbids a baseline for exactly this kind
+    # of "quiet the noise").
     paths:
         - src
         - tests

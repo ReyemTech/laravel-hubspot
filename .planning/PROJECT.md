@@ -324,16 +324,15 @@ key. D-34 onward postdate the intel files and have no key.
 
 ## Open Decisions — Awaiting Sign-Off
 
-**One remains.** Six of the seven `STANDARDS.md` decisions were signed off on 2026-07-26 and are now
-in the `<decisions>` block above: #0 merge commits + mandatory commitlint (D-25), #1 PHP `^8.3` and
-Laravel 12/13 (D-01, Laravel 11 dropped 2026-07-27), #2 Pest (D-08), #3 `strict_types` (D-34), #4 coverage and MSI floors (D-43),
-#6 code shape limits (D-06).
+**None remain.** All seven `STANDARDS.md` decisions are now signed off and in the `<decisions>`
+block above: #0 merge commits + mandatory commitlint (D-25), #1 PHP `^8.3` and Laravel 12/13
+(D-01, Laravel 11 dropped 2026-07-27), #2 Pest (D-08), #3 `strict_types` (D-34), #4 coverage and
+MSI floors (D-43), #6 code shape limits (D-06), and — signed off 2026-07-27, during plan 01-08 —
+**#5, `final` by default** (DEC-final-by-default): every class is `final` unless extension is an
+explicit, documented feature. First applied to `ReyemTech\Hubspot\ServiceProvider`, the package's
+first shipped class.
 
-| # | Item | Working default | Why it is still open | When it bites |
-|---|------|-----------------|----------------------|---------------|
-| 5 | `final` by default (DEC-final-by-default) | Every class `final` unless extension is an explicit, documented feature | Reduces consumer flexibility and prevents accidental BC commitments. Unsealing later is a patch; sealing later is a breaking change. The escape hatch is interfaces, which the layer design already provides. `BRIEF.md`'s instruction stands: *"Ask Mario rather than assuming."* | **Phase 2 onward, not Phase 1** — it first matters when the first classes exist. Does not gate Phase 1 |
-
-**Also open, and empirical rather than deliberative:**
+**Still open, and empirical rather than deliberative:**
 
 - **The core spec §6.4 association-inverse question** — whether creating an association from A to B
   makes it readable from B to A. HubSpot's docs do not state it. Settled by **running the probe**

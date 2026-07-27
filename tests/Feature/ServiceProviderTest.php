@@ -62,6 +62,12 @@ final class ServiceProviderTest extends TestCase
 
             if ($result instanceof PendingCommand) {
                 $result->assertExitCode(0);
+
+                // PendingCommand defers actually running the artisan command until it is
+                // destructed (Illuminate\Testing\PendingCommand::__destruct() -> run()),
+                // which only happens naturally once no variable still references it.
+                // Force that now, before asserting the published file exists below.
+                unset($result);
             } else {
                 self::assertSame(0, $result);
             }
