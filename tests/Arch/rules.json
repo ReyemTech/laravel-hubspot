@@ -10,7 +10,7 @@
         },
         {
             "id": "R2",
-            "description": "Registry may depend only on Gateway",
+            "description": "Registry may depend only on Gateway and the package exceptions",
             "fixtures": [
                 "R2/RegistryDependsOnSync.php",
                 "R2/SyncTarget.php"
@@ -18,7 +18,7 @@
         },
         {
             "id": "R3",
-            "description": "Sync may depend only on Registry and Gateway",
+            "description": "Sync may depend only on Registry, Gateway and the package exceptions",
             "fixtures": [
                 "R3/SyncDependsOnWebhooks.php",
                 "R3/WebhooksTarget.php"
@@ -26,7 +26,7 @@
         },
         {
             "id": "R4",
-            "description": "Webhooks may depend only on Registry and Gateway",
+            "description": "Webhooks may depend only on Registry, Gateway and the package exceptions",
             "fixtures": [
                 "R4/WebhooksDependsOnSync.php",
                 "R4/SyncTarget.php"
@@ -34,7 +34,7 @@
         },
         {
             "id": "R5",
-            "description": "Signals may depend only on Registry and Gateway",
+            "description": "Signals may depend only on Registry, Gateway and the package exceptions",
             "fixtures": [
                 "R5/SignalsDependsOnFrontend.php",
                 "R5/FrontendTarget.php"
