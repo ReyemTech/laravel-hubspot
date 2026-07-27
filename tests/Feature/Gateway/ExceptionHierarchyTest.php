@@ -10,6 +10,7 @@ use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Exceptions\ObjectTypeException;
+use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Tests\TestCase;
 use RuntimeException;
 
@@ -188,7 +189,7 @@ final class ExceptionHierarchyTest extends TestCase
             'raw associations body',
         );
 
-        $translator = new \ReyemTech\Hubspot\Gateway\ExceptionTranslator;
+        $translator = new ExceptionTranslator;
         $result = $translator->translate($sdkException);
 
         self::assertInstanceOf(ApiException::class, $result);

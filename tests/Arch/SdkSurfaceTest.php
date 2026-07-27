@@ -218,8 +218,10 @@ test('the ExceptionTranslator recognises every SDK ApiException namespace src/Ga
     $recognised = ExceptionTranslator::recognisedSdkApiExceptions();
 
     foreach ($referenced as $fqcn) {
-        expect($recognised)->toContain(
-            $fqcn,
+        // expect(...)->toContain() is variadic with no message parameter (Pest's Expectation
+        // mixin) -- a second argument is treated as a second needle, not a failure message. Use
+        // toBeTrue() with an explicit message instead so a failure names the offending FQCN.
+        expect(in_array($fqcn, $recognised, true))->toBeTrue(
             "src/Gateway/ references {$fqcn}, but ExceptionTranslator::recognisedSdkApiExceptions() ".
             'does not recognise it -- add an instanceof branch and extend the recognised list.',
         );
