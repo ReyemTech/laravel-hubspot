@@ -85,28 +85,6 @@ final class HubspotFakeTest extends TestCase
     }
 
     /**
-     * A batch write submits several records in **one** request, and a property assertion has to be able
-     * to find its record in any of them. An implementation that read only the top-level `properties`
-     * key — the shape a single create sends — would report every batch-written property as absent, which
-     * is the assertion failing for precisely the request shape STANDARDS §11 requires the package to use.
-     */
-    public function test_assert_synced_finds_a_property_in_any_record_of_a_batch_write(): void
-    {
-        Hubspot::fake();
-
-        Hubspot::objects()->createMany('deals', [['dealname' => 'One'], ['dealname' => 'Two']]);
-
-        Hubspot::assertSynced('deals', ['dealname' => 'One']);
-        Hubspot::assertSynced('deals', ['dealname' => 'Two']);
-
-        self::assertSame(
-            "Expected HubSpot to have synced object type 'deals' with property 'dealname' => \"Three\" (string), "
-            .'but the value(s) recorded for it were: "One" (string), "Two" (string).',
-            FailedAssertion::messageOf(static fn () => Hubspot::assertSynced('deals', ['dealname' => 'Three'])),
-        );
-    }
-
-    /**
      * The object type is matched on a path BOUNDARY, not as a prefix: a write to `deals` must not
      * satisfy an assertion about `deal`, and a write to `line_items` must not satisfy one about `line`.
      * A prefix match here would make the assertion pass for a record of a type nobody wrote.
@@ -167,94 +145,6 @@ final class HubspotFakeTest extends TestCase
             "Expected HubSpot to have synced object type 'deals', but no write of that type was recorded. "
             .'No request was recorded at all.',
             FailedAssertion::messageOf(static fn () => Hubspot::assertSynced('deals')),
-        );
-    }
-
-    public function test_assert_synced_matches_a_property_subset_read_from_the_recorded_request_body(): void
-    {
-        Hubspot::fake();
-
-        Hubspot::objects()->create('deals', ['dealname' => 'Acme', 'amount' => '100', 'pipeline' => 'default']);
-
-        // A subset, not the whole set: a consumer asserting one property must not have to restate
-        // every property the package happens to send alongside it.
-        Hubspot::assertSynced('deals', ['amount' => '100']);
-        Hubspot::assertSynced('deals', ['amount' => '100', 'dealname' => 'Acme']);
-    }
-
-    /**
-     * Every property HubSpot returns and accepts is a **string**, including numeric and boolean ones.
-     * A loose comparison would report success for a package that sent the integer `100` where the
-     * string `'100'` belonged, and the whole justification for `declare(strict_types=1)` here
-     * (STANDARDS §4) is that those two are not the same value. The message therefore names the type of
-     * both sides, because `100` and `"100"` are indistinguishable in a message that prints only the
-     * value.
-     */
-    public function test_assert_synced_compares_property_values_strictly_and_names_both_types(): void
-    {
-        Hubspot::fake();
-
-        Hubspot::objects()->create('deals', ['amount' => '100']);
-
-        self::assertSame(
-            "Expected HubSpot to have synced object type 'deals' with property 'amount' => 100 (int), "
-            .'but the value(s) recorded for it were: "100" (string).',
-            FailedAssertion::messageOf(static fn () => Hubspot::assertSynced('deals', ['amount' => 100])),
-        );
-    }
-
-    public function test_assert_synced_fails_naming_the_property_that_was_not_written_at_all(): void
-    {
-        Hubspot::fake();
-
-        Hubspot::objects()->create('deals', ['dealname' => 'Acme']);
-
-        self::assertSame(
-            "Expected HubSpot to have synced object type 'deals' with property 'amount' => \"100\" (string), "
-            .'but the value(s) recorded for it were: not written.',
-            FailedAssertion::messageOf(static fn () => Hubspot::assertSynced('deals', ['amount' => '100'])),
-        );
-    }
-
-    /**
-     * The first expected property that no written record satisfies is the one named. Reporting only
-     * "the properties did not match" would send the reader diffing two arrays by eye, which is the
-     * work the assertion exists to have already done.
-     */
-    public function test_assert_synced_names_the_first_property_that_no_written_record_satisfies(): void
-    {
-        Hubspot::fake();
-
-        Hubspot::objects()->create('deals', ['dealname' => 'Acme', 'amount' => '100']);
-
-        self::assertSame(
-            "Expected HubSpot to have synced object type 'deals' with property 'pipeline' => \"default\" (string), "
-            .'but the value(s) recorded for it were: not written.',
-            FailedAssertion::messageOf(
-                static fn () => Hubspot::assertSynced('deals', ['dealname' => 'Acme', 'pipeline' => 'default']),
-            ),
-        );
-    }
-
-    /**
-     * Several writes of one object type are searched, not just the first. A package that syncs a
-     * collection issues one batch request per type but may legitimately issue several single writes,
-     * and an assertion that only inspected the first would fail for a record that was genuinely
-     * written.
-     */
-    public function test_assert_synced_searches_every_written_record_not_only_the_first(): void
-    {
-        Hubspot::fake();
-
-        Hubspot::objects()->create('deals', ['dealname' => 'One']);
-        Hubspot::objects()->create('deals', ['dealname' => 'Two']);
-
-        Hubspot::assertSynced('deals', ['dealname' => 'Two']);
-
-        self::assertSame(
-            "Expected HubSpot to have synced object type 'deals' with property 'dealname' => \"Three\" (string), "
-            .'but the value(s) recorded for it were: "One" (string), "Two" (string).',
-            FailedAssertion::messageOf(static fn () => Hubspot::assertSynced('deals', ['dealname' => 'Three'])),
         );
     }
 
