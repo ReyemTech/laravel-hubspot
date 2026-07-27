@@ -33,7 +33,7 @@ request lifecycle.
 
 Phase: 2 of 9 (Gateway Layer)
 Plan: 3 of 6 in current phase
-Status: Plan 02-01 (Gateway tracer) merged (PR #8). Plan 02-02 (Gateway errors & transport) complete — branch pushed, PR not yet opened/merged at time of writing. 4 plans remain in Phase 2 (02-03..02-06).
+Status: Plan 02-01 (Gateway tracer) merged (PR #8). Plan 02-02 (Gateway errors & transport) complete — PR #14 open, 29/29 required checks green, not yet merged. 4 plans remain in Phase 2 (02-03..02-06).
 Last activity: 2026-07-27 — executed 02-02-PLAN.md (Gateway errors & transport): completed the four-member `HubspotException` hierarchy, extended `ExceptionTranslator` to the associations v4 namespace with a source-derived coverage guard, and made the production Guzzle transport deliberate (timeout, connect timeout, retry middleware, missing-token `ConfigurationException`). GW-03 is now **complete**. GW-01/GW-04 remain **partially** delivered — see `.planning/REQUIREMENTS.md`'s Progress notes; do not treat them as complete until their remaining plans (02-03..02-06) ship.
 
 Progress: [███████░░░] 69%

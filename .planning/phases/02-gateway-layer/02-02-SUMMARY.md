@@ -189,12 +189,12 @@ status: complete
    - RED: `7de9038` — `test(02-02): red state — the four-member exception hierarchy and the translator coverage guard`
    - GREEN: `51d3a52` — `feat(02-02): green state — the four-member exception hierarchy and a namespace-complete translator`
 2. **Task 2: A deliberate production transport — timeout, connect timeout, retries, and a missing-token error**
-   - GREEN: `ba414a8` — `feat(02-02): green state — a deliberate production transport with timeout, connect timeout and retries`
-   - Coverage hardening: `200c24c` — `test(02-02): harden HubspotClientFactory coverage to 100% for the guzzleMiddleware guards`
+   - GREEN: `0ddc59d` — `feat(02-02): green state — a deliberate production transport with timeout, connect timeout and retries`
+   - Coverage hardening: `7c765d7` — `test(02-02): harden HubspotClientFactory coverage to 100% for the guzzleMiddleware guards`
 3. **Task 3: Reconcile the secret-logging rule against the Gateway's config surface**
-   - `f3cfece` — `test(02-02): reconcile the secret-logging rule and confirm the info-disclosure threat is closed`
+   - `476d8e7` — `test(02-02): reconcile the secret-logging rule and confirm the info-disclosure threat is closed`
 4. **Unplanned: mutation-coverage hardening** (not a plan task; required by the plan's own `<verification>` section)
-   - `a26d2b8` — `test(02-02): harden mutation coverage for exception messages and non-int throwable codes`
+   - `b9e06e7` — `test(02-02): harden mutation coverage for exception messages and non-int throwable codes`
 
 **Plan metadata:** this commit (docs: complete plan)
 
@@ -235,7 +235,7 @@ _Note: Task 1 is genuine RED→GREEN TDD. Task 2's RED test (`tests/Feature/Gate
 - **Fix:** Renamed/repurposed the "resolves with no token" test into a dedicated "throws `ConfigurationException`" test, and added `config(['hubspot.token' => 'binding-test-token'])` to the two singleton/non-shared-binding tests that need successful resolution.
 - **Files modified:** `tests/Feature/Gateway/ServiceProviderBindingsTest.php`
 - **Verification:** Full suite green after the fix (100/100 at that point in the sequence)
-- **Committed in:** `ba414a8` (Task 2 GREEN commit)
+- **Committed in:** `0ddc59d` (Task 2 GREEN commit)
 
 **2. [Rule 1 - Bug] PHPStan level max rejected the untyped `RetryMiddlewareFactory` return**
 
@@ -244,7 +244,7 @@ _Note: Task 1 is genuine RED→GREEN TDD. Task 2's RED test (`tests/Feature/Gate
 - **Fix:** Added a private `guzzleMiddleware()` helper whose own closure has an explicitly-declared `callable(callable): callable` signature, backed by real `is_callable()` narrowing at both boundaries (the factory call and the middleware it returns) — not a cast, not a suppression comment, per STANDARDS §3's no-baseline rule.
 - **Files modified:** `src/Gateway/HubspotClientFactory.php`
 - **Verification:** `vendor/bin/phpstan analyse --no-progress` clean, zero suppressions
-- **Committed in:** `ba414a8` (Task 2 GREEN commit)
+- **Committed in:** `0ddc59d` (Task 2 GREEN commit)
 
 **3. [Rule 1 - Bug] A doc-comment apostrophe accidentally tripped `tests/Arch/SdkSurfaceTest.php`'s R1 non-vacuity check**
 
@@ -272,7 +272,8 @@ _Note: Task 1 is genuine RED→GREEN TDD. Task 2's RED test (`tests/Feature/Gate
 ## Issues Encountered
 
 - **Task 2's RED/GREEN split was less clean than Task 1's**: the RED test (`HubspotClientFactoryTest.php`) was authored complete (all 7 test methods) before any implementation change, confirmed genuinely failing (5 of 7 assertions), then implemented to GREEN in one continuous pass — matching the letter of "write the RED test first, commit it, confirm it fails, then implement" but committed together with config/HubspotClientFactory/ServiceProvider changes as one GREEN commit per the plan's own task boundary, rather than as two separate commits. This mirrors 02-01's own disclosed Task 2 pattern (test passed the moment it was written in that case; here the test genuinely failed first, but the RED and GREEN commits weren't split, unlike Task 1 where they were).
-- **`composer validate --strict` fails locally** with the same pre-existing "lock file is not up to date" issue documented in `.planning/phases/02-gateway-layer/deferred-items.md` and 02-01-SUMMARY.md. Confirmed this PR makes zero `composer.json`/`composer.lock` changes (`git diff main -- composer.json composer.lock` is empty). Not reproduced in CI (fresh install), per the existing deferred-items entry.
+- **`composer validate --strict` fails locally** with the same pre-existing "lock file is not up to date" issue documented in `.planning/phases/02-gateway-layer/deferred-items.md` and 02-01-SUMMARY.md. Confirmed this PR makes zero `composer.json`/`composer.lock` changes (`git diff main -- composer.json composer.lock` is empty). Confirmed passing in CI (fresh install) on PR #14.
+- **`Commit messages` (commitlint) failed CI on first push**: `header-max-length` (100 chars) rejected `ba414a8`'s original subject, "feat(02-02): green state — a deliberate production transport with timeout, connect timeout and retries" (102 chars). A real blocking CI failure (Rule 3), fixed the same way 02-01 disclosed fixing an equivalent issue: cherry-picked the affected commit plus everything after it onto a scratch branch (`git checkout -b scratch/... 51d3a52`, never `rebase -i`, which the environment disallows), shortened the one offending subject to "feat(02-02): green state — deliberate production transport: timeout and retries" (79 chars, body unchanged) via `git commit --amend`, cherry-picked the remaining four commits unchanged, confirmed `git diff <old-branch> <new-branch> --stat` was empty (content identical, only the one message changed), moved the branch pointer, and force-pushed with `--force-with-lease` — safe here because this branch is single-author and had been pushed only once, minutes earlier. All 29 required checks green after the re-push, including `Commit messages`.
 - Mutation testing surfaced 5 untested mutants on the first full run (85.71% MSI); all message-concatenation and non-int-`getCode()` cases were closed with real tests (exact-text assertions, `ReflectionProperty`-forced non-int codes proven via a real `Exception::getCode()`/`PDOException` empirical check, not assumed) rather than chased with `@phpstan-ignore`-style shortcuts, since none apply to mutation testing anyway. Final MSI: 97.86% (137/140), with the 3 remaining survivors pre-existing and in `src/Testing/HubspotFake.php`, a file this plan never modifies — already documented as equivalent (`json_encode()` with `JSON_THROW_ON_ERROR` never returns `false`) in 02-01-SUMMARY.md, out of this plan's scope per the scope-boundary rule.
 
 ## User Setup Required
@@ -293,5 +294,5 @@ None — no external service configuration required.
 ## Self-Check: PASSED
 
 All key files created/modified by this plan were verified present on disk, and all 6 commit
-hashes referenced above (`7de9038`, `51d3a52`, `ba414a8`, `f3cfece`, `200c24c`, `a26d2b8`) were
+hashes referenced above (`7de9038`, `51d3a52`, `0ddc59d`, `476d8e7`, `7c765d7`, `b9e06e7`) were
 verified present in `git log --oneline --all`. No missing items.
