@@ -9,6 +9,7 @@ use HubSpot\Client\Crm\Associations\V4\Model\Error as SdkAssociationsV4Error;
 use HubSpot\Client\Crm\Objects\ApiException as SdkObjectsApiException;
 use HubSpot\Client\Crm\Objects\Model\Error as SdkObjectsError;
 use ReyemTech\Hubspot\Exceptions\ApiException;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -38,6 +39,29 @@ final class ExceptionTranslator
             SdkObjectsApiException::class,
             SdkAssociationsV4ApiException::class,
         ];
+    }
+
+    /**
+     * The other half of "the SDK gave us something we cannot use": a 2xx response that deserialised
+     * into a model the caller did not ask for. Every SDK call is declared as a `Model|Error` union
+     * and deserialises on the status code, so an unexpected success status — which Guzzle does not
+     * throw for — arrives as `Model\Error` rather than as an exception. Narrowing that union with
+     * `instanceof` is the correct fix at PHPStan level max; a suppression would not be.
+     *
+     * A plain `RuntimeException` deliberately, never the package's own `ApiException`: an unexpected
+     * response shape is a bug in this wrapper or in the SDK, not an API failure a caller can handle
+     * (threat T-02-05).
+     *
+     * Lives here rather than as a private helper in each gateway because both gateways ask the same
+     * question and STANDARDS §6b says logic answering the same question becomes one implementation
+     * immediately, not on the third occurrence. `static` for the same reason
+     * `recognisedSdkApiExceptions()` is: it depends on nothing this object holds.
+     *
+     * @param  class-string  $expected
+     */
+    public static function unexpectedResponseShape(string $expected): RuntimeException
+    {
+        return new RuntimeException("Unexpected response shape from the HubSpot SDK: expected {$expected}.");
     }
 
     public function translate(Throwable $exception): ApiException

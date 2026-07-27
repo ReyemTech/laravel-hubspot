@@ -60,8 +60,17 @@ final class AssociationGatewayTest extends TestCase
         );
     }
 
+    /**
+     * The fake is installed first because it replaces the container's `HubspotClientFactory`
+     * instance, which is what lets this whole file run with no `HUBSPOT_TOKEN` and no network
+     * (D-12). The binding's non-shared-ness — the property that lets `fake()` swap the transport
+     * without a stale gateway surviving — is asserted in `ServiceProviderBindingsTest`, alongside
+     * the object gateway's.
+     */
     public function test_the_container_binds_the_association_gateway_through_its_contract(): void
     {
+        Hubspot::fake();
+
         $gateway = Hubspot::associations();
 
         self::assertInstanceOf(AssociationGatewayContract::class, $gateway);
@@ -138,11 +147,19 @@ final class AssociationGatewayTest extends TestCase
 
         $response = $fake->recordedRequests()[0]['response'];
 
-        // HubSpot answers a default-association write with 200 and a batch-response body, and the
-        // SDK deserialises on exactly that status code. Asserting it here keeps the test double
-        // honest about the route rather than letting it fall through to a generic 204.
+        // HubSpot answers a default-association write with 200 and a `BatchResponsePublicDefault-
+        // Association` body — `status` plus a `results` list — and the SDK deserialises on exactly
+        // that status code. Asserted here so the test double stays honest about the route rather
+        // than falling through to the generic 204 an unrecognised one would get, which the SDK
+        // would hand back as `Model\Error`.
         self::assertNotNull($response);
         self::assertSame(200, $response->getStatusCode());
+
+        /** @var array<string, mixed> $body */
+        $body = json_decode((string) $response->getBody(), true);
+
+        self::assertSame('COMPLETE', $body['status']);
+        self::assertSame([], $body['results']);
     }
 
     /**
@@ -158,8 +175,10 @@ final class AssociationGatewayTest extends TestCase
 
         $raw = (string) $fake->recordedRequests()[0]['request']->getBody();
 
-        self::assertSame('', $raw, 'An unlabelled association write carries no payload whatsoever.');
+        // Decoded first, deliberately: asserting `$raw === ''` up front lets PHPStan constant-fold
+        // the decode below into a tautology and fail level max on it.
         self::assertNull(json_decode($raw, true), 'There is no body to decode, so there is no type id to find in one.');
+        self::assertSame('', $raw, 'An unlabelled association write carries no payload whatsoever.');
 
         foreach (['associationTypeId', 'associationCategory', 'typeId', 'category', 'label'] as $forbidden) {
             self::assertStringNotContainsStringIgnoringCase($forbidden, $raw);
@@ -281,8 +300,20 @@ final class AssociationGatewayTest extends TestCase
 
         Hubspot::assertRequestCount(1);
 
-        self::assertContainsOnlyInstancesOf(AssociationRow::class, $rows);
         self::assertCount(2, $rows);
+
+        // No SDK type may appear in the returned shape (R1) — asserted on the rows' own state rather
+        // than with `assertContainsOnlyInstancesOf`, which merely re-proves the declared return type
+        // and is a tautology PHPStan rejects at level max. A leaked `AssociationSpecWithLabel` or
+        // `MultiAssociatedObjectWithLabel` would show up here as an object-valued property.
+        foreach ($rows as $row) {
+            foreach (get_object_vars($row) as $property => $value) {
+                self::assertIsNotObject(
+                    $value,
+                    "AssociationRow::\${$property} holds an object; the row must carry no SDK type at all.",
+                );
+            }
+        }
 
         self::assertSame('338960291537', $rows[0]->toObjectId);
         self::assertSame(2, $rows[0]->typeId);
