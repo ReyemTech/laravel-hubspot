@@ -189,9 +189,13 @@ it('documents no required status check that does not resolve to a real job', fun
 });
 
 it('names every pull-request-triggered workflow file at least once in the required-checks list, per file', function (): void {
+    $documented = requiredChecksDocumentedJobs();
+
     foreach (requiredChecksShippedJobsByFile() as $filename => $jobs) {
         foreach ($jobs as $job) {
-            expect(requiredChecksDocumentedJobs())->toContain($job, "Expected {$filename}'s \"{$job}\" job to be a documented required check.");
+            expect(in_array($job, $documented, true))->toBeTrue(
+                "Expected {$filename}'s \"{$job}\" job to be a documented required check."
+            );
         }
     }
 });
