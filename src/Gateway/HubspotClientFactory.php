@@ -44,9 +44,21 @@ final class HubspotClientFactory
      * Builds the production transport from package config. Throws before any client is
      * constructed if the token is missing or empty — a missing token must never surface as an
      * unauthenticated request that looks like a permissions problem (T-02-08, threat register).
+     *
+     * The three transport parameters default to exactly what `config/hubspot.php` documents as
+     * `hubspot.transport.timeout` / `connect_timeout` / `retries` (Codex review, PR #14 P2): this
+     * method is `public` and not `@internal`, so the previously valid single-argument call
+     * `fromConfig($token)` must keep working rather than throwing `ArgumentCountError`. Defaults
+     * intentionally do NOT reproduce the pre-02-02 behaviour of an unbounded Guzzle timeout and no
+     * retry middleware — that behaviour is exactly the outage risk (T-02-03/T-02-07, threat
+     * register) this plan was written to close, and a compatibility fix must not resurrect it.
      */
-    public static function fromConfig(?string $accessToken, float $timeout, float $connectTimeout, bool $retriesEnabled): self
-    {
+    public static function fromConfig(
+        ?string $accessToken,
+        float $timeout = 10.0,
+        float $connectTimeout = 5.0,
+        bool $retriesEnabled = true,
+    ): self {
         if ($accessToken === null || $accessToken === '') {
             throw ConfigurationException::missingToken();
         }
