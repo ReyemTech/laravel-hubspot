@@ -11,6 +11,7 @@ use GuzzleHttp\Promise\Create as PromiseCreate;
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Support\Carbon;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
@@ -28,6 +29,14 @@ use Throwable;
  */
 final class HubspotFake
 {
+    /**
+     * The instant every default response is stamped with when the test has **not** frozen the clock.
+     * Fixed rather than real, which is what makes two runs of one test byte-identical across processes
+     * and not merely within one — see {@see self::clock()} for the full argument, including why
+     * `fake()` does not simply freeze the clock itself.
+     */
+    private const UNFROZEN_CLOCK_FALLBACK = '2026-01-01T00:00:00Z';
+
     private readonly MockHandler $mockHandler;
 
     /**
@@ -220,13 +229,18 @@ final class HubspotFake
         }
 
         if ($request->getMethod() === 'GET') {
-            return $this->jsonResponse(200, ['id' => basename($path), 'properties' => []]);
+            return $this->jsonResponse(200, [
+                'id' => basename($path),
+                'properties' => [],
+                ...$this->timestamps(),
+            ]);
         }
 
         if ($request->getMethod() === 'PATCH') {
             return $this->jsonResponse(200, [
                 'id' => basename($path),
                 'properties' => $this->submittedProperties($request),
+                ...$this->timestamps(),
             ]);
         }
 
@@ -267,6 +281,7 @@ final class HubspotFake
             $results[] = [
                 'id' => $input['id'] ?? (string) ++$this->idCounter,
                 'properties' => $input['properties'] ?? [],
+                ...$this->timestamps(),
             ];
         }
 
@@ -362,7 +377,62 @@ final class HubspotFake
         return $this->jsonResponse(201, [
             'id' => (string) $this->idCounter,
             'properties' => $this->submittedProperties($request),
+            ...$this->timestamps(),
         ]);
+    }
+
+    /**
+     * `createdAt` and `updatedAt`, under the serialised key names the SDK's own `$attributeMap` uses for
+     * `SimplePublicObject` — read from the model rather than guessed, because a key that does not match
+     * deserialises into a null field and every test written against it passes for the wrong reason.
+     *
+     * Both derive from the **test clock**, which is what makes two runs of one test byte-identical
+     * (D-10). Determinism here is a correctness property rather than tidiness: a value that differs
+     * between runs makes a failure irreproducible, and the response to an irreproducible failure is to
+     * re-run the build until it passes — which is how a real defect ships with a green suite.
+     *
+     * A single create carries the same instant in both fields, which is what HubSpot returns for a
+     * freshly created record; an update carries the same instant in both because this double keeps no
+     * history of the record it never really stored.
+     *
+     * @return array{createdAt: string, updatedAt: string}
+     */
+    private function timestamps(): array
+    {
+        $now = $this->clock();
+
+        return [
+            'createdAt' => $now,
+            'updatedAt' => $now,
+        ];
+    }
+
+    /**
+     * Read **per response**, not captured once at construction, so a record created after `travel()`
+     * carries the later instant exactly as it would in a real portal.
+     *
+     * With the clock frozen — which STANDARDS §6 asks of every test in this repository — this is that
+     * frozen instant. With no frozen clock this is {@see self::UNFROZEN_CLOCK_FALLBACK}, a fixed
+     * instant, and **not** the real one. Two reasons, in order:
+     *
+     * 1. `Carbon::now()` as the fallback would make two runs of one test differ by microseconds. The
+     *    determinism guarantee would then hold only within a process and quietly fail across two, which
+     *    is the harder half to notice and the half that matters to a consumer's CI.
+     * 2. The alternative — having `fake()` freeze the clock itself — is a far-reaching side effect for a
+     *    method whose job is to install a transport. A test double that silently stops a consumer's clock
+     *    would be the kind of spooky action this package's whole design argument is against.
+     *
+     * A consumer who wants their own instant freezes the clock, and gets it. The value of the constant is
+     * arbitrary; that it is fixed is the property.
+     */
+    private function clock(): string
+    {
+        $now = Carbon::hasTestNow() ? Carbon::now() : Carbon::parse(self::UNFROZEN_CLOCK_FALLBACK);
+
+        // Milliseconds and a `Z`, which is the shape HubSpot's own timestamps take. The SDK deserialises
+        // these into `\DateTime`, so a format it cannot parse would surface as an SDK-internal error
+        // rather than as a wrong value.
+        return $now->toIso8601ZuluString('millisecond');
     }
 
     /**
