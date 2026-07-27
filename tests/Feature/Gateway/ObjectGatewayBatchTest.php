@@ -197,6 +197,54 @@ final class ObjectGatewayBatchTest extends TestCase
     }
 
     /**
+     * A 207 IS a partial failure — the status code says so on its own. If partial status were
+     * derived solely from the parsed error list, a 207 that omits `errors`, sends an empty list, or
+     * whose `errors` field the SDK cannot deserialise would come back reporting full success, which
+     * is precisely the silent data loss `BatchResult` exists to prevent. Raised by Codex on PR #15.
+     *
+     * @return array<string, array{array<string, mixed>}>
+     */
+    public static function unitemisedPartialFailureProvider(): array
+    {
+        $results = [['id' => '1', 'properties' => ['dealname' => 'First']]];
+
+        return [
+            'no errors key at all' => [['status' => 'COMPLETE', 'results' => $results]],
+            'an explicitly empty error list' => [['status' => 'COMPLETE', 'results' => $results, 'errors' => [], 'numErrors' => 0]],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    #[DataProvider('unitemisedPartialFailureProvider')]
+    public function test_a_207_that_itemises_no_errors_is_still_a_partial_failure(array $body): void
+    {
+        Hubspot::fake(['deals' => Hubspot::response($body, 207)]);
+
+        $result = Hubspot::objects()->createMany('deals', [
+            ['dealname' => 'First'],
+            ['dealname' => 'Broken'],
+        ]);
+
+        self::assertTrue(
+            $result->isPartialFailure(),
+            'HTTP 207 is a partial write whether or not HubSpot itemised which records failed.',
+        );
+        self::assertSame([], $result->errors());
+        self::assertCount(1, $result->recordsDespitePartialFailure());
+
+        try {
+            $result->records();
+            self::fail('Expected records() to refuse a 207 even when no errors were itemised.');
+        } catch (ApiException $exception) {
+            self::assertSame(207, $exception->status());
+            self::assertStringContainsString('itemised no errors', $exception->getMessage());
+            self::assertStringContainsString('recordsDespitePartialFailure', $exception->getMessage());
+        }
+    }
+
+    /**
      * The SDK has no single-object upsert — `BasicApi` offers archive, create, getById, getPage and
      * update, and nothing else. That is an implementation detail: the caller upserts one record and
      * the word "batch" appears nowhere in the signature.
