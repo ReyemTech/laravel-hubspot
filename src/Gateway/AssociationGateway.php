@@ -7,6 +7,7 @@ namespace ReyemTech\Hubspot\Gateway;
 use HubSpot\Client\Crm\Associations\V4\Api\BasicApi;
 use HubSpot\Client\Crm\Associations\V4\ApiException as SdkAssociationsV4ApiException;
 use HubSpot\Client\Crm\Associations\V4\Model\AssociationSpecWithLabel;
+use HubSpot\Client\Crm\Associations\V4\Model\BatchResponsePublicDefaultAssociation;
 use HubSpot\Client\Crm\Associations\V4\Model\CollectionResponseMultiAssociatedObjectWithLabelForwardPaging;
 use HubSpot\Client\Crm\Associations\V4\Model\MultiAssociatedObjectWithLabel;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
@@ -37,18 +38,29 @@ final class AssociationGateway implements AssociationGatewayContract
     ) {}
 
     /**
-     * Returns nothing, deliberately, and the SDK's response is deliberately not narrowed.
+     * Returns nothing — the response describes the association the caller already fully specified,
+     * so there is no value to hand back — but the SDK's response union is still narrowed, because
+     * the alternative is a silently false success on an association WRITE.
      *
-     * HubSpot answers with a batch response describing the association it created, and there is
-     * nothing in it a caller needs that they did not already supply — the pair they passed in *is*
-     * the association. Narrowing a union whose only alternative branch is unreachable through every
-     * route this method uses would add a permanently uncovered guard, which is how a coverage floor
-     * stops meaning anything (the same reasoning as `HubspotFake::objectTypeOf()`).
+     * `createDefaultWithHttpInfo()` switches on the status code with `case 200:` returning
+     * `BatchResponsePublicDefaultAssociation` and `default:` returning `Model\Error`, and that
+     * switch *returns* before the `if ($statusCode < 200 || $statusCode > 299) { throw }` below it —
+     * so that throw is dead code and every other 2xx (a 202, a 204) deserialises quietly into
+     * `Model\Error`. Guzzle does not throw for a 2xx either, so without this guard `associate()`
+     * returns normally after HubSpot answered something that describes no association at all. That is
+     * the exact failure class this package exists to prevent: an association write that reports
+     * success while the CRM holds nothing.
+     *
+     * The guard is reachable and covered — `read()` carries the identical one, exercised with a
+     * canned 202 — so it is not the permanently uncovered line a `void` return type might suggest.
+     * `dissociate()` needs no counterpart: `archiveWithHttpInfo()` is declared `@return array of
+     * null` and returns `[null, $status, $headers]` for every 2xx, so it has no union to narrow and
+     * no model to expect. A guard *there* would be the uncoverable one.
      */
     public function associate(AssociationPair $pair): void
     {
         try {
-            $this->basicApi()->createDefault(
+            $result = $this->basicApi()->createDefault(
                 $pair->from->objectType,
                 $pair->from->id,
                 $pair->to->objectType,
@@ -56,6 +68,10 @@ final class AssociationGateway implements AssociationGatewayContract
             );
         } catch (SdkAssociationsV4ApiException $exception) {
             throw $this->exceptionTranslator->translate($exception);
+        }
+
+        if (! $result instanceof BatchResponsePublicDefaultAssociation) {
+            throw ExceptionTranslator::unexpectedResponseShape(BatchResponsePublicDefaultAssociation::class);
         }
     }
 
