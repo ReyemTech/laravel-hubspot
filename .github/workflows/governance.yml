@@ -18,6 +18,15 @@ jobs:
   commitlint:
     name: Commit messages
     runs-on: ubuntu-latest
+    # wagoid/commitlint-github-action calls the GitHub API to enumerate the
+    # PR's commits (so it can lint every one, not just the head commit or
+    # title -- see the fetch-depth note below). The workflow-level
+    # `contents: read` above doesn't cover that API call; without
+    # `pull-requests: read` the action fails with "Resource not accessible
+    # by integration".
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       # fetch-depth: 0 gives commitlint the full commit range to compare
       # against the PR's base branch. The commit-depth input below is
