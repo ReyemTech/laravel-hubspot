@@ -34,7 +34,7 @@ final class HubspotFake
      */
     private array $history = [];
 
-    private int $idCounter = 0;
+    private int $idCounter;
 
     /**
      * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by object type
@@ -43,6 +43,12 @@ final class HubspotFake
         Container $container,
         private readonly array $responses,
     ) {
+        // Set in the constructor body, not as a property default -- a fresh Hubspot::fake()
+        // call restarts the counter (02-CONTEXT.md: "ids from a counter"), and an explicit
+        // assignment here is what gives that guarantee a line coverage/mutation tools can
+        // actually attribute to a test, rather than an implicit property initializer.
+        $this->idCounter = 0;
+
         $this->mockHandler = new MockHandler;
         $this->mockHandler->append($this->respondTo(...));
 

@@ -68,6 +68,12 @@ final class ObjectGatewayCreateTest extends TestCase
         $body = json_decode((string) $request->getBody(), true);
 
         self::assertSame(['dealname' => 'Test Deal'], $body['properties']);
+
+        $response = $requests[0]['response'];
+
+        self::assertNotNull($response, 'The fake must record the response alongside the request, not just the request.');
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
     }
 
     public function test_assert_request_count_passes_at_one_and_fails_naming_both_numbers_at_two(): void
@@ -91,11 +97,19 @@ final class ObjectGatewayCreateTest extends TestCase
 
     public function test_fake_with_no_arguments_still_satisfies_a_create_with_a_deterministic_counter_id(): void
     {
-        Hubspot::fake();
+        $fake = Hubspot::fake();
 
         $first = Hubspot::objects()->create('deals', ['dealname' => 'First Deal']);
 
         self::assertSame('1', $first->id);
+        // The default (uncanned) fake response must echo back the submitted properties, not a
+        // fixed or empty set -- proving the fallback response genuinely reflects what was sent.
+        self::assertSame(['dealname' => 'First Deal'], $first->properties);
+
+        $response = $fake->recordedRequests()[0]['response'];
+        self::assertNotNull($response);
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
 
         // A fresh fake() call restarts the counter -- it must not carry state across fakes.
         Hubspot::fake();
@@ -132,5 +146,35 @@ final class ObjectGatewayCreateTest extends TestCase
         $result = Hubspot::objects()->create('deals', ['dealname' => 'Test Deal']);
 
         self::assertSame('1', $result->id);
+    }
+
+    public function test_response_defaults_to_status_200_when_not_given_one(): void
+    {
+        $canned = Hubspot::response(['message' => 'ok']);
+
+        self::assertSame(200, $canned->status);
+        self::assertSame(['message' => 'ok'], $canned->body);
+    }
+
+    public function test_an_unexpected_non_201_success_status_throws_a_plain_runtime_exception(): void
+    {
+        Hubspot::fake([
+            // HubSpot's create endpoint only ever returns 201 on success. A 200 is not an HTTP
+            // error, so Guzzle does not throw -- it forces the SDK's own generated switch into
+            // its `default` branch (Model\Error, not SimplePublicObject), exactly the shape
+            // ObjectGateway's instanceof guard exists to catch (02-RESEARCH.md Pitfall 3).
+            'deals' => Hubspot::response(['message' => 'unexpected shape'], 200),
+        ]);
+
+        try {
+            Hubspot::objects()->create('deals', ['dealname' => 'Test Deal']);
+            self::fail('Expected an unexpected non-201 success status to throw.');
+        } catch (\Throwable $exception) {
+            // Exact class, not merely instanceof RuntimeException -- ApiException also extends
+            // RuntimeException, and this guard must be a plain one, never our own typed
+            // exception (that would misrepresent an unexpected-shape bug as an API failure).
+            self::assertSame(\RuntimeException::class, $exception::class);
+            self::assertStringContainsString('Unexpected response shape from the HubSpot SDK', $exception->getMessage());
+        }
     }
 }
