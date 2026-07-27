@@ -84,11 +84,19 @@ pull request, so it is not a check a contributor's PR needs to pass.
 ## Dependabot auto-merge
 
 `.github/dependabot.yml` (plan 02) groups patch/minor dev-dependency bumps specifically so
-auto-merge-on-green is possible, matching `packages/sail`'s existing convention. Enabling
-auto-merge is a **repository setting** (**Settings → General → Pull Requests → Allow auto-merge**,
-plus each Dependabot PR needs the built-in `github-actions[bot]` auto-merge permission, or a
-workflow that calls `gh pr merge --auto` on Dependabot PRs), not something expressible inside
-`dependabot.yml` itself. Not yet enabled.
+auto-merge-on-green is possible, matching `packages/sail`'s existing convention.
+`.github/workflows/dependabot-auto-merge.yml` now ships the workflow half of this: it reads each
+Dependabot PR's update type via `dependabot/fetch-metadata` and calls `gh pr merge --auto --merge`
+only for `version-update:semver-patch`/`semver-minor` bumps to `direct:development` dependencies —
+never production, never major, matching STANDARDS §12c exactly. It is deliberately excluded from
+`tests/Ci/RequiredChecksTest.php`'s required-checks comparison (see that test's
+`requiredChecksAllowlistedWorkflowFiles()`), since it is PR-triggered automation gated on
+`github.actor == 'dependabot[bot]'`, not a status check every contributor's own PR needs to pass.
+
+**One repository setting still needs the owner:** `gh pr merge --auto` only *queues* the merge —
+it requires **Settings → General → Pull Requests → Allow auto-merge** to be enabled on the
+repository, or the command fails outright even when the update-type/dependency-type gate above
+passes. Not yet enabled.
 
 ## Packagist registration and publishing (REL-02, Phase 9)
 
