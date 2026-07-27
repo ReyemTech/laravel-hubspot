@@ -13,6 +13,7 @@ use GuzzleHttp\Psr7\Response;
 use Illuminate\Contracts\Container\Container;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use Throwable;
@@ -101,9 +102,20 @@ final class HubspotFake
         $this->requestLog()->assertNothingSynced();
     }
 
+    public function assertAssociated(AssociationPair $pair, ?string $label = null): void
+    {
+        $this->requestLog()->assertAssociated($pair, $label);
+    }
+
     private function requestLog(): RequestLog
     {
-        return RequestLog::fromHistory($this->history);
+        return RequestLog::fromHistory(
+            $this->history,
+            // Resolved here rather than held from construction: a test may bind the registry AFTER the
+            // write it is asserting about, which is how "the registry holds 202 and the wire carried
+            // 201" becomes expressible.
+            $this->container->make(AssociationTypeResolver::class),
+        );
     }
 
     /**

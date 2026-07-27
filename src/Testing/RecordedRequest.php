@@ -176,6 +176,37 @@ final readonly class RecordedRequest
     }
 
     /**
+     * Whether this request associated `$pair`'s stated direction — and, when `$typeId` is given, whether
+     * it carried that exact association type id.
+     *
+     * The three conditions are separate returns rather than one `&&` chain, so that each of them is
+     * independently killable by a mutation: a chain collapses into a single expression whose operators can
+     * be rewritten into an equivalent, and on this seam an equivalent mutant is a hole in the one
+     * assertion the design spec calls the most valuable in the package.
+     *
+     * `$typeId === null` asks about HubSpot's **default** association, which is a different relationship
+     * from a labelled one rather than a laxer version of it — hence the route check rather than "no id
+     * required". A DELETE satisfies neither branch: it archives an association, so it carries no id and
+     * never takes the `default` route.
+     */
+    public function associated(AssociationPair $pair, ?int $typeId): bool
+    {
+        if (! $this->isAssociationWrite()) {
+            return false;
+        }
+
+        if (! $this->matchesDirection($pair)) {
+            return false;
+        }
+
+        if ($typeId === null) {
+            return $this->usedDefaultAssociationRoute();
+        }
+
+        return in_array($typeId, $this->associationTypeIds(), true);
+    }
+
+    /**
      * The property sets this request submitted — one entry per record, because a batch write submits
      * several in one request and an assertion about a property has to be able to find it in any of them.
      *

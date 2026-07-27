@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot;
 
 use Illuminate\Contracts\Container\Container;
+use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
@@ -96,6 +97,25 @@ final class HubspotManager
     public function assertNothingSynced(): void
     {
         $this->fakeOrFail()->assertNothingSynced();
+    }
+
+    /**
+     * Asserts that the pair's stated direction was associated, and — with a label — that the request body
+     * carried the type id that label resolves to **for that direction**.
+     *
+     * **It takes an `AssociationPair`, where design spec §10's example reads
+     * `Hubspot::assertAssociated($deal, $contact, label: 'buyer')`.** Two bare object references are the
+     * unordered pair 02-CONTEXT.md's first association rule forbids everywhere else in this package, and
+     * an assertion whose own arguments could be transposed could not be trusted to mean what it says.
+     * Phase 4 can add a factory that builds a pair from two bound models, which brings the call site back
+     * to the spec's shape while keeping the direction explicit.
+     *
+     * See {@see RequestLog::assertAssociated()} for what it reads, what it deliberately never reads, and
+     * why the expected id comes from the container-bound resolver.
+     */
+    public function assertAssociated(AssociationPair $pair, ?string $label = null): void
+    {
+        $this->fakeOrFail()->assertAssociated($pair, $label);
     }
 
     private function fakeOrFail(): HubspotFake

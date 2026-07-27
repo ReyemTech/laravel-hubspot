@@ -7,6 +7,8 @@ namespace ReyemTech\Hubspot\Testing;
 use PHPUnit\Framework\Assert as PHPUnitAssert;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use ReyemTech\Hubspot\Gateway\AssociationPair;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 
 /**
  * **The assertions, and the messages they fail with.**
@@ -51,17 +53,29 @@ final readonly class RequestLog
     /**
      * @param  list<RecordedRequest>  $requests
      */
-    private function __construct(private array $requests) {}
+    private function __construct(
+        private array $requests,
+        private AssociationTypeResolver $typeResolver,
+    ) {}
 
     /**
+     * The resolver is taken as a dependency rather than reached for through the container, and it is the
+     * one the container held **at the moment of the assertion** ({@see HubspotFake} rebuilds this log per
+     * call). That late binding is what lets a test say "the registry holds 202 for this direction, and the
+     * wire carried 201" — the two halves of a real inverse-id defect — rather than only being able to
+     * express a missing write.
+     *
      * @param  array<int, array{request: RequestInterface, response: ResponseInterface|null}>  $history
      */
-    public static function fromHistory(array $history): self
+    public static function fromHistory(array $history, AssociationTypeResolver $typeResolver): self
     {
-        return new self(array_map(
-            static fn (array $entry): RecordedRequest => RecordedRequest::fromPsr($entry['request']),
-            array_values($history),
-        ));
+        return new self(
+            array_map(
+                static fn (array $entry): RecordedRequest => RecordedRequest::fromPsr($entry['request']),
+                array_values($history),
+            ),
+            $typeResolver,
+        );
     }
 
     public function assertRequestCount(int $expected): void
@@ -150,6 +164,86 @@ final readonly class RequestLog
                 self::describeAll($writes),
             ),
         );
+    }
+
+    /**
+     * Asserts that the pair's **stated direction** was associated — and, when `$label` is given, that the
+     * request body carried the type id that label resolves to **for that direction**.
+     *
+     * The design spec calls this assertion failing when the inverse type id was used the single most
+     * valuable test in the package (§10), and three properties are what make it able to:
+     *
+     * 1. **The direction comes from the request path and the type id from the request body.** A gateway
+     *    that resolves correctly and then sends something else satisfies every other kind of assertion
+     *    (threat T-02-02). No response is read anywhere — see {@see RecordedRequest} for why an
+     *    association read cannot answer this question even in principle.
+     * 2. **The expected id comes from the container-bound resolver, asked about the stated direction and
+     *    nothing else.** The label→id mapping belongs to the registry (Phase 3), and this assertion never
+     *    consults the reversed direction for any reason, including to improve its own message
+     *    (02-CONTEXT.md rule 3, which binds the test surface exactly as it binds the write surface). An
+     *    unresolvable direction therefore propagates the resolver's own throw, naming the direction, the
+     *    label and the container key that would fix it — far more useful than "not associated", which
+     *    would be true of the assertion and false of the package.
+     * 3. **It takes an `AssociationPair`, not two object references.** Design spec §10's example reads
+     *    `assertAssociated($deal, $contact, label: 'buyer')`; no API in this package accepts two objects
+     *    without an order, and an assertion whose own signature could be transposed could not be trusted
+     *    to mean what it says. Phase 4 can add a factory that builds a pair from two bound models, which
+     *    brings the call site back to the spec's shape while keeping the direction explicit.
+     */
+    public function assertAssociated(AssociationPair $pair, ?string $label = null): void
+    {
+        $expectedTypeId = $label === null
+            ? null
+            : $this->typeResolver->resolve($pair, $label)->typeId;
+
+        PHPUnitAssert::assertNotSame(
+            [],
+            array_values(array_filter(
+                $this->requests,
+                static fn (RecordedRequest $request): bool => $request->associated($pair, $expectedTypeId),
+            )),
+            sprintf(
+                'Expected HubSpot to have associated %s:%s -> %s:%s %s, but no such write was recorded. %s',
+                $pair->from->objectType,
+                $pair->from->id,
+                $pair->to->objectType,
+                $pair->to->id,
+                $this->expectationOf($label, $expectedTypeId),
+                $this->associationSummary(),
+            ),
+        );
+    }
+
+    /**
+     * Names the relationship that was expected, and for a labelled one names the id it resolved to and
+     * the fact that the id belongs to the direction just stated. Both halves matter in a failure message:
+     * a reader who knows only "202 was expected" cannot tell a wrong write from a wrong registry row.
+     */
+    private function expectationOf(?string $label, ?int $expectedTypeId): string
+    {
+        if ($label === null) {
+            return 'using the default association type';
+        }
+
+        return sprintf(
+            "under label '%s', which the bound resolver resolves to association type id %d for that direction",
+            $label,
+            $expectedTypeId,
+        );
+    }
+
+    private function associationSummary(): string
+    {
+        $associationWrites = array_values(array_filter(
+            $this->requests,
+            static fn (RecordedRequest $request): bool => $request->isAssociationWrite(),
+        ));
+
+        if ($associationWrites === []) {
+            return 'No association write was recorded at all.';
+        }
+
+        return sprintf('Association writes recorded: %s.', self::describeAll($associationWrites));
     }
 
     /**

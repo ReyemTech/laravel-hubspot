@@ -58,6 +58,7 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * @method static void assertRequestCount(int $expected)
  * @method static void assertSynced(string $objectType, array<string, mixed> $properties = [])
  * @method static void assertNothingSynced()
+ * @method static void assertAssociated(\ReyemTech\Hubspot\Gateway\AssociationPair $pair, ?string $label = null)
  *
  * @see HubspotManager
  */
