@@ -1,0 +1,101 @@
+name: supply-chain
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  composer-audit:
+    # A single PHP version is enough: composer audit checks the resolved dependency tree against
+    # the advisory database, not runtime behaviour, so it does not need to run per matrix leg.
+    # No escape hatch on this step -- D-31: any advisory fails the build.
+    name: composer audit (fails on any advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Run composer audit
+        run: composer audit
+
+  bc-check:
+    # roave/backward-compatibility-check compares source trees between the previous tag and the
+    # current one -- not runtime behaviour -- so it runs once, not across the full matrix. PHP 8.4
+    # is used because the project's own PHP floor (^8.3, STANDARDS Sec.1) removed the constraint
+    # that used to force pinning an older roave release for PHP 8.2 support (01-RESEARCH.md,
+    # Pitfall 3 / Open Question 2).
+    #
+    # roave/backward-compatibility-check is installed here, for this job only, rather than added
+    # to composer.json's own require-dev: its own PHP floor has drifted upward release over
+    # release, and requiring it project-wide would force every one of the 16 matrix legs in
+    # ci.yml (including the PHP 8.3 ones) to satisfy its constraint too, breaking jobs that have
+    # nothing to do with this comparison.
+    name: backward-compatibility check (roave, single job, greenfield-safe)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Check whether a previous release exists
+        id: previous-release
+        run: |
+          if [ -z "$(git tag -l)" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The guard is on tag ABSENCE, not on the tool's exit code -- no unconditional
+      # success-on-failure step and no advisory-style opt-out on the step below. Either kind of
+      # escape hatch would pass forever, including after the first release -- exactly when this
+      # check starts mattering. This message is the only thing that tells a human reading a green
+      # run that nothing was actually compared yet.
+      - name: Skip -- no previous release to compare against
+        if: steps.previous-release.outputs.exists == 'false'
+        run: |
+          echo "::notice title=Backward-compatibility check skipped::This is a greenfield package with no git tag yet, so there is no previous release for roave/backward-compatibility-check to compare against. This check has NOT verified anything and becomes live automatically at the first tagged release."
+
+      - name: Install dependencies
+        if: steps.previous-release.outputs.exists == 'true'
+        run: composer install --prefer-dist --no-interaction
+
+      # --with-all-dependencies is required here: this project's own lockfile pins
+      # symfony/console to a major roave/backward-compatibility-check's own require doesn't
+      # accept, and a plain `composer require --dev` fails to resolve without permission to
+      # adjust already-locked packages for this ephemeral, single-job install (confirmed
+      # empirically in a scratch copy of this project's composer.json/composer.lock before
+      # writing this step).
+      - name: Install roave/backward-compatibility-check
+        if: steps.previous-release.outputs.exists == 'true'
+        run: composer require --dev roave/backward-compatibility-check --no-interaction --no-progress --with-all-dependencies
+
+      # D-17 additionally allows a detected break when the pull request is labelled `breaking` and
+      # targets the next major. That label-aware exception is not wired here -- it is recorded as
+      # Phase 9 follow-up work in docs/repo/owner-gated-checklist.md rather than silently dropped,
+      # since wiring it safely (without becoming a permanent escape hatch on this step) needs its
+      # own design pass.
+      - name: Run the backward-compatibility check
+        if: steps.previous-release.outputs.exists == 'true'
+        run: vendor/bin/roave-backward-compatibility-check --format=github-actions
