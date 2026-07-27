@@ -31,8 +31,12 @@ jobs:
           node-version: '20'
           cache: pnpm
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      # Filtered to resources/js's own dependency tree so this install never has to satisfy
+      # site/'s Astro engine floor (Node >=22.12.0, higher than Vitest's), which would otherwise
+      # break this job's Node 20 the moment site/ existed as a real workspace member with real
+      # dependencies (added in plan 06). See docs.yml for the mirror-image filtered install.
+      - name: Install dependencies (resources/js only)
+        run: pnpm install --frozen-lockfile --filter './resources/js...'
 
       # No advisory escape hatch on this step: if this is red, it is red. The 95% floor guards
       # the Phase 8 origin-validating listener and must never be optional.
