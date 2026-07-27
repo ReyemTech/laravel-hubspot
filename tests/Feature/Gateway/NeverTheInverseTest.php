@@ -223,13 +223,30 @@ final class NeverTheInverseTest extends TestCase
             // Asserted in full by the test above; here the throw is only the precondition.
         }
 
-        foreach ($fake->recordedRequests() as $entry) {
-            self::assertStringNotContainsString(
-                (string) $inverseTypeId,
-                (string) $entry['request']->getBody(),
-                "The inverse type id {$inverseTypeId} reached the wire for the {$fromType} -> {$toType} direction.",
-            );
-        }
+        // Flattened into one string rather than asserted per request, deliberately: iterating an
+        // empty request log performs no assertions at all, which PHPUnit reports as risky and
+        // `failOnRisky` is meant to fail — a test whose assertion count depends on the outcome it is
+        // checking is not asserting anything. Concatenating gives one unconditional assertion whether
+        // zero requests were made or ten.
+        //
+        // The method and URI are included alongside the body because a type id could ride out on
+        // either: the labelled route puts object types and ids in the path, and a future
+        // implementation could put a type id there too.
+        $outgoing = implode("\n", array_map(
+            static fn (array $entry): string => sprintf(
+                '%s %s %s',
+                $entry['request']->getMethod(),
+                $entry['request']->getUri(),
+                $entry['request']->getBody(),
+            ),
+            $fake->recordedRequests(),
+        ));
+
+        self::assertStringNotContainsString(
+            (string) $inverseTypeId,
+            $outgoing,
+            "The inverse type id {$inverseTypeId} left the process for the {$fromType} -> {$toType} direction.",
+        );
     }
 
     /**

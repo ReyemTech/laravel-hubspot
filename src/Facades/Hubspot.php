@@ -25,6 +25,20 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * `AssociationPair`, so there is no call site anywhere — consumer code included — that can name two
  * objects without naming their order. See {@see AssociationGatewayContract}.
  *
+ * The labelled write resolves its type id through a container-bound resolver, for the stated
+ * direction only:
+ *
+ * ```php
+ * Hubspot::associations()->associateWithLabel($noteToContact, label: 'Attached note');
+ * ```
+ *
+ * Until Phase 3 binds a registry, the default resolver resolves nothing and throws with a message
+ * naming the direction that failed, the label, and the container key that would fix it — it never
+ * guesses a type id, and it never substitutes the inverse direction's. `bidirectional: true` is
+ * available and performs two independently resolved directed writes; it defaults to `false` because
+ * FOUND-03 measured on 2026-07-27 that HubSpot maintains the inverse direction itself
+ * (`docs/probes/association-inverse-probe.md`).
+ *
  * @method static ObjectGatewayContract objects()
  * @method static AssociationGatewayContract associations()
  * @method static HubspotFake fake(array<string, CannedResponse|CannedConnectionFailure> $responses = [])

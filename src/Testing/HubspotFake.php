@@ -252,6 +252,15 @@ final class HubspotFake
      *   already gets right; it is repeated here so this method answers the whole route family rather
      *   than two thirds of it.
      *
+     * **The two PUTs are not one case.** The unlabelled write and the labelled write share the HTTP
+     * method and differ only by the `/associations/default/` segment, but HubSpot answers them with
+     * different status codes and different bodies — 200 with a `BatchResponsePublicDefaultAssociation`
+     * for the default route, 201 with a `LabelsBetweenObjectPair` for the labelled one — and the SDK
+     * deserialises on exactly that status code (`createDefaultWithHttpInfo()` expects 200,
+     * `createWithHttpInfo()` expects 201). Answering both with one 200 would send every labelled
+     * write into the SDK's `default` switch arm as `Model\Error`, surfacing as an unexpected-shape
+     * error that reads like a defect in `AssociationGateway::associateWithLabels()`.
+     *
      * Routed on HTTP method and route shape only, never on object type — the same rule the object
      * defaults follow, and for the same reason: keying a test double on object type would put the
      * per-type branching this package exists to avoid inside the double itself.
@@ -261,10 +270,43 @@ final class HubspotFake
         return match ($request->getMethod()) {
             'DELETE' => new Response(204),
             'GET' => $this->jsonResponse(200, ['results' => []]),
-            // PUT — both the default-association write and the labelled one. HubSpot answers with a
-            // batch response describing the association it created.
-            default => $this->jsonResponse(200, ['status' => 'COMPLETE', 'results' => []]),
+            // PUT on the default route — HubSpot answers 200 with a batch response describing the
+            // association it created.
+            default => str_contains($request->getUri()->getPath(), '/associations/default/')
+                ? $this->jsonResponse(200, ['status' => 'COMPLETE', 'results' => []])
+                : $this->labelledAssociationResponse($request),
         };
+    }
+
+    /**
+     * HubSpot answers a labelled write with 201 and the from/to pair it associated, plus the labels
+     * that now hold between them. Field names are the SDK model's own serialised keys
+     * (`LabelsBetweenObjectPair::$attributeMap`), read from the model rather than guessed — a body
+     * whose keys do not match deserialises into empty fields and the test passes for the wrong
+     * reason.
+     *
+     * `labels` is deliberately empty rather than invented. The outgoing payload carries an
+     * `associationCategory` and an `associationTypeId`, never label text, so this double genuinely
+     * does not know what the labels are called — resolving an id back to a name is the registry's job
+     * (Phase 3), and faking it here would let a test assert a label the package never sent. The field
+     * is present because the model requires it to be; it is empty because that is the honest answer.
+     */
+    private function labelledAssociationResponse(RequestInterface $request): ResponseInterface
+    {
+        // /crm/v4/objects/{fromType}/{fromId}/associations/{toType}/{toId}
+        preg_match(
+            '#/objects/([^/]+)/([^/]+)/associations/([^/]+)/([^/]+)#',
+            $request->getUri()->getPath(),
+            $matches,
+        );
+
+        return $this->jsonResponse(201, [
+            'fromObjectTypeId' => $matches[1] ?? '',
+            'fromObjectId' => $matches[2] ?? '',
+            'toObjectTypeId' => $matches[3] ?? '',
+            'toObjectId' => $matches[4] ?? '',
+            'labels' => [],
+        ]);
     }
 
     private function defaultCreatedResponse(RequestInterface $request): ResponseInterface

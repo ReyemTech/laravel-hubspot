@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Gateway\Contracts;
 
 use ReyemTech\Hubspot\Exceptions\ApiException;
+use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\AssociationRow;
 
@@ -19,10 +20,22 @@ use ReyemTech\Hubspot\Gateway\AssociationRow;
  * each direction and writing the wrong one raises no error — the record is simply associated
  * backwards, and nobody notices for months.
  *
- * The methods here are the UNLABELLED path. They resolve, look up and send no association type id
- * whatsoever, which is precisely why they cannot send the inverse one. The labelled path is a
- * separate method arriving in plan 02-05, with a resolver that throws rather than falling back when
- * it cannot resolve the requested direction.
+ * ## Two write paths, deliberately not one method with a nullable label
+ *
+ * `associate()` is the UNLABELLED path. It resolves, looks up and sends no association type id
+ * whatsoever, which is precisely why it cannot send the inverse one.
+ *
+ * `associateWithLabel()` and `associateWithLabels()` are the LABELLED path. They resolve through the
+ * container-bound {@see AssociationTypeResolver} for the pair's stated direction and send exactly
+ * what it returns — or throw, if it cannot resolve that direction.
+ *
+ * These are separate methods rather than one `associate($pair, ?string $label = null)`, and that is a
+ * safety decision rather than a stylistic one. A nullable label would make "which HTTP route, and
+ * whether a type id is resolved at all" depend on a parameter default: a caller passing a label that
+ * happened to be `null` — an unset config value, a nullable column, a variable set in the branch
+ * that did not run — would silently get HubSpot's default association written where a labelled one
+ * was intended, with no error anywhere. The two paths differ in their route, their payload, their
+ * failure modes and their `@throws` clause, so they differ in their signature too.
  */
 interface AssociationGatewayContract
 {
@@ -36,6 +49,64 @@ interface AssociationGatewayContract
      * @throws ApiException if HubSpot rejects the write
      */
     public function associate(AssociationPair $pair): void;
+
+    /**
+     * Associates the pair in the stated direction under one label.
+     *
+     * The label is resolved to a type id through the container-bound
+     * {@see AssociationTypeResolver}, **for this direction only**. If the bound resolver does not
+     * hold that direction, this throws and issues no request at all — it does not consult the
+     * reversed direction, does not retry with the pair swapped, and does not fall back to HubSpot's
+     * default association type. `tests/Feature/Gateway/NeverTheInverseTest.php` fails the build if
+     * that ever changes.
+     *
+     * Sugar over {@see self::associateWithLabels()} with one entry, so there is one implementation of
+     * the write.
+     *
+     * @throws AssociationTypeException if the bound resolver cannot resolve this direction under this
+     *                                  label. Nothing is written in that case
+     * @throws ApiException if HubSpot rejects the write
+     */
+    public function associateWithLabel(AssociationPair $pair, string $label, bool $bidirectional = false): void;
+
+    /**
+     * Associates the pair in the stated direction under several labels, in **one** request.
+     *
+     * HubSpot's labelled write takes a list of association specs for a single directed pair, and
+     * FOUND-03 observed on 2026-07-27 that one from/to pair legitimately carries more than one type
+     * at once — a labelled write materialises the default association alongside the label. Several
+     * labels are therefore one request with one spec each, not N requests: an N+1 here would be a
+     * test failure rather than a code smell (STANDARDS §11).
+     *
+     * Every label resolves before the request is built. One unresolvable label writes nothing at all,
+     * including the labels that did resolve — a partially written labelled association is
+     * indistinguishable from a complete one on a later read.
+     *
+     * ### `$bidirectional`
+     *
+     * Defaults to `false`, and that default is **measured rather than reasoned to**. FOUND-03's probe
+     * ran on 2026-07-27 against a developer test account and observed that HubSpot materialises the
+     * inverse association itself: one `deals -> contacts` write made the `contacts -> deals`
+     * direction readable immediately, with its own distinct type id, for both the unlabelled default
+     * type and a paired user-defined label (`docs/probes/association-inverse-probe.md`). `false`
+     * therefore issues the one write that is actually needed.
+     *
+     * `true` stays available because that behaviour was observed on one object-type pair, in one
+     * portal, on one date — a caller who wants the reverse direction written explicitly can ask for
+     * it. When they do, the reverse direction is **resolved independently**: its own pair, its own
+     * lookup, its own type id. Nothing about the forward direction's id is reused, derived from, or
+     * assumed for it, and if the reverse direction cannot be resolved the call throws naming *that*
+     * direction and writes nothing at all — in either direction.
+     *
+     * @param  list<string>  $labels  at least one; an empty list throws rather than sending an empty
+     *                                spec array or quietly falling through to the default association
+     *
+     * @throws AssociationTypeException if the list is empty, or if the bound resolver cannot resolve
+     *                                  this direction under any one of these labels. Nothing is
+     *                                  written in either case
+     * @throws ApiException if HubSpot rejects the write
+     */
+    public function associateWithLabels(AssociationPair $pair, array $labels, bool $bidirectional = false): void;
 
     /**
      * Archives the association for the stated direction only.
