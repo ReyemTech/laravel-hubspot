@@ -51,36 +51,41 @@ function reyemtech_hubspot_arch_rule_over_fixtures(string $ruleId, array $fixtur
     $root = dirname(__DIR__, 2);
     $scratch = reyemtech_hubspot_scratch_directory();
 
-    reyemtech_hubspot_copy_directory($root.'/src', $scratch);
+    // `finally`, for the same reason verify-arch-rules-fire.sh traps EXIT, INT and TERM: an assembly
+    // step that throws must not leave a full copy of src/ behind in the system temp directory on
+    // somebody's machine, once per failed run.
+    try {
+        reyemtech_hubspot_copy_directory($root.'/src', $scratch);
 
-    foreach ($fixtures as $fixture => $targetDirectory) {
-        $source = $root.'/tests/Arch/'.$fixture;
-        $destination = $scratch.'/'.$targetDirectory;
+        foreach ($fixtures as $fixture => $targetDirectory) {
+            $source = $root.'/tests/Arch/'.$fixture;
+            $destination = $scratch.'/'.$targetDirectory;
 
-        if (! is_dir($destination) && ! mkdir($destination, 0o777, true)) {
-            throw new RuntimeException("Could not create the scratch directory {$destination}.");
+            if (! is_dir($destination) && ! mkdir($destination, 0o777, true)) {
+                throw new RuntimeException("Could not create the scratch directory {$destination}.");
+            }
+
+            if (! copy($source, $destination.'/'.basename($fixture))) {
+                throw new RuntimeException("Could not copy the seam fixture {$source}.");
+            }
         }
 
-        if (! copy($source, $destination.'/'.basename($fixture))) {
-            throw new RuntimeException("Could not copy the seam fixture {$source}.");
-        }
+        $command = sprintf(
+            'cd %s && ARCH_FIRE_SCRATCH_SRC=%s vendor/bin/pest --bootstrap %s --filter=%s '
+            .'--do-not-cache-result --colors=never %s 2>&1',
+            escapeshellarg($root),
+            escapeshellarg($scratch),
+            escapeshellarg('scripts/ci/arch-fire-bootstrap.php'),
+            escapeshellarg($ruleId.':'),
+            escapeshellarg('tests/Arch/LayerBoundariesTest.php'),
+        );
+
+        $lines = [];
+        $exitCode = 0;
+        exec($command, $lines, $exitCode);
+    } finally {
+        reyemtech_hubspot_remove_directory($scratch);
     }
-
-    $command = sprintf(
-        'cd %s && ARCH_FIRE_SCRATCH_SRC=%s vendor/bin/pest --bootstrap %s --filter=%s '
-        .'--do-not-cache-result --colors=never %s 2>&1',
-        escapeshellarg($root),
-        escapeshellarg($scratch),
-        escapeshellarg('scripts/ci/arch-fire-bootstrap.php'),
-        escapeshellarg($ruleId.':'),
-        escapeshellarg('tests/Arch/LayerBoundariesTest.php'),
-    );
-
-    $lines = [];
-    $exitCode = 0;
-    exec($command, $lines, $exitCode);
-
-    reyemtech_hubspot_remove_directory($scratch);
 
     return ['exitCode' => $exitCode, 'output' => implode("\n", $lines)];
 }
