@@ -58,14 +58,17 @@ two design specs, one candidate brief, and no code.)
 
 ### Active
 
-- [ ] **Foundation (FOUND-01..05)** — repository, the full 12-job CI matrix, branch protection with
+- [x] **Foundation (FOUND-01..05)** — repository, the full 12-job CI matrix, branch protection with
       every standards gate green on an empty package; `SECURITY.md` from day one; the Node/pnpm
       toolchain with the Vitest floor and docs build; six-layer architecture rules; the §6.4
       association-inverse empirical probe
 - [ ] **Release (REL-01..02)** — local release plumbing (`composer validate --strict`,
       release-please); Packagist and the first public release, **owner-gated**
-- [ ] **Gateway (GW-01..04)** — generic object core, directional `AssociationGateway`, typed error
-      hierarchy, `Hubspot::fake()`
+- [x] **Gateway (GW-01..04)** — generic object core, directional `AssociationGateway`, typed error
+      hierarchy, `Hubspot::fake()`. **Phase 2 complete 2026-07-27.** Note the surface amendment:
+      `bidirectional:` is on the unlabelled `associate()` only; the labelled writes take the reverse
+      direction's own labels, because a paired HubSpot label carries a different name in each
+      direction (FOUND-03 run 2) — see `REQUIREMENTS.md` → GW-02
 - [ ] **Registry (REG-01..04)** — object type normalisation, directional association registry with
       cache and database stores, zero-migration install, diagnostics commands
 - [ ] **Sync (SYNC-01..05)** — model binding, `PropertyMapper`, `SyncsToHubspot` + observer + job,
@@ -334,10 +337,17 @@ first shipped class.
 
 **Still open, and empirical rather than deliberative:**
 
-- **The core spec §6.4 association-inverse question** — whether creating an association from A to B
-  makes it readable from B to A. HubSpot's docs do not state it. Settled by **running the probe**
-  (FOUND-03), not by reasoning. **Currently blocked**: it needs a HubSpot developer account token the
-  executing agent does not hold.
+- ~~**The core spec §6.4 association-inverse question**~~ — **ANSWERED 2026-07-27 by running the
+  probe** (FOUND-03), against a developer test account the owner supplied. Creating an association
+  from A to B *does* make it readable from B to A immediately, with no second write, and the inverse
+  carries **its own distinct typeId** (`3 → 4` unlabelled, `1 → 2` for a user-defined paired label).
+  So `associate()` is one write and `inverse_type_id` stays read/verification-only. Two consequences
+  recorded for later phases: an association **read** returns a *list* of `associationTypes` in no
+  guaranteed order, so read-response parsers must search it rather than take the first entry (this
+  does **not** apply to `assertAssociated()`, which parses the outgoing request); and a paired label
+  carries a **different name in each direction**, which is why the labelled writes take the reverse
+  direction's own labels rather than a boolean. Full results and raw bodies:
+  `docs/probes/association-inverse-probe.md`.
 - **The signals spec §8.1 verifications** (RES-01, Phase 7) — HubSpot custom-object tier gates,
   behavioural-event tier gates, current rate limits, and Timeline API credential and scope
   requirements. These are answered **against live HubSpot documentation during Phase 7, explicitly not

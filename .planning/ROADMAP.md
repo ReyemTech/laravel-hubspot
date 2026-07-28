@@ -38,7 +38,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 ## Phases
 
 - [x] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 12-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
-- [ ] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
+- [x] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
 - [ ] **Phase 3: Registry & Stores** - Directional `(from, to, label) → typeId` resolution, cache and database stores, zero-migration install, diagnostics
 - [ ] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
 - [ ] **Phase 5: Inbound Webhooks** - Verified, deduped, batched, typed inbound events behind one route macro
@@ -264,7 +264,10 @@ breaks one is not complete.
    decisions were signed off on 2026-07-26 and are now locked in `PROJECT.md`'s `<decisions>` block.
    `final` by default carries `final` as its working default and is tracked in `PROJECT.md` → *Open
    Decisions*. It does **not** gate Phase 1 — it first bites in Phase 2, when the first classes exist.
-   Confirm before or during Phase 2 rather than promoting it silently.
+   Confirm before or during Phase 2 rather than promoting it silently. **Now overdue (2026-07-27):**
+   Phase 2 has shipped under the working default — every class in `src/Gateway/`, `src/Testing/` and
+   `src/Exceptions/` is `final`, with extension provided through interfaces rebound in the container.
+   Wanted before Phase 3 widens the surface further.
 
 2. **Two requirements have no acceptance criteria in any source document** — REG-01 (object type
    registry) and HOOK-02 (`hubspot:webhooks:sync`). Both source specs state the capability and are
@@ -293,8 +296,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Gates | 7/7 | In Progress|  |
-| 2. Gateway Layer | 6/6 | In Progress|  |
+| 1. Foundation & Gates | 7/7 | Complete | 2026-07-27 |
+| 2. Gateway Layer | 6/6 | Complete | 2026-07-27 |
 | 3. Registry & Stores | 0/TBD | Not started | - |
 | 4. Model Sync | 0/TBD | Not started | - |
 | 5. Inbound Webhooks | 0/TBD | Not started | - |
