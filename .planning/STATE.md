@@ -4,8 +4,8 @@ milestone: v1.1
 milestone_name: milestone
 current_phase: 2
 current_phase_name: Gateway Layer
-status: executing
-stopped_at: "Completed 02-06-PLAN.md — Phase 2 complete, PR #20 open"
+status: complete
+stopped_at: "Phase 2 complete — all six plans merged to main; next action is planning Phase 3 (Registry)"
 last_updated: "2026-07-27T23:40:55.171Z"
 last_activity: 2026-07-27
 last_activity_desc: "executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 354 tests / 1588 assertions, 100.0% coverage, MSI 98.84%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision."
@@ -31,9 +31,9 @@ request lifecycle.
 
 ## Current Position
 
-Phase: 2 of 9 (Gateway Layer)
-Plan: 6 of 6 in current phase
-Status: Plans 02-01 through 02-05 merged (PRs #8, #14, #15, #18, #19). Plan 02-06 (the fake's assertion surface, directional assertAssociated, determinism) complete on branch `feat/02-06-fake-assertion-surface` — PR #20 open, all 29 required checks green, one Codex P1 found and fixed on the branch (`218bbb8` RED → `6c7cfa4` GREEN); the review thread is left unanswered for the owner per STANDARDS §12. **No plans remain in Phase 2.**
+Phase: 2 of 9 (Gateway Layer) — **COMPLETE**
+Plan: 6 of 6 in current phase, all merged
+Status: **Phase 2 is complete.** All six plans are merged to `main` (PRs #8, #14, #15, #18, #19, #20), each with all 29 required checks green at merge and every Codex review thread read in full, answered with evidence, and then resolved. Merged `main` re-verified after the last merge: 354 tests / 1588 assertions, 100.0% coverage, PHPStan level max clean with no baseline, Pint and phpcs clean, 10/10 architecture rules fired, quality-gate firing harness and source hygiene green. Four Codex findings were raised across the phase and all four were real: two P2s on #18 (`associate()` reporting success on an unexpected 2xx that the SDK deserialises as `Model\Error`; `ObjectRef` relying on the *caller's* `strict_types` and so silently coercing `0`, `true` and large float ids), one P2 on #19 (the labelled reverse write resolving under the forward label — see GW-02's amended surface note), and one P1 on #20 (`assertSynced` assembling a property subset from several records, a false positive in the assertion meant to catch exactly that). **No plans remain in Phase 2. Next action: plan Phase 3 (Registry).**
 Last activity: 2026-07-27 — executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 354 tests / 1588 assertions, 100.0% coverage, MSI 98.84%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision.
 
 Progress: [██████████] 100%
@@ -182,9 +182,14 @@ None yet.
 
 **Open questions and discipline notes.**
 
-- **One unsigned decision remains: #5, `final` by default** (working default: `final`). It shapes
-  Phase 2 onward, **not Phase 1**. Six of the seven are now signed and locked. `BRIEF.md` still says
-  "Ask Mario rather than assuming" — confirm before or during Phase 2
+- **One unsigned decision remains: #5, `final` by default** (working default: `final`). Six of the
+  seven are signed and locked. **Now overdue rather than upcoming:** this decision said "confirm
+  before or during Phase 2", and Phase 2 has shipped under the working default — every class in
+  `src/Gateway/`, `src/Testing/` and `src/Exceptions/` is `final`, with extension provided through
+  interfaces rebound in the container (`ObjectGatewayContract`, `AssociationGatewayContract`,
+  `AssociationTypeResolver`). Reversing it later is not free: dropping `final` is semver-safe, but
+  consumers who worked around it by wrapping rather than rebinding would be stranded. Owner
+  confirmation is wanted before Phase 3 widens the surface further
 
 - **RES-01 (Phase 7) is research, not recall.** The four §8.1 questions — custom-object tier gates,
   behavioural-event tier gates, current rate limits, Timeline API credentials — are answered against
@@ -207,7 +212,7 @@ None yet.
   `.planning/intel/` say "Phase 0"; this roadmap says "Phase 1". GSD's `roadmap.analyze` silently
   drops a `### Phase 0:` header (verified 2026-07-26). Mapping table at the top of ROADMAP.md
 
-- Mutation required check (quality.yml) will report red for the remainder of Phase 1: pest --mutate --min=80 over the deliberately-empty src/ triggers PHPUnit's failOnPhpunitWarning path (WARN + exit 1, no score computed), mirroring plan 01's already-flagged coverage-floor gap. Resolves automatically once Phase 2 adds the first mutable file under src/.
+- ~~Mutation required check (quality.yml) will report red for the remainder of Phase 1: pest --mutate --min=80 over the deliberately-empty src/ triggers PHPUnit's failOnPhpunitWarning path (WARN + exit 1, no score computed), mirroring plan 01's already-flagged coverage-floor gap. Resolves automatically once Phase 2 adds the first mutable file under src/.~~ **RESOLVED as predicted** — the gate has computed a real score since 02-01 and ends Phase 2 at MSI 98.84% against a floor of 80, with 7 documented equivalent survivors (string casts the SDK re-coerces, and unreachable `?? ''` fallbacks). Do not chase them.
 - Git-history attribution defect: commit 022b9e6 (plan 05) accidentally includes three of plan 04's task-2 files (tests/Arch/LayerBoundariesTest.php, SecretLoggingTest.php, StrictTypesTest.php) due to concurrent git staging in a shared (non-worktree) working directory. Content is correct and both plans are green; plan 04 lacks a dedicated GREEN commit for its rule implementations in git log. See 01-05-SUMMARY.md Issues Encountered.
 
 ## Deferred Items
