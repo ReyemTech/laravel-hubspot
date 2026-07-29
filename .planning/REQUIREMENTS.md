@@ -248,6 +248,13 @@ REL-02.
     bound model* is Phase 4's, alongside REG-04b, because both need model binding (SYNC-01) to
     exist. REG-01 stays open at the end of Phase 3.
 
+  - Progress: 03-01 ships `Registry\HubspotObjectType`. The derived criteria it satisfies are
+    recorded in `03-01-PLAN.md` and in `03-01-SUMMARY.md`, **as derived rather than sourced**: the
+    documented aliases normalise to one canonical identifier, a `p_*` custom object normalises to
+    itself, the unnormalisable throws naming what was passed, and normalisation is idempotent. The
+    canonical set is transcribed from `HubSpot\Crm\ObjectType` in the pinned SDK and asserted equal
+    to it in both directions. **Local id column resolution is not built** — do not tick.
+
 - [ ] **REG-02**: Directional association type registry with cache and database stores
   — `REQ-association-registry` (core spec §6.2, §6.3, §13 Phase 2)
 
@@ -283,6 +290,15 @@ REL-02.
     reconciling a pair is two calls writing two rows, and `inverse_type_id` is **not** derivable by
     matching the two responses — they share no join key. It stays null until observed. See
     `03-03-PLAN.md`.
+
+  - Progress: 03-01 ships the offline half — `Registry\AssociationTypeRegistry` bound on
+    `Gateway\Contracts\AssociationTypeResolver`, the seeded baseline for the four cited directional
+    pairs, `Registry\Contracts\AssociationTypeStore` with array and cache implementations, and the
+    `HUBSPOT_STORE` selector that rejects an unrecognised value rather than falling back.
+    `inverse_type_id` is carried on every row and proven unreachable from every write path by
+    `tests/Feature/Registry/LabelledWriteThroughRegistryTest.php`. **Not yet done:** the database
+    store and its missing-table error (03-02), and `php artisan hubspot:associations:sync` (03-03).
+    Both are named in the acceptance criteria above — do not tick until they land.
 
 - [ ] **REG-03**: Zero-migration install
   — `REQ-zero-migration-install` (core spec §2 goal 5, §6.3; STANDARDS §7)
@@ -713,8 +729,8 @@ Deferred. Tracked but not in the current roadmap.
 | GW-02 | Phase 2 | Complete — 02-04 ships the directed pair and the unlabelled path; 02-05 ships the labelled write, the resolver seam and `NeverTheInverseTest`'s throw-and-zero-requests guarantee |
 | GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
 | GW-04 | Phase 2 | **Complete** — 02-01 shipped the fake transport and `assertRequestCount`; 02-06 shipped `assertSynced`, `assertNothingSynced` and `assertAssociated` with its directional type-id check, plus determinism by default. `assertWebhookHandled` is deferred to Phase 5 as a recorded decision (see `phases/02-gateway-layer/deferred-items.md`) |
-| REG-01 | Phase 3 + 4 | **Split 2026-07-28.** Phase 3 (03-01) ships object type normalisation with derived acceptance criteria; **local id column resolution for a bound model moves to Phase 4**, since it needs model binding (SYNC-01) to exist. Do not tick until both halves land — raised by Codex on PR #22 |
-| REG-02 | Phase 3 | Pending |
+| REG-01 | Phase 3 + 4 | **Split 2026-07-28.** Phase 3 (03-01) ships object type normalisation with derived acceptance criteria; **local id column resolution for a bound model moves to Phase 4**, since it needs model binding (SYNC-01) to exist. Do not tick until both halves land — raised by Codex on PR #22. **Phase 3 half DONE 2026-07-29 (03-01):** `Registry\HubspotObjectType` normalises aliases and `p_*` custom objects and throws on the unnormalisable; the canonical set is asserted equal to `HubSpot\Crm\ObjectType`. **Still open** — REG-01b (Phase 4) owns local-id resolution |
+| REG-02 | Phase 3 | **Partial 2026-07-29 (03-01).** Offline directional resolution ships: the seeded baseline, the `(from, to, label)` key, the store seam with an array and a cache implementation, and `inverse_type_id` proven unreachable from every write path. **Still open** — the database store (03-02) and `hubspot:associations:sync` (03-03) are both named in the acceptance criteria and neither exists yet |
 | REG-03 | Phase 3 | Pending |
 | REG-04 | Phase 3 + 4 | **Split 2026-07-28 into REG-04a / REG-04b.** 04a (Phase 3, 03-03): store per concern, registry sync state and count, bound resolver, `hubspot:associations:doctor` in full. **04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — which needs SYNC-01. Printing "not available yet" is not an implementation; do not tick until 04b lands. Raised by Codex on PR #22 |
 | SYNC-01 | Phase 4 | Pending |

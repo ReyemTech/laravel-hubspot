@@ -96,6 +96,35 @@ final class ObjectTypeException extends InvalidArgumentException implements Hubs
     }
 
     /**
+     * An object type was handed to normalisation as something other than a string.
+     *
+     * Distinct from `nonStringObjectReference()` on purpose: that one is raised while BUILDING an
+     * object reference and names which of its two sides was wrong, so its message talks about a
+     * reference and an id. This one is raised by `Registry\HubspotObjectType::normalise()`, which has
+     * one argument and no id in sight, and steers to the object types normalisation actually accepts.
+     * Sharing one member would mean a message naming "an object id" for a call that has none.
+     */
+    public static function nonStringObjectType(mixed $received): self
+    {
+        return new self(sprintf('A HubSpot object type was given as type %s and cannot be normalised. Pass it as a string — for example "deals", "line_items", or a custom object\'s fully-qualified type "p12345_my_object". This is validated here rather than by the parameter type because declare(strict_types=1) binds at the calling file, not at this package\'s: in a file without it, 0 would have arrived as "0" and true as "1", and normalisation would have reported an unknown object type nobody wrote.', get_debug_type($received)));
+    }
+
+    /**
+     * An object type reached a request path in a spelling the registry had to normalise to look up.
+     *
+     * Refused rather than rewritten, because the value belongs to a `Gateway\ObjectRef` and the
+     * Registry cannot rewrite one: `Gateway` may not name a `Registry` class (R2), so `ObjectRef`
+     * cannot normalise itself either. Left alone, the lookup would succeed on the canonical row while
+     * the request addressed the alias -- `/objects/Deal/...` instead of `/objects/deals/...` -- which
+     * is the 404 about a route rather than an error about the argument that normalisation exists to
+     * prevent (Codex P1, PR #24).
+     */
+    public static function nonCanonicalObjectType(string $given, string $canonical): self
+    {
+        return new self(sprintf('An association was requested for object type "%s", which HubSpot addresses as "%s". Build the object reference with "%s": the type is normalised to look the association up, but the request path is built from the reference exactly as you gave it, so an alias would resolve the right type id and then address a path HubSpot does not serve. Nothing was written.', $given, $canonical, $canonical));
+    }
+
+    /**
      * A directed association pair was built with the same record on both sides.
      */
     public static function selfAssociation(string $objectType, string $id): self

@@ -356,18 +356,33 @@ final class NeverTheInverseTest extends TestCase
     }
 
     /**
-     * The shipped default, which is the state every consumer is in until Phase 3's registry exists.
-     * With nothing resolvable, a labelled write is a throw and zero requests — not a guessed type id,
-     * and not HubSpot's default association quietly substituted for the label that was asked for.
+     * `UnresolvedAssociationTypeResolver` — the resolver that answers for nothing at all. With it
+     * bound, a labelled write is a throw and zero requests: not a guessed type id, and not HubSpot's
+     * default association quietly substituted for the label that was asked for.
+     *
+     * **This resolver was the shipped default until Phase 3, and the binding is now explicit.**
+     * 03-01 rebound `AssociationTypeResolver::class` to `Registry\AssociationTypeRegistry`, which is
+     * the whole of that plan's integration — no Gateway signature moved. This class is still shipped,
+     * still public and still correct: it is what a consumer binds to disable labelled writes
+     * outright, and removing it would be a backward-compatibility break for a behaviour nobody asked
+     * to lose. So the test keeps its subject and states its binding, rather than being deleted along
+     * with the guarantee it makes.
+     *
+     * The registry's own version of this guarantee — an unregistered direction throwing and writing
+     * nothing — is `tests/Feature/Registry/LabelledWriteThroughRegistryTest.php`. Both exist because
+     * they fail for different reasons: this one if "nothing looked" ever invents an answer, that one
+     * if "a registry looked and found nothing" ever reaches for the inverse.
      */
-    public function test_with_the_default_resolver_bound_every_labelled_write_throws_and_writes_nothing(): void
+    public function test_with_the_throwing_resolver_bound_every_labelled_write_throws_and_writes_nothing(): void
     {
         $fake = Hubspot::fake();
+
+        app()->instance(AssociationTypeResolver::class, new UnresolvedAssociationTypeResolver);
 
         self::assertInstanceOf(
             UnresolvedAssociationTypeResolver::class,
             app(AssociationTypeResolver::class),
-            'This test asserts the SHIPPED default, so it must not install a resolver double.',
+            'This test asserts the resolver that answers for nothing, so it must not install a resolving double.',
         );
 
         $calls = [

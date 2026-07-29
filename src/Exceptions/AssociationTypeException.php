@@ -146,6 +146,43 @@ final class AssociationTypeException extends RuntimeException implements Hubspot
     }
 
     /**
+     * A registry row's label arrived as something other than a string.
+     *
+     * A row is built by a portal sync and rehydrated from a cache payload -- two paths where a
+     * value's provenance is invisible by the time it arrives -- so the check is here rather than on
+     * the parameter type, for the reason every other member in this class states: strict types bind
+     * at the calling file.
+     */
+    public static function nonStringLabel(mixed $received): self
+    {
+        return new self(sprintf('An association label was given as type %s. Pass the label as a string, exactly as the portal spells it -- a paired label carries a DIFFERENT name in each direction ("Deals" one way, "People" the other), so a label is never derived and never coerced. Pass null only for the unlabelled default type, which resolves through createDefault() and needs no type id at all.', get_debug_type($received)));
+    }
+
+    /**
+     * A registry row's inverse type id arrived as something other than a positive integer.
+     *
+     * The inverse id is recorded for traversal and verification and is never written, so a wrong one
+     * corrupts nothing directly -- it misleads a read-back check into reporting an association is
+     * present when the id it searched for was never HubSpot's.
+     */
+    public static function invalidInverseTypeId(mixed $received): self
+    {
+        return new self(sprintf('An inverse association type id was given as type %s, which is not a positive integer. Record the id HubSpot issues for the OPPOSITE direction -- Contact -> Company is 279 and Company -> Contact is 280 -- as an int, or null where no inverse has been observed. HubSpot issues ids from 1 upward, so a zero or a negative is a value that was defaulted rather than observed. Null is the safe answer of the two: the inverse id is read for traversal and verification and is never written, so an absent one narrows a diagnostic while a wrong one makes it report the wrong association as found.', get_debug_type($received)));
+    }
+
+    /**
+     * A registry row's default flag arrived as something other than a boolean.
+     *
+     * The string `'false'` is the case this exists for: a non-empty string is `true` in weak mode, so
+     * a flag that round-tripped through text would flip a "not the default" row into a default one
+     * with no error anywhere.
+     */
+    public static function nonBooleanDefaultFlag(mixed $received): self
+    {
+        return new self(sprintf('An association type\'s default flag was given as type %s. Pass true or false, or null where no source states which type a bare association resolves to -- null is what the seeded baseline carries, because that answer was measured against a real portal for one object-type pair only. This is checked rather than coerced because a non-empty string such as "false" is true in weak mode, which would turn a row that is not the default into one that is.', get_debug_type($received)));
+    }
+
+    /**
      * HubSpot issues type ids from 1 upward, so a zero or negative id is not an unlikely id -- it is
      * the shape a defaulted or unresolved variable takes on its way to the wire.
      */

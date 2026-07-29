@@ -5,8 +5,9 @@ associations** as a first-class concept and **inbound webhooks** done properly.
 
 > ### ⚠️ Early development — not released
 >
-> This package is **not on Packagist yet and is not usable**. The Gateway layer is partially
-> built; nothing else exists. Do not depend on it.
+> This package is **not on Packagist yet and is not usable**. The Gateway layer is built and the
+> association-type registry resolves the HubSpot-defined baseline offline; model sync, webhooks,
+> signals and the frontend do not exist. Do not depend on it.
 >
 > The repository is public because development happens in the open, not because there is
 > something to install. Watch or star it if you want to know when there is.

@@ -10,6 +10,7 @@ use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\ObjectRef;
+use ReyemTech\Hubspot\Gateway\UnresolvedAssociationTypeResolver;
 use ReyemTech\Hubspot\Testing\RecordedRequest;
 use ReyemTech\Hubspot\Testing\RequestLog;
 use ReyemTech\Hubspot\Tests\Support\DirectedMapResolver;
@@ -404,14 +405,48 @@ final class AssertAssociatedDirectionTest extends TestCase
 
     /**
      * An unresolvable direction propagates the resolver's own throw. The reader learns that the registry
-     * has no row for this direction — with the container key that would fix it — rather than being told
-     * the association is missing, which would be true of the assertion and false of the package.
+     * has no row for this direction rather than being told the association is missing, which would be
+     * true of the assertion and false of the package.
+     *
+     * **Updated in 03-01, when the shipped default resolver changed.** Until Phase 3 the default was
+     * `Gateway\UnresolvedAssociationTypeResolver`, so every direction produced `noResolverInstalled()`
+     * and the message named the container key to bind. The default is now
+     * `Registry\AssociationTypeRegistry`, which answers for the seeded baseline and misses for
+     * everything else, so an unregistered direction produces `directionNotResolvable()` instead. The
+     * claim under test is unchanged — the resolver's throw reaches the caller, and the message names
+     * the direction and the label — and the container-key half moved to the test below, which binds
+     * the throwing resolver explicitly.
      */
     public function test_an_unresolvable_direction_propagates_the_resolvers_own_throw(): void
     {
         Hubspot::fake();
 
-        // No resolver bound: the shipped default resolves nothing at all.
+        // The shipped default: the registry, which carries no row for notes -> contacts under this name.
+        try {
+            Hubspot::assertAssociated(self::pair('notes', 'contacts'), label: 'Attached note');
+            self::fail('Expected the assertion to surface the resolver failure rather than report a missing write.');
+        } catch (AssociationTypeException $exception) {
+            self::assertSame(
+                AssociationTypeException::directionNotResolvable('notes', 'contacts', 'Attached note')->getMessage(),
+                $exception->getMessage(),
+            );
+            self::assertStringContainsString('notes -> contacts', $exception->getMessage());
+            self::assertStringContainsString('Attached note', $exception->getMessage());
+        }
+    }
+
+    /**
+     * The same propagation with `Gateway\UnresolvedAssociationTypeResolver` bound — the resolver that
+     * answers for nothing at all, which a consumer binds to disable labelled writes outright. Its
+     * message is the one that names the container key, because "nothing looked" and "a registry looked
+     * and found nothing" have different remedies.
+     */
+    public function test_the_throwing_resolver_still_propagates_and_still_names_the_container_key(): void
+    {
+        Hubspot::fake();
+
+        app()->instance(AssociationTypeResolver::class, new UnresolvedAssociationTypeResolver);
+
         try {
             Hubspot::assertAssociated(self::pair('notes', 'contacts'), label: 'Attached note');
             self::fail('Expected the assertion to surface the resolver failure rather than report a missing write.');
