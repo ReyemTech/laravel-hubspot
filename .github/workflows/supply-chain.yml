@@ -71,16 +71,39 @@ jobs:
       #
       # `--sort=-v:refname` orders by the embedded version rather than lexically, so 0.10.0 sorts
       # above 0.9.0 once this package gets that far.
+      #
+      # Two filters narrow the candidates, and both matter:
+      #
+      # `--merged HEAD` restricts the list to tags actually reachable from the commit being built.
+      # `fetch-depth: 0` fetches every tag in the repository, including ones created AFTER this
+      # commit -- so re-running an older workflow run once a newer release exists would otherwise
+      # select that newer tag and compare this older tree against a FUTURE release, reporting
+      # removals for code that had not been written yet (Codex P2, PR #25).
+      #
+      # The glob restricts them to this component's release tags, so an unrelated tag pushed by
+      # hand cannot become the comparison base. It has to match what release-please is configured
+      # to produce in release-please-config.json.
       - name: Resolve the previous release, if there is one
         id: previous-release
         run: |
-          previous="$(git tag -l --sort=-v:refname | head -n 1)"
-          if [ -z "$previous" ]; then
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          else
+          pattern='reyemtech/laravel-hubspot-v*'
+          previous="$(git tag -l --merged HEAD --sort=-v:refname "$pattern" | head -n 1)"
+
+          if [ -n "$previous" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "tag=$previous" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          # Nothing reachable. Distinguish the two ways that happens, because only one of them is
+          # a legitimate reason to compare nothing and still report success.
+          if [ -z "$(git tag -l "$pattern")" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::error title=Backward-compatibility check could not resolve a base::Release tags matching ${pattern} exist in this repository, but none is an ancestor of the commit being built, so there is no correct tree to compare against. Failing rather than skipping: a silent skip here would report success having compared nothing, on a repository that HAS releases. This is expected when re-running a workflow from before the first release; re-run it against current main instead."
+          exit 1
 
       # The guard is on tag ABSENCE, not on the tool's exit code -- no unconditional
       # success-on-failure step and no advisory-style opt-out on the step below. Either kind of
