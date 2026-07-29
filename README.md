@@ -54,7 +54,12 @@ HubSpot integration bug, and it is the reason this package is shaped the way it 
 - Inbound webhooks: signature verification, replay protection, batching, idempotency, typed events
 - A real test double with directional assertions — `assertAssociated($deal, $contact, label:)`
   fails if the inverse typeId was written
-- Zero-migration install: `composer require` plus a trait on a model, no publish step, no `migrate`
+- Zero-migration install: `composer require` plus a trait on a model, no publish step, no `migrate`.
+  The association-type registry defaults to your application cache (`HUBSPOT_STORE=cache`) and
+  resolves the HubSpot-defined baseline offline. Set `HUBSPOT_STORE=database` and the package loads
+  its own migration — still no publish step — or run
+  `php artisan vendor:publish --tag=hubspot-migrations` to own the file yourself. Publishing works
+  whichever store is selected.
 - Intent signals and paid-acquisition attribution that survives a long sales cycle
 - A one-line migration path for existing `tapp/laravel-hubspot` users
 

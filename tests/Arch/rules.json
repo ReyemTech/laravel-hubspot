@@ -10,7 +10,7 @@
         },
         {
             "id": "R2",
-            "description": "Registry may depend only on Gateway and the package exceptions",
+            "description": "Registry may depend only on Gateway, the package exceptions and the framework",
             "fixtures": [
                 "R2/RegistryDependsOnSync.php",
                 "R2/SyncTarget.php"

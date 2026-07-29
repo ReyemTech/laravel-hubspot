@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\AssociationGateway;
@@ -20,6 +21,7 @@ use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
+use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -64,9 +66,9 @@ final class ServiceProvider extends BaseServiceProvider
         // to another store: a package that fell back would keep answering — from the seeded
         // baseline — while the operator believed their portal's own reconciled ids were in use, which
         // is the silent-wrong-id failure this package exists to prevent, wearing a config bug's
-        // clothes. `database` is documented and loads this package's migrations, and gains its store
-        // in the plan that ships that migration; until then it is rejected here like any other
-        // unsupported value.
+        // clothes. `database` also decides, in boot() below, whether this package's migrations are
+        // loaded at all -- selecting it is the whole of the switch, and the registry itself is
+        // unchanged by it.
         $this->app->singleton(RegistryCache::class, function (Application $app): RegistryCache {
             return new IlluminateRegistryCache($app->make(CacheRepository::class));
         });
@@ -78,6 +80,7 @@ final class ServiceProvider extends BaseServiceProvider
             return match ($store) {
                 'cache' => new CacheAssociationTypeStore($app->make(RegistryCache::class)),
                 'array' => new ArrayAssociationTypeStore,
+                'database' => new DatabaseAssociationTypeStore($app->make(DatabaseManager::class)->connection()),
                 default => throw ConfigurationException::unknownStore(
                     is_string($store) ? $store : get_debug_type($store),
                     self::supportedStores(),
@@ -122,7 +125,7 @@ final class ServiceProvider extends BaseServiceProvider
      */
     private static function supportedStores(): array
     {
-        return ['array', 'cache'];
+        return ['array', 'cache', 'database'];
     }
 
     public function boot(): void
@@ -131,8 +134,66 @@ final class ServiceProvider extends BaseServiceProvider
             __DIR__.'/../config/hubspot.php' => $this->app->configPath('hubspot.php'),
         ], 'hubspot-config');
 
-        if ($this->app->make('config')->get('hubspot.store') === 'database') {
-            $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $publishable = [];
+
+        foreach ($this->migrationGroups() as $path => $active) {
+            foreach (self::migrationFilesIn($path) as $file) {
+                // Publishing is NOT gated. A team that wants to own the file must be able to reach
+                // it without first flipping the setting that would load the package's own copy.
+                //
+                // The published copy keeps the package filename on purpose: Laravel's migrator keys
+                // discovered files by migration NAME, so an install that both publishes and runs the
+                // database store sees one migration rather than two attempts to create one table.
+                $publishable[$file] = $this->app->databasePath('migrations/'.basename($file));
+            }
+
+            if ($active) {
+                $this->loadMigrationsFrom($path);
+            }
         }
+
+        $this->publishes($publishable, 'hubspot-migrations');
+    }
+
+    /**
+     * Every migration group this package ships, and whether this install asked for it.
+     *
+     * **Zero-migration install is the load-bearing behaviour here** (STANDARDS §7): a bare
+     * `composer require` has to work with no publish step and no `migrate`, so a group is loaded only
+     * when something turns it on. The default store is `cache`, so the default install registers no
+     * migration path at all.
+     *
+     * REG-03 names the second consumer: Phase 6's signal buffer (SIG-01) gates the same way, on
+     * `HUBSPOT_SIGNALS` rather than `HUBSPOT_STORE`. It arrives here as **one more entry** —
+     * `__DIR__.'/../database/migrations/signals' => (bool) $config->get('hubspot.signals')` — and
+     * needs no other change: `boot()` above already publishes every group and loads the active ones.
+     * A nested group directory stays isolated from this one because `loadMigrationsFrom()` is not
+     * recursive; the migrator globs a single directory.
+     *
+     * @return array<string, bool> absolute directory => whether to load it
+     */
+    private function migrationGroups(): array
+    {
+        return [
+            __DIR__.'/../database/migrations' => $this->app->make('config')->get('hubspot.store') === 'database',
+        ];
+    }
+
+    /**
+     * The files in a group the migrator would actually discover.
+     *
+     * `*_*.php` is `Illuminate\Database\Migrations\Migrator::getMigrationFiles()`'s own pattern,
+     * repeated here rather than approximated, so a file this package offers to publish is by
+     * definition a file that runs. A `.php.stub` matches neither and is never shipped (Codex P1 on
+     * PR #22): the stub convention belongs to packages that publish and never load, and this one
+     * does both.
+     *
+     * @return list<string>
+     */
+    private static function migrationFilesIn(string $path): array
+    {
+        $files = glob($path.'/*_*.php');
+
+        return $files === false ? [] : $files;
     }
 }

@@ -54,4 +54,25 @@ final class ConfigurationException extends LogicException implements HubspotExce
             implode(', ', $validValues),
         ));
     }
+
+    /**
+     * `HUBSPOT_STORE=database` is selected but a table this package owns has never been created.
+     * Raised by `Registry\Stores\DatabaseAssociationTypeStore` in place of the driver's own
+     * `SQLSTATE[42S02]`, which names neither this package nor the command that fixes it (STANDARDS
+     * §9).
+     *
+     * The second sentence pre-empts the question the first one raises. Every other Laravel package
+     * that ships a migration expects `vendor:publish` first, so a reader told to run `migrate` will
+     * reasonably go looking for the publish step; this package loads its own migrations when the
+     * database store is active, and saying so is what stops them.
+     */
+    public static function missingRegistryTable(string $table): self
+    {
+        return new self(sprintf(
+            'HUBSPOT_STORE is set to "database" but the "%s" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_STORE=database.',
+            $table,
+        ));
+    }
 }
