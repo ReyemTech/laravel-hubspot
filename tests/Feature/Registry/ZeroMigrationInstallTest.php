@@ -60,7 +60,7 @@ final class ZeroMigrationInstallTest extends TestCase
         self::assertFalse(Schema::hasTable(DatabaseAssociationTypeStore::TABLE));
 
         config(['hubspot.store' => 'database']);
-        (new ServiceProvider($this->app))->boot();
+        (new ServiceProvider(app()))->boot();
 
         Artisan::call('migrate', ['--force' => true]);
 
@@ -99,7 +99,7 @@ final class ZeroMigrationInstallTest extends TestCase
     {
         self::assertSame('cache', config('hubspot.store'));
 
-        $published = ServiceProvider::pathsToPublish(ServiceProvider::class, 'hubspot-migrations');
+        $published = self::publishableMigrations();
 
         self::assertNotEmpty($published, 'The hubspot-migrations tag publishes nothing.');
 
@@ -121,22 +121,49 @@ final class ZeroMigrationInstallTest extends TestCase
      */
     public function test_vendor_publish_writes_the_migration_into_the_application(): void
     {
-        $published = array_values(ServiceProvider::pathsToPublish(ServiceProvider::class, 'hubspot-migrations'));
+        $targets = array_values(self::publishableMigrations());
 
-        foreach ($published as $target) {
-            File::delete($target);
-        }
+        File::delete($targets);
 
         Artisan::call('vendor:publish', ['--tag' => 'hubspot-migrations', '--force' => true]);
 
         try {
-            foreach ($published as $target) {
+            self::assertNotEmpty($targets);
+
+            foreach ($targets as $target) {
                 self::assertFileExists($target);
             }
         } finally {
-            foreach ($published as $target) {
-                File::delete($target);
-            }
+            // The target is inside the Testbench skeleton application, so it is removed however this
+            // test ends rather than being left for the next run to trip over.
+            File::delete($targets);
         }
+    }
+
+    /**
+     * The publish map, with both halves proven to be paths.
+     *
+     * `pathsToPublish()` is declared as a plain `array`, so every value arrives as `mixed`. Asserting
+     * each one is a non-empty string rather than casting keeps a map that had stopped holding paths
+     * from passing the tests above by being quietly skipped.
+     *
+     * @return array<string, string>
+     */
+    private static function publishableMigrations(): array
+    {
+        $paths = [];
+
+        foreach (ServiceProvider::pathsToPublish(ServiceProvider::class, 'hubspot-migrations') as $source => $target) {
+            $source = (string) $source;
+
+            self::assertTrue(
+                is_string($target) && $target !== '',
+                "The hubspot-migrations tag maps {$source} to something that is not a path.",
+            );
+
+            $paths[$source] = $target;
+        }
+
+        return $paths;
     }
 }

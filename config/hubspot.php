@@ -47,6 +47,15 @@ return [
     |   publish.
     | - 'array': rows live for the life of the process and nowhere else.
     |   Useful in a test suite, and for a worker that has no shared cache.
+    | - 'database': rows live in the `hubspot_association_types` table, with
+    |   reconciliation state alongside it in `hubspot_registry_state`.
+    |   Selecting this is what makes the package load its own migration, so
+    |   `php artisan migrate` is all that is needed -- nothing to publish
+    |   first. Querying before migrating throws a ConfigurationException
+    |   naming that command rather than a raw SQL error. Choose this when you
+    |   want the registry somewhere you can inspect, join against and back up.
+    |   `php artisan vendor:publish --tag=hubspot-migrations` publishes the
+    |   file for teams that would rather own it, and works under any store.
     |
     | Whatever the store, the seeded HubSpot-defined baseline resolves
     | offline — a store holds what `php artisan hubspot:associations:sync`
