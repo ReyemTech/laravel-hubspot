@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Registry;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
+use ReyemTech\Hubspot\Exceptions\ObjectTypeException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\AssociationType;
@@ -184,6 +185,84 @@ final class LabelledWriteThroughRegistryTest extends TestCase
 
         Hubspot::assertRequestCount(0);
         self::assertSame([], $fake->recordedRequests());
+    }
+
+    /**
+     * **The alias that resolves must also be the alias that reaches the wire.**
+     *
+     * `AssociationDirection` normalises both ends so `Deal` and `deals` address one registry row.
+     * That normalisation is invisible to `AssociationGateway`, which builds the request URI from the
+     * pair's own `ObjectRef::objectType`. So a pair carrying an alias would resolve type id 19 and
+     * then PUT to `/crm/v4/objects/Deal/10/associations/lineItems/20` — the 404 about a route rather
+     * than an error about the argument that normalisation exists to prevent (Codex P1 on PR #24).
+     *
+     * The registry therefore refuses a pair whose object types are not already canonical, naming the
+     * canonical form, and issues nothing. Refusing is the only safe answer available at this seam:
+     * the pair is a `Gateway` value and the Registry cannot rewrite it — `Gateway` may not name a
+     * `Registry` class (R2), so `ObjectRef` cannot normalise itself either.
+     *
+     * @param  array{string, string}  $pairTypes
+     */
+    #[DataProvider('aliasedPairProvider')]
+    public function test_a_pair_carrying_an_alias_is_refused_rather_than_put_on_the_wire(
+        array $pairTypes,
+        string $offending,
+        string $canonical,
+    ): void {
+        $fake = Hubspot::fake();
+
+        try {
+            Hubspot::associations()->associateWithLabel(
+                self::pair($pairTypes[0], $pairTypes[1]),
+                label: 'Deal to line item',
+            );
+            self::fail(sprintf(
+                'Expected the alias "%s" to be refused. If this line is reached, the registry resolved the row '
+                .'for "%s" and the gateway addressed "%s" in the request path.',
+                $offending,
+                $canonical,
+                $offending,
+            ));
+        } catch (ObjectTypeException $exception) {
+            self::assertSame(
+                ObjectTypeException::nonCanonicalObjectType($offending, $canonical)->getMessage(),
+                $exception->getMessage(),
+            );
+            self::assertStringContainsString($offending, $exception->getMessage());
+            self::assertStringContainsString($canonical, $exception->getMessage());
+        }
+
+        Hubspot::assertRequestCount(0);
+        self::assertSame([], $fake->recordedRequests());
+    }
+
+    /**
+     * @return array<string, array{array{string, string}, string, string}>
+     */
+    public static function aliasedPairProvider(): array
+    {
+        return [
+            'a singular from side' => [['Deal', 'line_items'], 'Deal', 'deals'],
+            'a camelCase to side' => [['deals', 'lineItems'], 'lineItems', 'line_items'],
+            'surrounding whitespace, which url-encodes to %20 in the path' => [['deals', ' line_items '], ' line_items ', 'line_items'],
+        ];
+    }
+
+    /**
+     * The canonical spelling still resolves and still reaches the wire, so the guard above rejects
+     * aliases rather than rejecting everything.
+     */
+    public function test_the_canonical_spelling_of_the_same_direction_still_reaches_the_wire(): void
+    {
+        $fake = Hubspot::fake();
+
+        Hubspot::associations()->associateWithLabel(self::pair('deals', 'line_items'), label: 'Deal to line item');
+
+        Hubspot::assertRequestCount(1);
+        self::assertSame(
+            '/crm/v4/objects/deals/10/associations/line_items/20',
+            $fake->recordedRequests()[0]['request']->getUri()->getPath(),
+        );
     }
 
     /**

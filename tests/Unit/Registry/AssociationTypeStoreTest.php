@@ -260,22 +260,57 @@ final class AssociationTypeStoreTest extends TestCase
     }
 
     /**
-     * The cache is read once per instance, not once per lookup. The store is a container singleton
-     * and a labelled association write goes through `resolve()`, so a re-read per call would put a
-     * cache round trip on every association this package writes.
+     * **A row another process reconciled is visible to a store that has already answered** (Codex P2
+     * on PR #24).
+     *
+     * The store is a container singleton, and `hubspot:associations:sync` runs in a different process
+     * from the queue worker that writes associations. A store that loaded the cache payload once and
+     * held it for the life of the process would leave that worker resolving stale type ids — and
+     * missing new labels entirely — until somebody restarted it, which is a silent wrong-id failure
+     * with an operational cause rather than a code one.
+     *
+     * The cost is one cache read per lookup. A labelled association write is an HTTP round trip to
+     * HubSpot; a cache read alongside it is noise, and correctness is not a thing to trade for it.
      */
-    public function test_the_cache_store_loads_the_payload_once_per_instance(): void
+    public function test_the_cache_store_sees_what_another_process_reconciled_after_it_first_answered(): void
     {
         $cache = new InMemoryRegistryCache;
-        $store = new CacheAssociationTypeStore($cache);
+        $worker = new CacheAssociationTypeStore($cache);
 
-        $store->resolve(AssociationDirection::of(from: 'contacts', to: 'companies'), 'Contact to company');
-        $store->upsert(self::row('tickets', 'companies', 'Escalated to', 4242));
-        $store->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
-        $store->all();
-        $store->reconciledAt();
+        // The long-running process answers once, which is what populates any cached payload.
+        self::assertNull($worker->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to'));
 
-        self::assertSame(1, $cache->reads, 'The cache payload must be loaded once for the life of the store.');
+        // Meanwhile, `hubspot:associations:sync` reconciles the portal in its own process.
+        $sync = new CacheAssociationTypeStore($cache);
+        $sync->upsert(self::row('tickets', 'companies', 'Escalated to', 4242));
+        $sync->markReconciled(new DateTimeImmutable('2026-07-29T09:15:00+00:00'));
+
+        $row = $worker->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+
+        self::assertInstanceOf(AssociationTypeRow::class, $row);
+        self::assertSame(4242, $row->type->typeId, 'The worker kept answering from a payload it had cached.');
+        self::assertNotNull($worker->reconciledAt(), 'The worker still believes the portal was never synced.');
+    }
+
+    /**
+     * The same staleness, one step worse: a type id that CHANGED. A worker holding the old id keeps
+     * writing a real, valid, wrong association — which HubSpot accepts without complaint.
+     */
+    public function test_the_cache_store_sees_a_type_id_another_process_changed(): void
+    {
+        $cache = new InMemoryRegistryCache;
+
+        (new CacheAssociationTypeStore($cache))->upsert(self::row('tickets', 'companies', 'Escalated to', 4242));
+
+        $worker = new CacheAssociationTypeStore($cache);
+        $worker->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+
+        (new CacheAssociationTypeStore($cache))->upsert(self::row('tickets', 'companies', 'Escalated to', 5150));
+
+        $row = $worker->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+
+        self::assertInstanceOf(AssociationTypeRow::class, $row);
+        self::assertSame(5150, $row->type->typeId);
     }
 
     /**
