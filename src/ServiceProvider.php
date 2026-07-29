@@ -19,6 +19,8 @@ use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
 use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
+use ReyemTech\Hubspot\Registry\Console\AssociationsDoctorCommand;
+use ReyemTech\Hubspot\Registry\Console\DoctorCommand;
 use ReyemTech\Hubspot\Registry\Console\SyncAssociationsCommand;
 use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
@@ -180,6 +182,8 @@ final class ServiceProvider extends BaseServiceProvider
     {
         return [
             SyncAssociationsCommand::class,
+            DoctorCommand::class,
+            AssociationsDoctorCommand::class,
         ];
     }
 

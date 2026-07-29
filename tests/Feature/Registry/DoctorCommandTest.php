@@ -128,13 +128,15 @@ final class DoctorCommandTest extends TestCase
     }
 
     /**
-     * Rows and DIRECTIONS are different counts and both are reported: eight seeded rows span four
-     * directions, because each of the four cited pairs is registered in both directions and two pairs
-     * share a direction. A single number could not say that.
+     * Rows and DIRECTIONS are different counts, and both are reported because neither implies the
+     * other. The eight seeded baseline rows span SIX directions, not eight: `contacts -> companies`
+     * carries two labels (`Contact to company` and `Contact to primary company`) and so does
+     * `companies -> contacts`. A single number could not say that, and "how many directions do I
+     * hold" is what an operator debugging a wrong-direction write is actually asking.
      */
     public function test_it_reports_how_many_rows_and_how_many_directions_the_registry_holds(): void
     {
-        self::assertContains('Holds 8 rows across 4 directions.', self::runDoctor());
+        self::assertContains('Holds 8 rows across 6 directions.', self::runDoctor());
     }
 
     public function test_a_reconciled_row_on_a_new_direction_moves_both_counts(): void
@@ -147,7 +149,7 @@ final class DoctorCommandTest extends TestCase
             isDefault: null,
         ));
 
-        self::assertContains('Holds 9 rows across 5 directions.', self::runDoctor());
+        self::assertContains('Holds 9 rows across 7 directions.', self::runDoctor());
     }
 
     /**
