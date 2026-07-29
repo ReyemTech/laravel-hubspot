@@ -129,7 +129,18 @@ an implementation of the acceptance criterion.
   4. `php artisan hubspot:doctor` reports which store each concern uses, when the registry was last synced, every bound model, whether it soft-deletes and what its delete policy resolves to; `php artisan hubspot:associations:doctor` probes the portal, reports which directions materialise automatically, and writes that answer into the registry.
   5. `HubspotObjectType` normalises `deals`, `line_items` and `p_custom` to canonical identifiers and resolves the local id column for a bound model.
 
-**Plans**: TBD
+**Plans**:
+
+| Plan | Status | Delivers |
+|---|---|---|
+| 03-01 | Complete 2026-07-29 | Object type normalisation, the seeded HubSpot-defined baseline, the store seam (array + cache), and `AssociationTypeRegistry` bound on the Phase 2 resolver key — success criterion 1, and criterion 5's normalisation half |
+| 03-02 | Pending | The database store, its migration, and the missing-table error of criterion 3 |
+| 03-03 | Pending | `hubspot:associations:sync` (criterion 2) and the doctors (criterion 4, REG-04a only) |
+
+**Progress note, 2026-07-29 (03-01).** Criterion 1 is met and asserted end to end from the facade
+with no network, no credentials and no database. Criteria 2, 3 and 4 are untouched. Criterion 5's
+local-id half is Phase 4's (REG-01b), so REG-01 and REG-04 both stay **open** at the end of this
+phase, as the split above requires.
 
 ### Phase 4: Model Sync
 
