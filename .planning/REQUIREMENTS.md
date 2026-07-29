@@ -255,7 +255,7 @@ REL-02.
     canonical set is transcribed from `HubSpot\Crm\ObjectType` in the pinned SDK and asserted equal
     to it in both directions. **Local id column resolution is not built** — do not tick.
 
-- [ ] **REG-02**: Directional association type registry with cache and database stores
+- [x] **REG-02**: Directional association type registry with cache and database stores
   — `REQ-association-registry` (core spec §6.2, §6.3, §13 Phase 2)
 
   - Acceptance: Schema carries `from_object_type`, `to_object_type`, `type_id`, `category`, `label`,
@@ -300,7 +300,24 @@ REL-02.
     store and its missing-table error (03-02), and `php artisan hubspot:associations:sync` (03-03).
     Both are named in the acceptance criteria above — do not tick until they land.
 
-- [ ] **REG-03**: Zero-migration install
+  - **DONE 2026-07-29 (03-03).** 03-02 added `Registry\Stores\DatabaseAssociationTypeStore`, the
+    dated migration for `hubspot_association_types` and `hubspot_registry_state`, and
+    `ConfigurationException::missingRegistryTable()` — the directed error a missing table raises in
+    place of `SQLSTATE[42S02]`. The unique key is `(from_object_type, to_object_type, lookup_hash)`,
+    the correction above applied with the nullable label encoded and hashed so no collation can fold
+    two distinct keys together. 03-03 added `php artisan hubspot:associations:sync`, reading
+    `Schema\Api\DefinitionsApi::getPage()` through the Gateway-owned
+    `Gateway\AssociationDefinitionsGateway` — the Registry names no SDK class.
+
+    One acceptance-relevant behaviour is worth stating explicitly because it is the third point
+    above turned into code: the sync issues **two reads per configured pair** and leaves
+    `inverse_type_id` **null on every row it writes**. The two directional responses share no join
+    key, and this was checked against the pinned SDK rather than assumed —
+    `Schema\Model\PublicAssociationDefinitionCreateRequest` carries an `inverseLabel`, so HubSpot
+    knows the pairing at create time, but no read model returns it. The column is populated only by
+    observation, in `hubspot:associations:doctor`.
+
+- [x] **REG-03**: Zero-migration install
   — `REQ-zero-migration-install` (core spec §2 goal 5, §6.3; STANDARDS §7)
 
   - Acceptance: The package works after `composer require` with no publish step and no `migrate`.
@@ -311,6 +328,16 @@ REL-02.
   - Note: this contract now has a second consumer — the signal buffer of SIG-01 is gated the same
     way, on `HUBSPOT_SIGNALS` rather than `HUBSPOT_STORE`.
 
+  - **DONE 2026-07-29 (03-02).** `ServiceProvider::migrationGroups()` is a `path => active` map;
+    every group is published regardless, only an active one is loaded, so a bare `composer require`
+    registers no migration path at all. The migration is executable PHP where it sits, never a
+    `.php.stub`, and a published copy keeps the package filename so an install that both publishes
+    and loads sees one migration rather than two. `ZeroMigrationInstallTest` asserts both directions
+    **against the schema**, not against registered paths — a path assertion passes against a
+    directory holding only a stub, which is exactly the broken state. Ticked at the Phase 3
+    close-out rather than in 03-02, since SIG-01's group is the generalisation this design was
+    written for and it changes nothing here.
+
 - [ ] **REG-04**: Diagnostic artisan commands
   — `REQ-diagnostics-commands` (core spec §6.3, §6.4, §7, §13 Phase 2)
 
@@ -318,6 +345,21 @@ REL-02.
     was last synced, every bound model, whether it soft-deletes, and what its delete policy resolves
     to. `php artisan hubspot:associations:doctor` probes the portal, reports which directions
     materialise automatically, and writes the answer into the registry.
+
+  - **REG-04a DONE 2026-07-29 (03-03). REG-04 STAYS OPEN.** `hubspot:doctor` reports the store per
+    concern (the configured selector and the class actually bound), the resolver actually bound,
+    whether and when the registry was reconciled, and how many rows across how many directions it
+    holds. `hubspot:associations:doctor` probes both directions of a real association and
+    **searches** every association type HubSpot reported for the record, never taking the first or
+    the only one — the read returns a list in no guaranteed order, and taking the first would report
+    success regardless of which id was written. It records the observed pairing into the registry,
+    and records nothing at all when only one direction materialised.
+
+    **The bound-model section (REG-04b) is not built and is not claimed.** `hubspot:doctor` NAMES it
+    as absent — three lines saying it is not built, that its emptiness is not a statement about the
+    reader's models, and what it will report once it is — with
+    `DoctorCommandTest::test_it_names_the_bound_model_section_as_not_built_rather_than_omitting_it`
+    holding that. Do not tick REG-04 until Phase 4 makes it true.
 
 ### Sync
 
@@ -729,10 +771,10 @@ Deferred. Tracked but not in the current roadmap.
 | GW-02 | Phase 2 | Complete — 02-04 ships the directed pair and the unlabelled path; 02-05 ships the labelled write, the resolver seam and `NeverTheInverseTest`'s throw-and-zero-requests guarantee |
 | GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
 | GW-04 | Phase 2 | **Complete** — 02-01 shipped the fake transport and `assertRequestCount`; 02-06 shipped `assertSynced`, `assertNothingSynced` and `assertAssociated` with its directional type-id check, plus determinism by default. `assertWebhookHandled` is deferred to Phase 5 as a recorded decision (see `phases/02-gateway-layer/deferred-items.md`) |
-| REG-01 | Phase 3 + 4 | **Split 2026-07-28.** Phase 3 (03-01) ships object type normalisation with derived acceptance criteria; **local id column resolution for a bound model moves to Phase 4**, since it needs model binding (SYNC-01) to exist. Do not tick until both halves land — raised by Codex on PR #22. **Phase 3 half DONE 2026-07-29 (03-01):** `Registry\HubspotObjectType` normalises aliases and `p_*` custom objects and throws on the unnormalisable; the canonical set is asserted equal to `HubSpot\Crm\ObjectType`. **Still open** — REG-01b (Phase 4) owns local-id resolution |
-| REG-02 | Phase 3 | **Partial 2026-07-29 (03-01).** Offline directional resolution ships: the seeded baseline, the `(from, to, label)` key, the store seam with an array and a cache implementation, and `inverse_type_id` proven unreachable from every write path. **Still open** — the database store (03-02) and `hubspot:associations:sync` (03-03) are both named in the acceptance criteria and neither exists yet |
-| REG-03 | Phase 3 | Pending |
-| REG-04 | Phase 3 + 4 | **Split 2026-07-28 into REG-04a / REG-04b.** 04a (Phase 3, 03-03): store per concern, registry sync state and count, bound resolver, `hubspot:associations:doctor` in full. **04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — which needs SYNC-01. Printing "not available yet" is not an implementation; do not tick until 04b lands. Raised by Codex on PR #22 |
+| REG-01 | Phase 3 + 4 | **OPEN at the end of Phase 3, deliberately.** Split 2026-07-28; do not tick until both halves land — raised by Codex on PR #22. **Phase 3 half DONE 2026-07-29 (03-01):** `Registry\HubspotObjectType` normalises aliases and `p_*` custom objects and throws on the unnormalisable; the canonical set is asserted equal to `HubSpot\Crm\ObjectType`. **REG-01b (Phase 4) owns local id column resolution for a bound model**, which needs model binding (SYNC-01) to exist |
+| REG-02 | Phase 3 | **Complete 2026-07-29.** 03-01 shipped offline directional resolution (seeded baseline, the `(from, to, label)` key, the store seam, `inverse_type_id` proven unreachable from every write path); 03-02 the database store, its dated migration and the directed missing-table error, with the unique key corrected to `(from_object_type, to_object_type, lookup_hash)`; 03-03 `hubspot:associations:sync`, reading `Schema\Api\DefinitionsApi::getPage()` through a Gateway-owned collaborator and leaving `inverse_type_id` null because the two directional responses share no join key |
+| REG-03 | Phase 3 | **Complete 2026-07-29 (03-02).** `composer require` alone loads no migration; `loadMigrationsFrom()` fires only for an active group, publishing is ungated, the migration is executable PHP where it sits, and a missing table raises `ConfigurationException::missingRegistryTable()` rather than `SQLSTATE[42S02]`. Asserted against the schema in both directions, never against registered paths |
+| REG-04 | Phase 3 + 4 | **OPEN at the end of Phase 3, deliberately.** Split 2026-07-28 into REG-04a / REG-04b; raised by Codex on PR #22. **REG-04a DONE 2026-07-29 (03-03):** `hubspot:doctor` reports the store per concern, the bound resolver, reconciliation state, and rows across directions; `hubspot:associations:doctor` ships in full, searching every reported association type for the expected directional id and recording a pairing only when both directions were observed. **REG-04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — needs SYNC-01. `hubspot:doctor` NAMES that section as not built rather than omitting it, and a test holds that; printing "not available yet" is not an implementation, so do not tick until 04b lands |
 | SYNC-01 | Phase 4 | Pending |
 | SYNC-02 | Phase 4 | Pending |
 | SYNC-03 | Phase 4 | Pending |

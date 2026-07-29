@@ -70,7 +70,15 @@ two design specs, one candidate brief, and no code.)
       direction's own labels, because a paired HubSpot label carries a different name in each
       direction (FOUND-03 run 2) — see `REQUIREMENTS.md` → GW-02
 - [ ] **Registry (REG-01..04)** — object type normalisation, directional association registry with
-      cache and database stores, zero-migration install, diagnostics commands
+      cache and database stores, zero-migration install, diagnostics commands. **Phase 3's work is
+      complete 2026-07-29, and this box deliberately stays unticked.** REG-02 and REG-03 are done;
+      **REG-01 and REG-04 remain open** because their local-id-resolution and bound-model halves need
+      model binding (SYNC-01) and land in Phase 4 as REG-01b and REG-04b — `hubspot:doctor` names its
+      absent model section rather than omitting it, and a command existing is not a requirement being
+      met. Two surface notes: the definitions read lives in `Gateway` (`DefinitionsApi` is a
+      `HubSpot\*` class and its real namespace carries a `Schema` segment REG-02 omits), and
+      `inverse_type_id` is left NULL by `hubspot:associations:sync` because two directional reads
+      share no join key — only `hubspot:associations:doctor` populates it, by observation
 - [ ] **Sync (SYNC-01..05)** — model binding, `PropertyMapper`, `SyncsToHubspot` + observer + job,
       delete policy, escape hatches
 - [ ] **Webhooks (HOOK-01..03)** — signature verification, dispatch, idempotency, typed events,
