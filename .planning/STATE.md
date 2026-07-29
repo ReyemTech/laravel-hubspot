@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Registry & Stores
 status: complete
-stopped_at: "Phase 3 plans all executed; 03-03 is on a pushed PR awaiting merge by the orchestrator. Next action after merge is planning Phase 4 (Model Sync)"
-last_updated: "2026-07-29T00:00:00.000Z"
+stopped_at: "Phase 3 complete — 03-01 (#24), 03-02 (#27) and 03-03 (#28) all merged to main, trackers reconciled. Next action is planning Phase 4 (Model Sync), which owns REG-01b and REG-04b"
+last_updated: "2026-07-29T21:30:00.000Z"
 last_activity: 2026-07-29
-last_activity_desc: "executed 03-03-PLAN.md (definitions read, sync and the two doctors): Gateway\AssociationDefinitionsGateway wraps the Schema-namespaced DefinitionsApi (the phase's only new HubSpot\* reference), hubspot:associations:sync reconciles both directions of each configured pair and leaves inverse_type_id null because the two responses share no join key, hubspot:doctor reports stores/resolver/reconciliation state and NAMES the absent bound-model section, hubspot:associations:doctor searches every reported association type for the expected directional id and records a pairing only when both directions were observed. 625 tests, 100.0% coverage. REG-02 and REG-03 tick; REG-01 and REG-04 stay OPEN with only their Phase 3 halves done."
+last_activity_desc: "executed 03-03-PLAN.md (definitions read, sync and the two doctors): Gateway\AssociationDefinitionsGateway wraps the Schema-namespaced DefinitionsApi (the phase's only new HubSpot\* reference), hubspot:associations:sync reconciles both directions of each configured pair and leaves inverse_type_id null because the two responses share no join key, hubspot:doctor reports stores/resolver/reconciliation state and NAMES the absent bound-model section, hubspot:associations:doctor searches every reported association type for the expected directional id and records a pairing only when both directions were observed. Codex raised three P2s on #28: verified inverse ids are now carried across an unchanged re-read, the doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is deferred to Phase 4. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%. REG-02 and REG-03 tick; REG-01 and REG-04 stay OPEN with only their Phase 3 halves done."
 progress:
   total_phases: 3
   completed_phases: 3
