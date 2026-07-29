@@ -115,49 +115,58 @@ final class AssociationTypeRegistryTest extends TestCase
     }
 
     /**
-     * Aliases reach the same row, so a consumer writing `Deals` and a portal that reconciled `deals`
-     * are looking at one direction rather than two.
+     * **An accepted alias is refused here, not silently rewritten** (Codex P1 on PR #24).
+     *
+     * Normalising the lookup alone is not enough, and the gap is not obvious: `AssociationGateway`
+     * builds the request URI from the pair's own `ObjectRef::objectType`, so a pair carrying `Deal`
+     * would resolve the row for `deals` and then address `/objects/Deal/...` — the 404 about a route
+     * rather than an error about the argument that normalisation exists to prevent. The Registry
+     * cannot rewrite the pair either: it is a `Gateway` value, and `Gateway` may not name a
+     * `Registry` class (R2).
      */
-    public function test_it_normalises_the_pairs_object_types_before_looking_anything_up(): void
-    {
-        $type = self::registryKnowing()->resolve(self::pair('Deal', 'lineItems'), 'Deal to line item');
-
-        self::assertSame(19, $type->typeId);
-    }
-
-    /**
-     * A miss is a throw and there is no other way to express one — the contract's return type is
-     * non-nullable precisely so no caller is handed something to write `?? $inverseTypeId` against.
-     */
-    public function test_an_unknown_direction_throws_naming_the_direction_and_the_label(): void
+    public function test_a_pair_spelling_an_object_type_as_an_alias_is_refused_naming_the_canonical_form(): void
     {
         try {
-            self::registryKnowing()->resolve(self::pair('tickets', 'companies'), 'Escalated to');
-            self::fail('Expected an unregistered direction to throw rather than resolve.');
-        } catch (AssociationTypeException $exception) {
-            // The whole message, not a substring: a substring assertion leaves every concatenation
-            // mutant in the named constructor alive.
+            self::registryKnowing()->resolve(self::pair('Deal', 'line_items'), 'Deal to line item');
+            self::fail('Expected an aliased object type to be refused rather than resolved and then mis-addressed.');
+        } catch (ObjectTypeException $exception) {
             self::assertSame(
-                AssociationTypeException::directionNotResolvable('tickets', 'companies', 'Escalated to')->getMessage(),
+                ObjectTypeException::nonCanonicalObjectType('Deal', 'deals')->getMessage(),
                 $exception->getMessage(),
             );
-            self::assertStringContainsString('tickets -> companies', $exception->getMessage());
-            self::assertStringContainsString('Escalated to', $exception->getMessage());
         }
     }
 
     /**
-     * The message names the NORMALISED direction, so a report reads in the same identifiers the
-     * registry is keyed on rather than in whatever spelling the call site happened to use.
+     * The `to` side is checked too, and separately: a guard on one end only would let the other
+     * through, and the to side is the second half of every association path.
      */
-    public function test_the_miss_message_names_the_normalised_direction(): void
+    public function test_the_to_side_of_a_pair_is_checked_for_its_canonical_spelling_as_well(): void
     {
         try {
-            self::registryKnowing()->resolve(self::pair('Tickets', 'Company'), 'Escalated to');
-            self::fail('Expected an unregistered direction to throw.');
-        } catch (AssociationTypeException $exception) {
-            self::assertStringContainsString('tickets -> companies', $exception->getMessage());
+            self::registryKnowing()->resolve(self::pair('deals', 'lineItems'), 'Deal to line item');
+            self::fail('Expected an aliased to side to be refused.');
+        } catch (ObjectTypeException $exception) {
+            self::assertSame(
+                ObjectTypeException::nonCanonicalObjectType('lineItems', 'line_items')->getMessage(),
+                $exception->getMessage(),
+            );
         }
+    }
+
+    /**
+     * Normalisation still does the job it is actually for: a row a portal sync reconciled under an
+     * alias and a canonical lookup address one row rather than two. That is where the aliasing has
+     * value — on the STORE KEY, which never reaches a request path.
+     */
+    public function test_a_row_reconciled_under_an_alias_answers_a_canonical_lookup(): void
+    {
+        $store = new ArrayAssociationTypeStore;
+        $store->upsert(self::row('Ticket', 'Companies', 'Escalated to', 4242));
+
+        $type = (new AssociationTypeRegistry($store))->resolve(self::pair('tickets', 'companies'), 'Escalated to');
+
+        self::assertSame(4242, $type->typeId);
     }
 
     /**

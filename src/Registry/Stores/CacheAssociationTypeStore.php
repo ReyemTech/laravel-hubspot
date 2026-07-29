@@ -30,11 +30,16 @@ use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
  * `tests/Unit/Registry/AssociationTypeStoreTest.php` asserts the write count is zero across every
  * read path.
  *
- * ## It is loaded once and written on change
+ * ## It reads the cache on every operation, and that is deliberate
  *
- * The cache payload is read on first use and held for the life of the instance, because the store is
- * a container singleton and re-reading per lookup would put a cache round trip on every labelled
- * association write. A mutation writes through immediately, so the next process sees it.
+ * The store is a container singleton, and `hubspot:associations:sync` runs in a **different process**
+ * from the queue worker that writes associations. An instance that loaded the payload once and held
+ * it for the life of the process would leave a long-running worker missing every newly reconciled
+ * label, and resolving stale type ids for every changed one, until somebody restarted it — a silent
+ * wrong-id failure with an operational cause rather than a code one (Codex P2, PR #24).
+ *
+ * The cost is one cache read per lookup. A labelled association write is an HTTP round trip to
+ * HubSpot; a cache read alongside it is noise, and correctness is not a thing to trade for it.
  */
 final class CacheAssociationTypeStore implements AssociationTypeStore
 {
@@ -43,8 +48,6 @@ final class CacheAssociationTypeStore implements AssociationTypeStore
      * collide with a consumer's own cache entries.
      */
     public const CACHE_KEY = 'reyemtech-hubspot:association-types';
-
-    private ?ArrayAssociationTypeStore $rows = null;
 
     public function __construct(private readonly RegistryCache $cache) {}
 
@@ -84,7 +87,7 @@ final class CacheAssociationTypeStore implements AssociationTypeStore
 
     private function rows(): ArrayAssociationTypeStore
     {
-        return $this->rows ??= ArrayAssociationTypeStore::fromArray($this->cache->read(self::CACHE_KEY) ?? []);
+        return ArrayAssociationTypeStore::fromArray($this->cache->read(self::CACHE_KEY) ?? []);
     }
 
     private function persist(ArrayAssociationTypeStore $rows): void

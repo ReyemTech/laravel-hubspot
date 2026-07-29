@@ -278,7 +278,10 @@ final class AssociationTypeStoreTest extends TestCase
         $worker = new CacheAssociationTypeStore($cache);
 
         // The long-running process answers once, which is what populates any cached payload.
-        self::assertNull($worker->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to'));
+        self::assertInstanceOf(
+            AssociationTypeRow::class,
+            $worker->resolve(AssociationDirection::of(from: 'contacts', to: 'companies'), 'Contact to company'),
+        );
 
         // Meanwhile, `hubspot:associations:sync` reconciles the portal in its own process.
         $sync = new CacheAssociationTypeStore($cache);

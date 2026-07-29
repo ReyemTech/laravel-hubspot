@@ -59,8 +59,10 @@ final class AssociationTypeRegistry implements AssociationTypeResolver
      * @throws ObjectTypeException if either of the pair's object types cannot be normalised — a
      *                             caller mistake about an argument rather than a registry miss, and
      *                             reported as one so the reader is not sent off to register a
-     *                             direction that cannot exist. Raised before any request is built,
-     *                             so an unnormalisable pair writes nothing either.
+     *                             direction that cannot exist. Also raised when the pair spells an
+     *                             object type in an accepted ALIAS rather than its canonical form,
+     *                             for the reason the body explains. Both are raised before any
+     *                             request is built, so neither writes anything.
      */
     public function resolve(AssociationPair $pair, string $label): AssociationType
     {
@@ -68,6 +70,17 @@ final class AssociationTypeRegistry implements AssociationTypeResolver
             from: $pair->from->objectType,
             to: $pair->to->objectType,
         );
+
+        // Normalising the LOOKUP is not enough, and the gap is not obvious. `AssociationGateway`
+        // builds the request URI from the pair's own `ObjectRef::objectType`, never from the
+        // direction resolved here -- so a pair carrying `Deal` would resolve the row for `deals` and
+        // then PUT to `/crm/v4/objects/Deal/...`, producing exactly the 404-about-a-route that
+        // normalisation exists to prevent (Codex P1, PR #24). The Registry cannot rewrite the pair
+        // either: it is a `Gateway` value, and `Gateway` may not name a `Registry` class (R2), so
+        // `ObjectRef` cannot normalise itself. Refusing is the safe answer left, and it is refused
+        // before any request is built.
+        self::assertCanonical($pair->from->objectType, $direction->from);
+        self::assertCanonical($pair->to->objectType, $direction->to);
 
         // No `?? $this->store->resolve($direction->reversed(), ...)`, and nowhere to write one: the
         // reversed direction is not a value this package can construct from a direction.
@@ -83,5 +96,15 @@ final class AssociationTypeRegistry implements AssociationTypeResolver
 
         // The row's own type, and nothing derived from its inverse id.
         return $row->type;
+    }
+
+    /**
+     * @throws ObjectTypeException if the spelling the caller used is not the one HubSpot addresses
+     */
+    private static function assertCanonical(string $given, HubspotObjectType $canonical): void
+    {
+        if ($given !== $canonical->value) {
+            throw ObjectTypeException::nonCanonicalObjectType($given, $canonical->value);
+        }
     }
 }

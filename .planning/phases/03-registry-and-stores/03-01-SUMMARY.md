@@ -64,6 +64,8 @@ decisions:
   - "is_default is null on every seeded row: no cited source measures it for these four pairs"
   - "The cache store persists through a package-owned RegistryCache port, so Registry names no Illuminate class"
   - "HUBSPOT_STORE=database is rejected until 03-02 ships its store, never silently treated as cache"
+  - "The registry refuses a pair spelling an object type as an alias, because the Gateway builds the request URI from the pair and the Registry cannot rewrite a Gateway value (R2)"
+  - "The cache store reads per operation rather than memoising, so a sync in another process reaches a running worker"
 metrics:
   duration: one session, 2026-07-29
   completed: 2026-07-29
@@ -295,11 +297,53 @@ with this plan. Corrected to name what now exists. **Out of scope and deliberate
 STANDARDS §7 requires every `HUBSPOT_*` env var to be listed in the README with its default, and none
 of them are — a pre-existing gap that predates this plan and belongs in its own PR.
 
+## Two defects Codex found on PR #24, both real, both fixed
+
+### P1 — an accepted alias resolved and then addressed the alias in the request path
+
+`AssociationDirection::of()` normalises both ends, so `Deal` and `deals` address one registry row.
+But `AssociationGateway` builds the request URI from the pair's own `ObjectRef::objectType`, never
+from the direction the registry resolved. A pair carrying `Deal` therefore resolved type id 19 and
+then issued `PUT /crm/v4/objects/Deal/10/associations/lineItems/20` — **the exact 404-about-a-route
+that this plan's own derived criterion 3 exists to prevent**, reintroduced one layer up. The registry
+test asserted the resolved id and not the URI, so it passed.
+
+**Fix:** `AssociationTypeRegistry::resolve()` now refuses a pair whose object types are not already
+canonical, naming the canonical form, before any request is built. Refusing rather than rewriting is
+the only answer available at this seam: the pair is a `Gateway` value, and `Gateway` may not name a
+`Registry` class (R2), so neither the registry nor `ObjectRef` can normalise it in place.
+`ObjectTypeException::nonCanonicalObjectType()` is the new named constructor.
+
+Normalisation still earns its keep where it belongs — on the **store key**, which never reaches a
+request path: a row a sync reconciled under an alias still answers a canonical lookup, asserted by
+test.
+
+**The deeper design question is left open, deliberately.** The tidy answer is that `ObjectRef` should
+normalise at construction, which would require `HubspotObjectType` to live where `Gateway` can see it
+— a layer move, and therefore an owner decision rather than an executor's. Recorded here so a later
+phase can take it up.
+
+### P2 — a long-running worker never saw what another process reconciled
+
+The store is a container singleton and memoised its cache payload for the life of the instance. A
+queue worker that had already resolved once would keep missing every label
+`hubspot:associations:sync` added in its own process, and keep resolving **stale type ids** for every
+label it changed, until somebody restarted the worker. A stale type id is a real, valid, wrong
+association that HubSpot accepts without complaint — the failure class this package exists to prevent,
+reached by an operational route rather than a code one.
+
+**Fix:** the memoisation is gone; the cache is read per operation. The cost is one cache read per
+lookup, next to an HTTP round trip to HubSpot. Two tests now assert the freshness directly — one for a
+newly added row, one for a changed type id.
+
+**Neither review thread was replied to or resolved** — STANDARDS §12 reserves that for the orchestrator,
+and the `review-threads` check fails on a resolved thread with no human reply.
+
 ## Local gate results
 
 | Gate | Result |
 |---|---|
-| `vendor/bin/pest` | 526 passed (2141 assertions) — up from 354 on `main` |
+| `vendor/bin/pest` | 531 passed (2161 assertions) — up from 354 on `main` |
 | `vendor/bin/pest --coverage --min=95` | 100.0% |
 | `vendor/bin/pest --mutate --min=80` | **MSI 99.17%** — 840 tested, 7 untested. **Zero new survivors:** all 7 are the pre-existing documented equivalents (4 in `Testing/HubspotFake.php`, 3 in `Gateway/ObjectGateway.php`). Up from the 98.84% baseline |
 | `vendor/bin/phpstan analyse --no-progress` | no errors, no baseline, no new suppression |
