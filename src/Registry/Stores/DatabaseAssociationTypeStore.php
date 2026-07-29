@@ -114,8 +114,7 @@ final class DatabaseAssociationTypeStore implements AssociationTypeStore
             $effective[$row->key()] = $row;
         }
 
-        /** @var list<object> $records */
-        $records = $this->guarded(self::TABLE, fn (): array => array_values($this->rows()->get()->all()));
+        $records = $this->guarded(self::TABLE, fn (): array => $this->rows()->get()->all());
 
         // Second, so a reconciled row overrides the seeded one for the same key -- the same
         // precedence resolve() applies, expressed once more here rather than inferred.
@@ -133,11 +132,15 @@ final class DatabaseAssociationTypeStore implements AssociationTypeStore
             ->where('name', self::STATE_NAME)
             ->value('reconciled_at'));
 
-        if (! is_numeric($value)) {
+        // The column is a signed big integer and every driver in the support matrix returns one as an
+        // `int`. Anything else is an absent or corrupt state row, and "never reconciled" is the right
+        // answer for both -- unlike on resolve(), null here is a first-class answer a diagnostic
+        // reports rather than a lookup failure something might substitute a value for.
+        if (! is_int($value)) {
             return null;
         }
 
-        return (new DateTimeImmutable('@'.(int) $value))->setTimezone(new DateTimeZone('UTC'));
+        return (new DateTimeImmutable('@'.$value))->setTimezone(new DateTimeZone('UTC'));
     }
 
     public function markReconciled(DateTimeImmutable $at): void
@@ -190,11 +193,15 @@ final class DatabaseAssociationTypeStore implements AssociationTypeStore
     /**
      * Decodes one record into the validating value object.
      *
-     * The two casts are the storage boundary doing its own job, not the coercion `AssociationTypeRow`
-     * refuses: a driver is free to hand an integer column back as a numeric string (any connection
-     * with emulated prepares does), and a boolean column back as `0`/`1`. Anything that is neither is
-     * passed through untouched so it still meets the value object's validation and throws there,
-     * rather than being silently turned into a real-looking type id.
+     * **Only `is_default` is decoded, and only from an `int`.** Every driver in the support matrix
+     * stores a boolean as `0`/`1` and hands it back as an `int`, which `AssociationTypeRow` rejects —
+     * so that one conversion is the storage boundary decoding its own representation, not the
+     * coercion the value object refuses. `type_id`, `inverse_type_id` and the strings are passed
+     * through untouched: those columns come back correctly typed, and a defensive cast for a driver
+     * configuration this package neither supports nor tests would be an unreachable branch pretending
+     * to be a safeguard. If one ever does arrive wrongly typed, `AssociationType` throws this
+     * package's own exception naming the type it got — loud, typed and catchable — rather than a
+     * `(int)` cast quietly producing a real-looking association id.
      */
     private static function hydrate(object $record): AssociationTypeRow
     {
@@ -204,29 +211,16 @@ final class DatabaseAssociationTypeStore implements AssociationTypeStore
         return AssociationTypeRow::fromArray([
             'from' => $columns['from_object_type'] ?? null,
             'to' => $columns['to_object_type'] ?? null,
-            'type_id' => self::decodeInteger($columns['type_id'] ?? null),
+            'type_id' => $columns['type_id'] ?? null,
             'category' => $columns['category'] ?? null,
             'label' => $columns['label'] ?? null,
-            'inverse_type_id' => self::decodeInteger($columns['inverse_type_id'] ?? null),
+            'inverse_type_id' => $columns['inverse_type_id'] ?? null,
             'is_default' => self::decodeBoolean($columns['is_default'] ?? null),
         ]);
     }
 
-    private static function decodeInteger(mixed $value): mixed
-    {
-        if (is_string($value) && $value === (string) (int) $value) {
-            return (int) $value;
-        }
-
-        return $value;
-    }
-
     private static function decodeBoolean(mixed $value): mixed
     {
-        if (is_int($value) || is_string($value)) {
-            return (bool) (int) $value;
-        }
-
-        return $value;
+        return is_int($value) ? $value === 1 : $value;
     }
 }

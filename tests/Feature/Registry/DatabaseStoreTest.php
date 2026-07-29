@@ -88,11 +88,35 @@ final class DatabaseStoreTest extends DatabaseStoreTestCase
     }
 
     /**
-     * The two columns whose types a driver is most likely to hand back as strings. `is_default`
-     * survives as a real `false` rather than becoming `null` or `true`, and `type_id` arrives as an
-     * `int` — `AssociationType` rejects a numeric string, so a store that passed one straight
-     * through would throw on every read from a driver that does not cast.
+     * `is_default` is the one column a driver hands back in a shape `AssociationTypeRow` refuses: a
+     * boolean is stored as `0`/`1` and read back as an `int`. All three of its states are asserted,
+     * because a decoder that answered `true` for everything would satisfy a `false`-only test.
      */
+    #[DataProvider('defaultFlagProvider')]
+    public function test_the_default_flag_survives_a_round_trip_in_all_three_states(?bool $isDefault): void
+    {
+        $store = $this->store();
+
+        $store->upsert(self::row('tickets', 'companies', 4242, 'Escalated to', null, $isDefault));
+
+        $resolved = $store->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+
+        self::assertNotNull($resolved);
+        self::assertSame($isDefault, $resolved->isDefault);
+    }
+
+    /**
+     * @return array<string, array{?bool}>
+     */
+    public static function defaultFlagProvider(): array
+    {
+        return [
+            'the default type for the pair' => [true],
+            'a type that is not the default' => [false],
+            'not known, which is what every seeded row carries' => [null],
+        ];
+    }
+
     public function test_a_null_valued_row_round_trips_with_its_nulls_intact(): void
     {
         $store = $this->store();
@@ -187,6 +211,29 @@ final class DatabaseStoreTest extends DatabaseStoreTestCase
         $store->upsert(self::row('tickets', 'companies', 4242, 'Escalated to'));
 
         self::assertCount($seeded + 1, $store->all());
+    }
+
+    /**
+     * The contract's return type is `list<AssociationTypeRow>`. Rows are collected into a map keyed
+     * by direction and label to apply the reconciled-over-seeded precedence, so the keys have to be
+     * dropped again on the way out — a caller iterating with an index, or `json_encode`ing the
+     * result, sees an object rather than an array otherwise.
+     */
+    public function test_all_returns_a_list_rather_than_a_map_keyed_by_direction_and_label(): void
+    {
+        $store = $this->store();
+
+        $store->upsert(self::row('tickets', 'companies', 4242, 'Escalated to'));
+
+        $rows = $store->all();
+
+        // The keys, rather than `array_is_list()`: PHPStan folds that into a tautology against the
+        // declared `list<AssociationTypeRow>` return type and the assertion stops asserting.
+        self::assertSame(
+            range(0, count($rows) - 1),
+            array_keys($rows),
+            'all() leaked the direction-and-label keys it collects rows under.',
+        );
     }
 
     public function test_reconciled_at_is_null_until_marked_and_then_survives_a_round_trip(): void
