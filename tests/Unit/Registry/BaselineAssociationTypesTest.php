@@ -92,11 +92,40 @@ final class BaselineAssociationTypesTest extends TestCase
         string $fromType,
         string $toType,
         string $label,
+        int $typeId,
+        int $inverseTypeId,
     ): void {
         self::assertNull(BaselineAssociationTypes::resolve(
             AssociationDirection::of(from: $toType, to: $fromType),
             $label,
         ));
+
+        // And the id it refused to hand back is genuinely there, under the opposite direction's own
+        // name. Without this half the test above would also pass against a baseline that simply held
+        // nothing for the inverse direction at all, which is a much weaker statement.
+        $inverseRow = BaselineAssociationTypes::resolve(
+            AssociationDirection::of(from: $toType, to: $fromType),
+            self::labelFor($toType, $fromType, $inverseTypeId),
+        );
+
+        self::assertInstanceOf(AssociationTypeRow::class, $inverseRow);
+        self::assertSame($inverseTypeId, $inverseRow->type->typeId);
+        self::assertSame($typeId, $inverseRow->inverseTypeId);
+    }
+
+    /**
+     * The cited label for a direction and id, read back out of the provider so the citation is not
+     * written down a second time in this file.
+     */
+    private static function labelFor(string $fromType, string $toType, int $typeId): string
+    {
+        foreach (self::citedDirectionProvider() as [$from, $to, $label, $id]) {
+            if ($from === $fromType && $to === $toType && $id === $typeId) {
+                return $label;
+            }
+        }
+
+        self::fail("No cited label for {$fromType} -> {$toType} with type id {$typeId}.");
     }
 
     /**
@@ -188,6 +217,7 @@ final class BaselineAssociationTypesTest extends TestCase
         string $toType,
         string $label,
         int $typeId,
+        int $inverseTypeId,
     ): void {
         $row = BaselineAssociationTypes::resolve(
             AssociationDirection::of(from: $fromType, to: $toType),
@@ -195,6 +225,7 @@ final class BaselineAssociationTypesTest extends TestCase
         );
 
         self::assertInstanceOf(AssociationTypeRow::class, $row);
+        self::assertSame($inverseTypeId, $row->inverseTypeId);
 
         $inverseRows = array_values(array_filter(
             BaselineAssociationTypes::rows(),

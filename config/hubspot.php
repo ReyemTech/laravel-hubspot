@@ -34,12 +34,29 @@ return [
     |--------------------------------------------------------------------------
     |
     | Where the association-type registry (and other package state) is
-    | persisted: 'cache' (default) or 'database'. This is what the
-    | ServiceProvider reads to decide whether to call loadMigrationsFrom() —
-    | 'cache' keeps a fresh `composer require` migration-free; 'database'
-    | requires running `php artisan migrate`. Getting this wrong when a
-    | database store is actually expected surfaces as "table does not exist"
-    | rather than a silent no-op.
+    | persisted. This is also what the ServiceProvider reads to decide whether
+    | to call loadMigrationsFrom() — 'cache' keeps a fresh `composer require`
+    | migration-free; 'database' requires running `php artisan migrate`.
+    | Getting this wrong when a database store is actually expected surfaces
+    | as "table does not exist" rather than a silent no-op.
+    |
+    | Supported values:
+    |
+    | - 'cache' (default): reconciled rows live in your application cache,
+    |   under one key, with no expiry. Nothing to migrate and nothing to
+    |   publish.
+    | - 'array': rows live for the life of the process and nowhere else.
+    |   Useful in a test suite, and for a worker that has no shared cache.
+    |
+    | Whatever the store, the seeded HubSpot-defined baseline resolves
+    | offline — a store holds what `php artisan hubspot:associations:sync`
+    | reconciled from your portal, and reads through to that baseline for
+    | anything it does not hold.
+    |
+    | Any other value throws a ConfigurationException naming the supported
+    | ones. It is never quietly treated as 'cache': a package that fell back
+    | would answer from the seeded baseline while the operator believed their
+    | portal's own reconciled ids were in use.
     |
     */
     'store' => env('HUBSPOT_STORE', 'cache'),

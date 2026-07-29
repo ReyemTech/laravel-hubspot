@@ -16,7 +16,7 @@ use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
 final class InMemoryRegistryCache implements RegistryCache
 {
     /**
-     * @var array<string, array<string, mixed>>
+     * @var array<string, array<array-key, mixed>>
      */
     private array $entries = [];
 

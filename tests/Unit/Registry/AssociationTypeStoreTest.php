@@ -261,6 +261,53 @@ final class AssociationTypeStoreTest extends TestCase
     }
 
     /**
+     * A cache is shared infrastructure a consumer can write to, and this package's key holds a
+     * structure rather than a scalar. A payload of the wrong shape must leave the store behaving
+     * exactly like a cold one — every seeded direction still resolves, nothing claims to have been
+     * reconciled — rather than raising a `TypeError` from inside a lookup on an association write.
+     */
+    public function test_a_cache_payload_of_the_wrong_shape_leaves_a_cold_store_rather_than_a_broken_one(): void
+    {
+        $cache = new InMemoryRegistryCache;
+        $cache->write(CacheAssociationTypeStore::CACHE_KEY, [
+            'rows' => 'not a list of rows at all',
+            'reconciled_at' => 'not a timestamp',
+        ]);
+
+        $store = new CacheAssociationTypeStore($cache);
+
+        self::assertNull($store->reconciledAt());
+        self::assertCount(count((new ArrayAssociationTypeStore)->all()), $store->all());
+
+        $row = $store->resolve(AssociationDirection::of(from: 'notes', to: 'contacts'), 'Note to contact');
+
+        self::assertInstanceOf(AssociationTypeRow::class, $row);
+        self::assertSame(202, $row->type->typeId);
+    }
+
+    /**
+     * The same guard one level down: a payload whose `rows` IS a list, but whose entries are not
+     * rows. Kept separate from the test above because the two exercise different branches — a whole
+     * payload of the wrong shape, and one bad entry inside a well-shaped one.
+     */
+    public function test_a_cache_payload_whose_row_entries_are_not_rows_is_ignored_entry_by_entry(): void
+    {
+        $cache = new InMemoryRegistryCache;
+        $cache->write(CacheAssociationTypeStore::CACHE_KEY, [
+            'rows' => [
+                'not a row',
+                self::row('tickets', 'companies', 'Escalated to', 4242)->toArray(),
+            ],
+        ]);
+
+        $store = new CacheAssociationTypeStore($cache);
+        $row = $store->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+
+        self::assertInstanceOf(AssociationTypeRow::class, $row);
+        self::assertSame(4242, $row->type->typeId);
+    }
+
+    /**
      * **The signature guard.** The contract must offer no way to ask "what are the types for these
      * two objects" without an order — that signature is how the inverse gets picked. Every method
      * therefore takes a direction or a row, never two object types.
