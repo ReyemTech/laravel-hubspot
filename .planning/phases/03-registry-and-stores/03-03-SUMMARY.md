@@ -556,6 +556,24 @@ sign-off on the contract change** — the same shape 03-01's `Illuminate`/R2 que
 resolved it. The full argument is in `.planning/phases/03-registry-and-stores/deferred-items.md`,
 where Phase 4 will find it.
 
+## Local gate results
+
+| Gate | Result |
+|---|---|
+| `vendor/bin/pest` | 641 passed (2506 assertions) — up from 577 on `main` |
+| `vendor/bin/pest --coverage --min=95` | **100.0%** |
+| `vendor/bin/pest --mutate --min=80` | **MSI 99.38%** — 1115 tested, 7 untested. **Zero new survivors:** all 7 are the pre-existing documented equivalents (4 in the fake, 3 of which moved with `DefaultResponses`; 3 in `Gateway/ObjectGateway.php`). Up from 99.24% |
+| `vendor/bin/phpstan analyse --no-progress` | no errors, no baseline, no new suppression |
+| `vendor/bin/pint --test` | passed |
+| `vendor/bin/phpcs --standard=phpcs.xml -q` | passed |
+| `scripts/ci/verify-arch-rules-fire.sh` | **10/10 rules fired** — R1 in particular, since this plan adds the phase's only new `HubSpot\*` reference |
+| `scripts/ci/verify-quality-gates-fire.sh` | passed |
+| `scripts/ci/check-source-hygiene.sh` | passed |
+
+Local green is not evidence: the authoritative result is `gh pr checks` on the pushed branch, where
+**all 29 required checks passed** on PR #28 at `fc08f2f`, the mutation floor among them at the same
+99.38%.
+
 ## Known stubs
 
 None. Nothing in this plan is a placeholder. The one absent thing —`hubspot:doctor`'s bound-model
