@@ -252,11 +252,37 @@ REL-02.
   — `REQ-association-registry` (core spec §6.2, §6.3, §13 Phase 2)
 
   - Acceptance: Schema carries `from_object_type`, `to_object_type`, `type_id`, `category`, `label`,
-    `inverse_type_id` and `is_default`, with direction unique against `type_id`. `inverse_type_id` is
-    recorded for traversal and verification and is **never used for writes**. Works offline and in
-    tests from the seeded HubSpot-defined baseline map. `php artisan hubspot:associations:sync`
-    reconciles per portal by walking `DefinitionsApi::getPage($from, $to)` for each enabled pair. A
+    `inverse_type_id` and `is_default`, **unique on `(from_object_type, to_object_type, label)`**.
+    `inverse_type_id` is recorded for traversal and verification and is **never used for writes**.
+    Works offline and in tests from the seeded HubSpot-defined baseline map.
+    `php artisan hubspot:associations:sync` reconciles per portal by walking
+    `HubSpot\Client\Crm\Associations\V4\Schema\Api\DefinitionsApi::getPage($from, $to)` for each
+    enabled pair — through a `Gateway`-owned read, since `Registry` may not name an SDK class. A
     missing database table throws a directed error naming the fix, never a raw SQL failure.
+
+  - **Two corrections to this acceptance text, 2026-07-28.** Both were written into the requirement
+    at ingest and both are wrong against the code; corrected here rather than only in the plan that
+    supersedes them, because a requirement is what later phases and audits read.
+
+    1. **The unique key was stated as "direction unique against `type_id`".** That does not make two
+       ids for one direction and label unrepresentable: `(A, B, 10, 'buyer')` and
+       `(A, B, 11, 'buyer')` both satisfy it. Since the registry resolves on
+       `(from, to, label)`, that is what must be unique, or the lookup is ambiguous and can return
+       the wrong association id — the precise failure this package exists to prevent. Raised by
+       Codex on PR #22. Note also that the default unlabelled row's null label needs deliberate
+       handling, as most databases permit repeated `NULL`s in a unique index; `03-02-PLAN.md`
+       requires one mechanism to be chosen and justified.
+    2. **`DefinitionsApi` was named without its `Schema` namespace segment.** There is no
+       `DefinitionsApi` in `Crm\Associations\V4\Api\` — that namespace holds `BasicApi`, `BatchApi`
+       and `ReportApi` only. Verified against the installed `hubspot/api-client` 14.1.0. It also
+       takes exactly two arguments and has no paging parameters.
+
+    A third point is design rather than correction, and is recorded because the requirement's
+    phrasing invites the wrong reading: `getPage()` answers for **one direction**, and a paired
+    label carries a different *name* in each direction (`Deals`/`People`, FOUND-03 run 2). So
+    reconciling a pair is two calls writing two rows, and `inverse_type_id` is **not** derivable by
+    matching the two responses — they share no join key. It stays null until observed. See
+    `03-03-PLAN.md`.
 
 - [ ] **REG-03**: Zero-migration install
   — `REQ-zero-migration-install` (core spec §2 goal 5, §6.3; STANDARDS §7)

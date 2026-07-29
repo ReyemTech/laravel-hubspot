@@ -32,9 +32,11 @@ answer, which several decisions below rest on).
 
 ### 1. `DefinitionsApi` is not where REG-02 says it is
 
-REG-02's acceptance criteria says the sync command walks `DefinitionsApi::getPage($from, $to)`.
-There is **no** `DefinitionsApi` in `Crm/Associations/V4/Api/` — that namespace holds only
-`BasicApi`, `BatchApi` and `ReportApi`. The real class, verified in the installed 14.1.0, is:
+REG-02's acceptance criteria originally said the sync command walks
+`DefinitionsApi::getPage($from, $to)`. There is **no** `DefinitionsApi` in
+`Crm/Associations/V4/Api/` — that namespace holds only `BasicApi`, `BatchApi` and `ReportApi`.
+`REQUIREMENTS.md` has since been corrected to name the class in full, so the requirement and this
+file now agree. The real class, verified in the installed 14.1.0, is:
 
 ```
 HubSpot\Client\Crm\Associations\V4\Schema\Api\DefinitionsApi::getPage($from_object_type, $to_object_type)
