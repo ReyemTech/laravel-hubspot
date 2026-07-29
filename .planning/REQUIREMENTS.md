@@ -241,7 +241,12 @@ REL-02.
   - Acceptance: **absent in source** — the spec states the component's job (`HubspotObjectType`
     normalises `deals`, `line_items`, `p_custom` and resolves the local id column) but states no
     explicit acceptance criteria. Derive one during `/gsd-plan-phase`. Still absent after the
-    2026-07-26 spec review; do not invent criteria at roadmap level.
+    2026-07-26 spec review; do not invent criteria at roadmap level. **Derived at planning time in
+    `03-01-PLAN.md`** and recorded there as derived rather than sourced.
+
+  - **Split 2026-07-28:** Phase 3 ships normalisation only. *Resolving the local id column for a
+    bound model* is Phase 4's, alongside REG-04b, because both need model binding (SYNC-01) to
+    exist. REG-01 stays open at the end of Phase 3.
 
 - [ ] **REG-02**: Directional association type registry with cache and database stores
   — `REQ-association-registry` (core spec §6.2, §6.3, §13 Phase 2)
@@ -682,10 +687,10 @@ Deferred. Tracked but not in the current roadmap.
 | GW-02 | Phase 2 | Complete — 02-04 ships the directed pair and the unlabelled path; 02-05 ships the labelled write, the resolver seam and `NeverTheInverseTest`'s throw-and-zero-requests guarantee |
 | GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
 | GW-04 | Phase 2 | **Complete** — 02-01 shipped the fake transport and `assertRequestCount`; 02-06 shipped `assertSynced`, `assertNothingSynced` and `assertAssociated` with its directional type-id check, plus determinism by default. `assertWebhookHandled` is deferred to Phase 5 as a recorded decision (see `phases/02-gateway-layer/deferred-items.md`) |
-| REG-01 | Phase 3 | Pending — acceptance absent in source |
+| REG-01 | Phase 3 + 4 | **Split 2026-07-28.** Phase 3 (03-01) ships object type normalisation with derived acceptance criteria; **local id column resolution for a bound model moves to Phase 4**, since it needs model binding (SYNC-01) to exist. Do not tick until both halves land — raised by Codex on PR #22 |
 | REG-02 | Phase 3 | Pending |
 | REG-03 | Phase 3 | Pending |
-| REG-04 | Phase 3 | Pending |
+| REG-04 | Phase 3 + 4 | **Split 2026-07-28 into REG-04a / REG-04b.** 04a (Phase 3, 03-03): store per concern, registry sync state and count, bound resolver, `hubspot:associations:doctor` in full. **04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — which needs SYNC-01. Printing "not available yet" is not an implementation; do not tick until 04b lands. Raised by Codex on PR #22 |
 | SYNC-01 | Phase 4 | Pending |
 | SYNC-02 | Phase 4 | Pending |
 | SYNC-03 | Phase 4 | Pending |

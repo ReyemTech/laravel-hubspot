@@ -114,7 +114,13 @@ and STANDARDS §12 forbids branching from a branch, so each plan is one branch o
 
 **Goal**: Directional association types and object types resolve correctly — offline by default, reconcilable per portal — and the package still installs with no migration.
 **Depends on**: Phase 2
-**Requirements**: REG-01, REG-02, REG-03, REG-04
+**Requirements**: REG-01 (partial), REG-02, REG-03, REG-04a
+
+**Split 2026-07-28**, after Codex raised it on PR #22: REG-01's *local id column resolution for a
+bound model* and REG-04's *bound-model diagnostics* both need model binding (SYNC-01), which does not
+exist until Phase 4. Both move there as REG-01b and REG-04b. Phase 3 closes with REG-01 and REG-04
+still **open**, their Phase 3 halves done — a `hubspot:doctor` that prints "not available yet" is not
+an implementation of the acceptance criterion.
 **Success Criteria** (what must be TRUE):
 
   1. `(from, to, label) → typeId` resolves offline from the seeded HubSpot-defined baseline map with no network and no credentials: Contact→Company returns 279 and Company→Contact returns 280, Deal→LineItem 19 and LineItem→Deal 20, Note→Contact 202 and Contact→Note 201 — and a miss throws naming the direction, never returning the inverse.
@@ -129,7 +135,13 @@ and STANDARDS §12 forbids branching from a branch, so each plan is one branch o
 
 **Goal**: A developer adds one trait to any Eloquent model and it syncs to HubSpot — mapped, queued, batched, delete-safe, and suppressible when it must not run.
 **Depends on**: Phase 3
-**Requirements**: SYNC-01, SYNC-02, SYNC-03, SYNC-04, SYNC-05
+**Requirements**: SYNC-01, SYNC-02, SYNC-03, SYNC-04, SYNC-05, **REG-01b**, **REG-04b**
+
+**Inherited from Phase 3 (2026-07-28).** Both need SYNC-01's model bindings to exist:
+**REG-01b** — `HubspotObjectType` resolves the local id column for a bound model.
+**REG-04b** — `hubspot:doctor` reports every bound model, whether it soft-deletes, and what its
+delete policy resolves to. Phase 3 ships the command naming that section as not yet built; this phase
+is where it becomes true. REG-01 and REG-04 tick here, not in Phase 3.
 **Success Criteria** (what must be TRUE):
 
   1. Adding `use SyncsToHubspot` to a model plus one `models` config entry is the whole setup — the service provider attaches the generic observer at boot, nothing is required in the consumer's `AppServiceProvider`, and the same single trait serves contacts, deals and a custom object with the type carried as data.

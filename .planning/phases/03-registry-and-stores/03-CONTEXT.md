@@ -68,6 +68,27 @@ resolver is bound. The model section is Phase 4's to add, and 03-03 must leave a
 command's output *names* the absence rather than silently omitting it, so a developer is not misled
 into thinking they have no bound models when the feature simply is not built.
 
+**REG-04 therefore does NOT close in Phase 3** (Codex P2 on PR #22). Printing "not available yet" is
+not an implementation of "reports every bound model, whether it soft-deletes and what its delete
+policy resolves to". Marking the requirement delivered because a command with that name exists is
+how acceptance criteria quietly go unbuilt — the identical rot Phase 2's close-out had to repair in
+GW-02, where a ticked requirement's own progress note still read "do not mark complete".
+
+So the requirement splits, and the split is recorded in the trackers rather than in a summary:
+
+| | Owns | Phase |
+|---|---|---|
+| **REG-04a** | store-per-concern, registry sync state and count, bound resolver, `hubspot:associations:doctor` in full | 3 |
+| **REG-04b** | the bound-model section: every bound model, soft-delete status, resolved delete policy | 4 |
+
+The same applies to **REG-01**: Phase 3 ships object type normalisation, and *local id column
+resolution for a bound model* moves to Phase 4 with REG-04b, because both need model binding
+(SYNC-01) to exist. REG-01 and REG-04 stay open at the end of Phase 3 with their Phase 3 halves
+marked done.
+
+`.planning/REQUIREMENTS.md` and `.planning/ROADMAP.md` must both carry this split **before** 03-01
+starts, so no executor can tick a requirement whose remainder has no owner.
+
 ---
 
 ## The rules this phase must not break
