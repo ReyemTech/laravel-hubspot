@@ -345,7 +345,7 @@ and the `review-threads` check fails on a resolved thread with no human reply.
 |---|---|
 | `vendor/bin/pest` | 531 passed (2161 assertions) — up from 354 on `main` |
 | `vendor/bin/pest --coverage --min=95` | 100.0% |
-| `vendor/bin/pest --mutate --min=80` | **MSI 99.17%** — 840 tested, 7 untested. **Zero new survivors:** all 7 are the pre-existing documented equivalents (4 in `Testing/HubspotFake.php`, 3 in `Gateway/ObjectGateway.php`). Up from the 98.84% baseline |
+| `vendor/bin/pest --mutate --min=80` | **MSI 99.18%** — 848 tested, 7 untested. **Zero new survivors:** all 7 are the pre-existing documented equivalents (4 in `Testing/HubspotFake.php`, 3 in `Gateway/ObjectGateway.php`). Up from the 98.84% baseline |
 | `vendor/bin/phpstan analyse --no-progress` | no errors, no baseline, no new suppression |
 | `vendor/bin/pint --test` | passed |
 | `vendor/bin/phpcs --standard=phpcs.xml -q` | passed |
