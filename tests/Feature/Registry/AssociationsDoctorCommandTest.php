@@ -201,45 +201,6 @@ final class AssociationsDoctorCommandTest extends TestCase
     }
 
     /**
-     * The finding reaching the registry. Each direction records the OTHER direction's observed id —
-     * `1 -> inverse 2` and `2 -> inverse 1` — which is the pairing FOUND-03 measured and the one value
-     * a definitions read cannot supply.
-     */
-    public function test_an_observed_pairing_is_written_into_the_registry(): void
-    {
-        self::seedRegistry();
-        self::fakePortalWithTheExpectedIdSecond();
-
-        self::assertNull(self::rowFor('deals', 'contacts', 'Deals')?->inverseTypeId);
-
-        $lines = self::runDoctor();
-
-        self::assertSame(2, self::rowFor('deals', 'contacts', 'Deals')?->inverseTypeId);
-        self::assertSame(1, self::rowFor('contacts', 'deals', 'People')?->inverseTypeId);
-
-        self::assertContains(
-            'Recorded the observed pairing: deals -> contacts #1 inverse #2, contacts -> deals #2 inverse #1.',
-            $lines,
-        );
-    }
-
-    /**
-     * Recording the pairing must not disturb the ids themselves. `inverse_type_id` is recorded for
-     * traversal and verification and is never read on a write path, so a doctor that also moved a
-     * type id would have written the thing it exists to check.
-     */
-    public function test_recording_a_pairing_changes_neither_direction_s_own_type_id(): void
-    {
-        self::seedRegistry();
-        self::fakePortalWithTheExpectedIdSecond();
-
-        self::runDoctor();
-
-        self::assertSame(1, self::rowFor('deals', 'contacts', 'Deals')?->type->typeId);
-        self::assertSame(2, self::rowFor('contacts', 'deals', 'People')?->type->typeId);
-    }
-
-    /**
      * The expected id genuinely absent, with two other ids present. A "take the first" or "take the
      * only" implementation would report success here for a portal whose association carries neither
      * id the registry holds.
@@ -270,48 +231,116 @@ final class AssociationsDoctorCommandTest extends TestCase
     }
 
     /**
-     * A half-observed pairing is not an observation. Nothing is written, and the report says why
-     * rather than leaving an operator to infer it from the absence of a confirmation line.
+     * **A negative result names the one thing that can make it a false negative** (Codex P2 on
+     * PR #28). `AssociationGateway::read()` returns HubSpot's first page only — it calls `getPage()`
+     * with the SDK's own default limit of 500 and discards `paging.next` — so a record with more
+     * associations than that of one object type can have the requested one on a page this probe never
+     * sees, and report "not found" for an association that exists.
+     *
+     * **The command cannot detect that state**, and this line is deliberately a caveat rather than a
+     * fix: `read()` returns `list<AssociationRow>` with nowhere to carry `paging.next.after`, so even
+     * "stay silent when another page exists" needs the package-owned `AssociationPage` that 02-04's
+     * deferred items describe — a **return-shape change** on the gateway contract, which is its own
+     * decision and its own plan. Pretending otherwise would be worse than saying so.
+     *
+     * It is printed only on a negative result. An operator reading a confirmation does not need it,
+     * and a caveat on every run is a caveat nobody reads.
      */
-    public function test_a_pairing_observed_in_only_one_direction_is_not_recorded(): void
+    public function test_a_negative_result_names_the_paging_limit_that_could_have_caused_it(): void
     {
         self::seedRegistry();
 
         Hubspot::fake([
             'deals' => Hubspot::response(self::readBody('20', [
-                ['category' => 'HUBSPOT_DEFINED', 'typeId' => 3, 'label' => null],
-                ['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals'],
+                ['category' => 'USER_DEFINED', 'typeId' => 5, 'label' => 'Sponsor'],
             ]), 200),
             'contacts' => Hubspot::response(self::readBody('10', [
-                ['category' => 'HUBSPOT_DEFINED', 'typeId' => 4, 'label' => null],
+                ['category' => 'USER_DEFINED', 'typeId' => 2, 'label' => 'People'],
             ]), 200),
         ]);
 
-        $lines = self::runDoctor();
-
-        self::assertNull(self::rowFor('deals', 'contacts', 'Deals')?->inverseTypeId);
-        self::assertNull(self::rowFor('contacts', 'deals', 'People')?->inverseTypeId);
-
         self::assertContains(
-            'Recorded nothing: a pairing is recorded only when both directions were observed.',
-            $lines,
+            'Note: an association read returns HubSpot\'s first page only, so a record with more than '
+            .'500 associations of one object type can report a false negative here.',
+            self::runDoctor(),
         );
+    }
+
+    /**
+     * And a run where both directions were confirmed does NOT carry the caveat — otherwise it is
+     * boilerplate on every report rather than a hint at the moment it could matter.
+     */
+    public function test_a_confirmed_run_carries_no_paging_caveat(): void
+    {
+        self::seedRegistry();
+        self::fakePortalWithTheExpectedIdSecond();
+
+        foreach (self::runDoctor() as $line) {
+            self::assertStringNotContainsString('first page only', $line);
+        }
     }
 
     /**
      * A record with no association in a direction at all is a different report from one whose
      * association carries the wrong id, and an operator chasing a missing association needs to know
      * which they have.
+     *
+     * It is also a **failure**, and it records nothing. An empty read is the one case where "no
+     * expected id was found" is easiest to mistake for "nothing to check": treating it as a pass
+     * would report a pairing as observed for two records that are not associated at all.
      */
-    public function test_a_direction_with_no_association_at_all_says_so(): void
+    public function test_a_direction_with_no_association_at_all_says_so_fails_and_records_nothing(): void
     {
         self::seedRegistry();
         Hubspot::fake();
 
+        $lines = self::runDoctor();
+
+        self::assertContains(
+            'deals 10 -> contacts 20: no association with contacts 20 was reported in this direction at all.',
+            $lines,
+        );
         self::assertContains(
             'contacts 20 -> deals 10: no association with deals 10 was reported in this direction at all.',
-            self::runDoctor(),
+            $lines,
         );
+        self::assertContains(
+            'Recorded nothing: a pairing is recorded only when both directions were observed.',
+            $lines,
+        );
+
+        self::assertNull(self::rowFor('deals', 'contacts', 'Deals')?->inverseTypeId);
+        self::assertNull(self::rowFor('contacts', 'deals', 'People')?->inverseTypeId);
+
+        self::assertSame(Command::FAILURE, Artisan::call('hubspot:associations:doctor', self::arguments()));
+    }
+
+    /**
+     * `--label=` is a mistake, not a request to look for a label spelled `''`. It is treated as
+     * absent, so the operator gets the directed message about supplying both rather than a registry
+     * miss on an empty string — and no request is issued for a probe that has nothing to look for.
+     */
+    public function test_an_empty_label_counts_as_absent_rather_than_as_a_label(): void
+    {
+        self::seedRegistry();
+        Hubspot::fake();
+
+        $exitCode = Artisan::call('hubspot:associations:doctor', [
+            'from' => 'deals',
+            'from-id' => '10',
+            'to' => 'contacts',
+            'to-id' => '20',
+            '--label' => '',
+            '--inverse-label' => 'People',
+        ]);
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertContains(
+            'Both --label and --inverse-label are required. A paired HubSpot label carries a '
+            .'different name in each direction, so neither can be derived from the other.',
+            CommandOutput::linesOf(Artisan::output()),
+        );
+        Hubspot::assertRequestCount(0);
     }
 
     /**

@@ -120,16 +120,6 @@ final class SyncAssociationsCommandTest extends TestCase
         ]);
     }
 
-    /**
-     * @return list<string>
-     */
-    private static function runSync(): array
-    {
-        Artisan::call('hubspot:associations:sync');
-
-        return CommandOutput::linesOf(Artisan::output());
-    }
-
     private static function store(): AssociationTypeStore
     {
         return app(AssociationTypeStore::class);
@@ -266,92 +256,24 @@ final class SyncAssociationsCommandTest extends TestCase
     }
 
     /**
-     * Re-running against unchanged portal state writes the same rows and adds no duplicates, and says
-     * so rather than reporting a second round of additions.
+     * Re-running against unchanged portal state writes the same rows and adds no duplicates. The
+     * store is keyed on `(direction, label)`, so a second row for one key would make the lookup
+     * ambiguous — which is the failure the unique key exists to make unrepresentable, reached through
+     * a command instead of through a schema.
+     *
+     * What the re-run SAYS is `SyncAssociationsReportTest`'s subject; this is what it writes.
      */
-    public function test_re_running_against_unchanged_portal_state_is_idempotent(): void
+    public function test_re_running_against_unchanged_portal_state_writes_no_duplicate_rows(): void
     {
         self::fakePortal();
         Artisan::call('hubspot:associations:sync');
         $afterFirstRun = self::rowDataWrittenBySync();
 
         self::fakePortal();
-        $lines = self::runSync();
+        Artisan::call('hubspot:associations:sync');
 
+        self::assertCount(4, $afterFirstRun);
         self::assertSame($afterFirstRun, self::rowDataWrittenBySync());
-        self::assertContains('deals -> contacts: unchanged "Deals" #1 (USER_DEFINED)', $lines);
-        self::assertContains('Reconciled 2 directions: 0 added, 0 updated, 4 unchanged, 0 skipped.', $lines);
-    }
-
-    public function test_a_first_run_reports_every_row_it_added(): void
-    {
-        self::fakePortal();
-
-        $lines = self::runSync();
-
-        self::assertContains('deals -> contacts: added "Deals" #1 (USER_DEFINED)', $lines);
-        self::assertContains('deals -> contacts: added "Sponsor" #5 (USER_DEFINED)', $lines);
-        self::assertContains('contacts -> deals: added "People" #2 (USER_DEFINED)', $lines);
-        self::assertContains('contacts -> deals: added "Sponsored by" #6 (USER_DEFINED)', $lines);
-        self::assertContains('Reconciled 2 directions: 4 added, 0 updated, 0 unchanged, 0 skipped.', $lines);
-    }
-
-    /**
-     * A reconciled row overrides a seeded baseline one on the same `(direction, label)` key, which is
-     * correct — the portal's own id is the one HubSpot will honour. It must never happen silently:
-     * the line names both ids and both categories, so an operator can see a HubSpot-defined default
-     * being replaced by a portal label that happens to be spelled the same way.
-     */
-    public function test_overwriting_a_seeded_baseline_id_says_so_in_the_output(): void
-    {
-        config(['hubspot.associations.sync' => [['from' => 'contacts', 'to' => 'companies']]]);
-
-        Hubspot::fake([
-            'definitions:contacts>companies' => Hubspot::response(self::body([
-                ['category' => 'USER_DEFINED', 'typeId' => 42, 'label' => 'Contact to company'],
-            ]), 200),
-            'definitions:companies>contacts' => Hubspot::response(self::body([]), 200),
-        ]);
-
-        $lines = self::runSync();
-
-        self::assertContains(
-            'contacts -> companies: updated "Contact to company" #279 (HUBSPOT_DEFINED) -> #42 (USER_DEFINED)',
-            $lines,
-        );
-        self::assertContains('Reconciled 2 directions: 0 added, 1 updated, 0 unchanged, 0 skipped.', $lines);
-    }
-
-    /**
-     * HubSpot returns `label: null` for its own `HUBSPOT_DEFINED` types — measured twice in FOUND-03.
-     * Those are skipped rather than written, and the skip is reported rather than silent.
-     *
-     * **Skipping is the correct answer, not a shortcut.** The registry's only read takes a
-     * NON-NULLABLE label (`AssociationTypeResolver::resolve()`), and the unlabelled write path
-     * consults the registry not at all (design spec §6.1 rule 3) — so a null-label row is unreachable
-     * by every consumer the package has. Worse, a direction with two HubSpot-defined types would give
-     * both the same `default:` storage key, so the second would silently overwrite the first. Rows
-     * nobody can read that overwrite each other are worse than no rows.
-     */
-    public function test_definitions_hubspot_returned_with_no_label_are_skipped_and_the_skip_is_reported(): void
-    {
-        self::fakePortal(
-            forward: self::body([
-                ['category' => 'HUBSPOT_DEFINED', 'typeId' => 3, 'label' => null],
-                ['category' => 'HUBSPOT_DEFINED', 'typeId' => 4, 'label' => null],
-                ['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals'],
-            ]),
-            reverse: self::body([]),
-        );
-
-        $lines = self::runSync();
-
-        self::assertCount(1, self::rowsWrittenBySync());
-        self::assertContains(
-            'deals -> contacts: skipped 2 definitions HubSpot returned with no label of their own',
-            $lines,
-        );
-        self::assertContains('Reconciled 2 directions: 1 added, 0 updated, 0 unchanged, 2 skipped.', $lines);
     }
 
     /**
