@@ -12,6 +12,7 @@ use ReyemTech\Hubspot\Gateway\AssociationType;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Registry\AssociationDirection;
 use ReyemTech\Hubspot\Registry\AssociationTypeRow;
+use ReyemTech\Hubspot\Registry\BaselineAssociationTypes;
 use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
 
 /**
@@ -200,6 +201,7 @@ final class SyncAssociationsCommand extends Command
         );
 
         $unlabelled = 0;
+        $reportedLabels = [];
 
         foreach ($definitions as $definition) {
             if ($definition->label === null) {
@@ -208,8 +210,12 @@ final class SyncAssociationsCommand extends Command
                 continue;
             }
 
+            $reportedLabels[] = $definition->label;
+
             $this->record($store, $direction, $definition, $definition->label);
         }
+
+        $this->reportRowsThePortalNoLongerReports($store, $direction, $reportedLabels);
 
         if ($unlabelled > 0) {
             $this->tally['skipped'] += $unlabelled;
@@ -303,6 +309,100 @@ final class SyncAssociationsCommand extends Command
             $definition->type->typeId,
             $definition->type->category->value,
         ));
+    }
+
+    /**
+     * **Rows this store holds for a direction that the portal did not report — named, never removed.**
+     *
+     * Codex's third P2 on PR #28 is real: a label deleted or renamed in HubSpot leaves a row nobody
+     * removes, this command marks the store freshly reconciled anyway, and that row keeps resolving a
+     * type id the portal may no longer honour. **This is the mitigation, not the fix**, and the
+     * distinction is deliberate rather than a shortcut:
+     *
+     * - Actually pruning needs an operation `Registry\Contracts\AssociationTypeStore` does not have —
+     *   a `forget(direction, label)` or a `replaceDirection(direction, rows)` — which would be the
+     *   sixth on a seam 03-01 closed and 03-02 confirmed against a third implementation. That is a
+     *   contract change and an owner decision, not something to route around inside a command.
+     * - It is also **not well defined** against the baseline read-through. Removing a reconciled row
+     *   whose key the baseline also seeds does not remove the answer; it reverts it to the
+     *   HubSpot-defined id, which may be right or may be exactly the silent substitution this package
+     *   forbids. And a partial or interrupted read must not prune at all, or one failed request
+     *   deletes a portal's reconciled map.
+     *
+     * So the staleness becomes visible and stays put. That is strictly better than silence and
+     * strictly weaker than a fix, and the message says which by naming that nothing was removed.
+     *
+     * ## Why seeded keys are excluded, and the blind spot that leaves
+     *
+     * `AssociationTypeStore::all()` returns "what it has been given, **plus the seeded baseline it
+     * falls back to**". A naive "held for this direction but absent from the response" comparison
+     * would therefore report the baseline's own labels on **every single run**: HubSpot answers
+     * `label: null` for its `HUBSPOT_DEFINED` types and `reconcile()` skips those, so a seeded label
+     * can never appear in a portal response. `contacts -> companies` alone would emit two phantom
+     * stale rows every time — and a report that speaks on every run trains an operator to ignore the
+     * one line that eventually matters.
+     *
+     * **The blind spot, stated rather than hidden:** a row an earlier reconciliation wrote under a
+     * key the baseline also seeds is excluded by this filter and therefore goes unreported. That is
+     * the same baseline read-through ambiguity that makes real pruning undecidable here, showing up
+     * one layer earlier. It is the reason this is a mitigation and not the fix.
+     *
+     * @param  list<string>  $reportedLabels  the labels this direction's read actually returned
+     */
+    private function reportRowsThePortalNoLongerReports(
+        AssociationTypeStore $store,
+        AssociationDirection $direction,
+        array $reportedLabels,
+    ): void {
+        $seeded = [];
+
+        foreach (BaselineAssociationTypes::rows() as $row) {
+            $seeded[$row->key()] = true;
+        }
+
+        $stale = [];
+
+        foreach ($store->all() as $row) {
+            if ($row->label === null || ! self::isSameDirection($row->direction, $direction)) {
+                continue;
+            }
+
+            if (isset($seeded[$row->key()]) || in_array($row->label, $reportedLabels, true)) {
+                continue;
+            }
+
+            $stale[] = $row->label;
+        }
+
+        if ($stale === []) {
+            // Nothing to say, so nothing is said. A "0 stale rows" line on the common path is the
+            // fastest way to make the populated version of this line invisible.
+            return;
+        }
+
+        // Sorted, so two runs against one portal produce diffable output whatever order the bound
+        // store iterates in -- the array, cache and database stores make no promise about that, and
+        // a report an operator cannot diff is a report they cannot act on.
+        sort($stale);
+
+        $this->line(sprintf(
+            '%s: the portal no longer reports %d reconciled %s this store still holds: %s. Nothing was removed.',
+            $direction->describe(),
+            count($stale),
+            count($stale) === 1 ? 'label' : 'labels',
+            implode(', ', array_map(static fn (string $label): string => '"'.$label.'"', $stale)),
+        ));
+    }
+
+    /**
+     * Both ends, compared in the order they were given. Deliberately not a normalisation or a set
+     * comparison: this file must never treat two directions as one because they name the same two
+     * object types.
+     */
+    private static function isSameDirection(AssociationDirection $row, AssociationDirection $subject): bool
+    {
+        return $row->from->value === $subject->from->value
+            && $row->to->value === $subject->to->value;
     }
 
     private static function isSameType(AssociationType $existing, AssociationType $read): bool
