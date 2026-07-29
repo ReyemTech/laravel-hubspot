@@ -1,0 +1,186 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Tests\Feature\Registry;
+
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Foundation\Application;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Artisan;
+use ReyemTech\Hubspot\Gateway\AssociationCategory;
+use ReyemTech\Hubspot\Gateway\AssociationType;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
+use ReyemTech\Hubspot\Gateway\UnresolvedAssociationTypeResolver;
+use ReyemTech\Hubspot\Registry\AssociationDirection;
+use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
+use ReyemTech\Hubspot\Registry\AssociationTypeRow;
+use ReyemTech\Hubspot\Registry\Console\DoctorCommand;
+use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
+use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
+use ReyemTech\Hubspot\Tests\Support\CommandOutput;
+use ReyemTech\Hubspot\Tests\TestCase;
+use Symfony\Component\Console\Command\Command;
+
+/**
+ * **`php artisan hubspot:doctor` — what the package currently believes, without reading source.**
+ *
+ * REG-04 asks it to report "every bound model, whether it soft-deletes and what its delete policy
+ * resolves to". **Model binding is Phase 4 (SYNC-01) and does not exist**, so per 03-CONTEXT.md §3
+ * this command ships reporting what exists — which store each concern uses, whether and when the
+ * registry was reconciled, how many directions it holds, and which resolver is bound.
+ *
+ * **The absent section is NAMED, not omitted, and that is the assertion in this file that matters.**
+ * A doctor that silently left the model section out would tell a developer they have no bound models,
+ * when the truth is that the package cannot bind models at all yet. Those are different facts, and
+ * only one of them is true.
+ *
+ * REG-04 therefore does NOT close in Phase 3. REG-04a — everything above, plus
+ * `hubspot:associations:doctor` in full — completes here; REG-04b, the bound-model section, is Phase
+ * 4's. The split is recorded in `.planning/REQUIREMENTS.md` and `.planning/ROADMAP.md`.
+ */
+mutates(DoctorCommand::class);
+
+final class DoctorCommandTest extends TestCase
+{
+    private const FROZEN_NOW = '2026-07-29T09:15:00.000Z';
+
+    /**
+     * @param  Application  $app
+     */
+    protected function defineEnvironment($app): void
+    {
+        /** @var ConfigRepository $config */
+        $config = $app->make('config');
+
+        $config->set('hubspot.store', 'array');
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function runDoctor(): array
+    {
+        Artisan::call('hubspot:doctor');
+
+        return CommandOutput::linesOf(Artisan::output());
+    }
+
+    /**
+     * The store per concern. One concern exists today — the association-type registry — and it is
+     * reported with BOTH the configured selector and the class actually bound, because those two
+     * disagreeing is a real failure mode an operator cannot otherwise see.
+     */
+    public function test_it_reports_the_store_each_concern_uses(): void
+    {
+        self::assertContains(
+            'Association type registry store: array ('.ArrayAssociationTypeStore::class.')',
+            self::runDoctor(),
+        );
+    }
+
+    public function test_it_reports_which_resolver_is_bound(): void
+    {
+        self::assertContains(
+            'Association type resolver bound: '.AssociationTypeRegistry::class,
+            self::runDoctor(),
+        );
+    }
+
+    /**
+     * A consumer may bind their own resolver — that rebinding is the package's whole extension seam —
+     * so the doctor reports what is actually bound rather than what ships by default.
+     */
+    public function test_it_reports_a_rebound_resolver_rather_than_the_shipped_default(): void
+    {
+        app()->instance(AssociationTypeResolver::class, new UnresolvedAssociationTypeResolver);
+
+        self::assertContains(
+            'Association type resolver bound: '.UnresolvedAssociationTypeResolver::class,
+            self::runDoctor(),
+        );
+    }
+
+    /**
+     * "Never reconciled" is a first-class answer, not a missing value, and the line names the command
+     * that changes it (STANDARDS §9: every message names the fix).
+     */
+    public function test_it_reports_a_never_reconciled_registry_and_names_the_command_that_fixes_it(): void
+    {
+        self::assertContains(
+            'Last reconciled with a portal: never. Run `php artisan hubspot:associations:sync`.',
+            self::runDoctor(),
+        );
+    }
+
+    public function test_it_reports_when_the_registry_was_last_reconciled(): void
+    {
+        Carbon::setTestNow(Carbon::parse(self::FROZEN_NOW));
+
+        app(AssociationTypeStore::class)->markReconciled(Carbon::now()->toDateTimeImmutable());
+
+        self::assertContains(
+            'Last reconciled with a portal: 2026-07-29T09:15:00+00:00.',
+            self::runDoctor(),
+        );
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * Rows and DIRECTIONS are different counts and both are reported: eight seeded rows span four
+     * directions, because each of the four cited pairs is registered in both directions and two pairs
+     * share a direction. A single number could not say that.
+     */
+    public function test_it_reports_how_many_rows_and_how_many_directions_the_registry_holds(): void
+    {
+        self::assertContains('Holds 8 rows across 4 directions.', self::runDoctor());
+    }
+
+    public function test_a_reconciled_row_on_a_new_direction_moves_both_counts(): void
+    {
+        app(AssociationTypeStore::class)->upsert(new AssociationTypeRow(
+            direction: AssociationDirection::of(from: 'deals', to: 'contacts'),
+            type: new AssociationType(typeId: 1, category: AssociationCategory::UserDefined),
+            label: 'Deals',
+            inverseTypeId: null,
+            isDefault: null,
+        ));
+
+        self::assertContains('Holds 9 rows across 5 directions.', self::runDoctor());
+    }
+
+    /**
+     * **The assertion this command exists to make honest.**
+     *
+     * The bound-model section is not built. Its absence is reported in words, because "you have no
+     * bound models" and "this package cannot bind models yet" are different facts and only the second
+     * is true. Printing nothing at all would assert the first.
+     */
+    public function test_it_names_the_bound_model_section_as_not_built_rather_than_omitting_it(): void
+    {
+        $lines = self::runDoctor();
+
+        self::assertContains('Bound models: NOT BUILT YET.', $lines);
+        self::assertContains(
+            'This section is empty because model binding does not exist in this release, NOT '
+            .'because you have no bound models.',
+            $lines,
+        );
+        self::assertContains(
+            'When it ships it will report every bound model, whether it soft-deletes, and what its '
+            .'delete policy resolves to.',
+            $lines,
+        );
+    }
+
+    /**
+     * A diagnostic reports; it does not fail. Everything above is a fact about the installation, and
+     * none of them is an error condition — an operator scripting `hubspot:doctor` in a health check
+     * would otherwise see a red exit for a registry nobody had synced yet, which is a normal state.
+     */
+    public function test_reporting_is_not_a_failure(): void
+    {
+        self::assertSame(Command::SUCCESS, Artisan::call('hubspot:doctor'));
+    }
+}
