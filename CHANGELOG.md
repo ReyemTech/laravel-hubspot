@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.2.0...reyemtech/laravel-hubspot-v0.3.0) (2026-07-29)
+
+
+### Features
+
+* **03-01:** normalise hubspot object types to canonical identifiers ([a5bbad1](https://github.com/ReyemTech/laravel-hubspot/commit/a5bbad1f60af31c50319f7d5bbc9ef524c3ea873))
+* **03-01:** resolve labelled writes from the registry, by rebinding one key ([5879851](https://github.com/ReyemTech/laravel-hubspot/commit/58798517e711bfd4fc53f8388cfe7c8da74c053a))
+* **03-01:** seed the cited baseline map and open the store seam ([825f56b](https://github.com/ReyemTech/laravel-hubspot/commit/825f56b85f892fa7182b213bf02f3696f8d8b26c))
+* **03-02:** add the database association type store and its migration ([04b7d47](https://github.com/ReyemTech/laravel-hubspot/commit/04b7d471b6794faf4a76287148a33abd53e1e2a6))
+* **03-02:** database association type store and zero-migration install ([cfa79a3](https://github.com/ReyemTech/laravel-hubspot/commit/cfa79a341c4c01b3e1d3369cfb2a5bb3389ff681))
+* **03-02:** publish the package migration and generalise the gated loading ([bd1d8ee](https://github.com/ReyemTech/laravel-hubspot/commit/bd1d8ee5ee73cae48ec35c734bf8f6ff6b3ab7bc))
+* **03-03:** association definitions, hubspot:associations:sync, and the two doctors ([ed2c493](https://github.com/ReyemTech/laravel-hubspot/commit/ed2c4939ed2cacd0a9dd3f21dc7e9090e369bd34))
+* **03-03:** read a portal's association definitions through the gateway ([e485207](https://github.com/ReyemTech/laravel-hubspot/commit/e48520781d36fb8bb182149c4ddda1da5a37aa34))
+* **03-03:** reconcile a portal's association labels with hubspot:associations:sync ([9d01548](https://github.com/ReyemTech/laravel-hubspot/commit/9d01548323e9b3c605c9dcaf4f5d4c9343d27a3c))
+* **03-03:** report reconciled rows the portal no longer returns, without removing them ([d9e3437](https://github.com/ReyemTech/laravel-hubspot/commit/d9e34379a3e314dd808d9de2814e553f33dc3055))
+* **03-03:** ship hubspot:doctor and hubspot:associations:doctor ([2864507](https://github.com/ReyemTech/laravel-hubspot/commit/2864507070a773853e6229dceef3fc2fd58c926c))
+
+
+### Bug Fixes
+
+* **03-01:** refuse an aliased pair, and stop the cache store answering stale ([365045d](https://github.com/ReyemTech/laravel-hubspot/commit/365045dfb6d8b0745cd3611548f268728750cb08))
+* **03-02:** index the lookup key as a digest so no collation can fold it ([b971c37](https://github.com/ReyemTech/laravel-hubspot/commit/b971c372dbee81c2519135f867a09e550a14d652))
+* **03-03:** keep a verified inverse id across a sync, and name the paging caveat ([dfde91f](https://github.com/ReyemTech/laravel-hubspot/commit/dfde91fa81c2ce44e5bf7e91b5bd00f34b0b44f9))
+
 ## [0.2.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.1.0...reyemtech/laravel-hubspot-v0.2.0) (2026-07-29)
 
 
