@@ -22,8 +22,12 @@ final class InMemoryRegistryCache implements RegistryCache
 
     public int $writes = 0;
 
+    public int $reads = 0;
+
     public function read(string $key): ?array
     {
+        $this->reads++;
+
         return $this->entries[$key] ?? null;
     }
 

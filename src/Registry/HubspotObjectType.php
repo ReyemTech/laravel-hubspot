@@ -58,43 +58,52 @@ use ReyemTech\Hubspot\Exceptions\ObjectTypeException;
 final readonly class HubspotObjectType
 {
     /**
-     * The canonical identifiers, transcribed from `HubSpot\Crm\ObjectType` in the pinned SDK major.
-     *
-     * @var list<string>
-     */
-    private const CANONICAL = [
-        'companies',
-        'contacts',
-        'deals',
-        'tickets',
-        'appointments',
-        'calls',
-        'communications',
-        'courses',
-        'emails',
-        'feedback_submissions',
-        'invoices',
-        'leads',
-        'line_items',
-        'meetings',
-        'notes',
-        'order',
-        'commerce_payments',
-        'postal_mail',
-        'products',
-        'quotes',
-        'subscriptions',
-        'tasks',
-        'users',
-    ];
-
-    /**
      * The one custom-object shape HubSpot issues: a `p`, the portal id (absent in some portals), an
      * underscore, and the object's own name. There is deliberately no allow-list of custom object
      * types — a portal invents its own, so any list held here would be correct only for the account
      * it was written in.
      */
     private const CUSTOM_OBJECT_PATTERN = '/^p\d*_[a-z0-9_]+$/';
+
+    /**
+     * The canonical identifiers, transcribed from `HubSpot\Crm\ObjectType` in the pinned SDK major.
+     *
+     * A method rather than a class constant, deliberately: `pest --mutate` reports a mutation on a
+     * constant declaration as UNCOVERED, because a constant has no executed line for coverage to
+     * attribute a test to. Dropping an identifier is a real defect that the transcription guard in
+     * `HubspotObjectTypeTest` really does catch, and holding the list here is what lets the mutation
+     * score say so.
+     *
+     * @return list<string>
+     */
+    private static function canonical(): array
+    {
+        return [
+            'companies',
+            'contacts',
+            'deals',
+            'tickets',
+            'appointments',
+            'calls',
+            'communications',
+            'courses',
+            'emails',
+            'feedback_submissions',
+            'invoices',
+            'leads',
+            'line_items',
+            'meetings',
+            'notes',
+            'order',
+            'commerce_payments',
+            'postal_mail',
+            'products',
+            'quotes',
+            'subscriptions',
+            'tasks',
+            'users',
+        ];
+    }
 
     // Declared rather than promoted, because the constructor is private and the value is assigned
     // only after normalisation has succeeded.
@@ -153,7 +162,7 @@ final readonly class HubspotObjectType
      */
     public static function canonicalTypes(): array
     {
-        return self::CANONICAL;
+        return self::canonical();
     }
 
     /**
@@ -165,7 +174,7 @@ final readonly class HubspotObjectType
     {
         $aliases = [];
 
-        foreach (self::CANONICAL as $canonical) {
+        foreach (self::canonical() as $canonical) {
             $aliases[$canonical] = $canonical;
 
             $singular = self::singularise($canonical);
@@ -209,18 +218,24 @@ final readonly class HubspotObjectType
     private static function splitCamelCase(string $value): string
     {
         $result = '';
-        $previous = '';
+
+        // A boolean rather than "the previous character", deliberately. Carrying the character would
+        // mean seeding it with a sentinel whose value cannot affect any result -- the first character
+        // never needs a separator before it -- which is an unkillable mutant sitting in the one
+        // function every association write passes through. A flag starting false says the same thing
+        // and a test can prove it: flip it to true and `Deals` normalises to `_deals`, which throws.
+        $previousWasLowerOrDigit = false;
 
         foreach (str_split($value) as $character) {
             // Only after a lowercase letter or a digit. Testing merely "the previous character was
             // not uppercase" would fire after a separator too, turning `Line-Items` into
             // `Line__Items` and losing it against every alias.
-            if (ctype_upper($character) && (ctype_lower($previous) || ctype_digit($previous))) {
+            if ($previousWasLowerOrDigit && ctype_upper($character)) {
                 $result .= '_';
             }
 
             $result .= $character;
-            $previous = $character;
+            $previousWasLowerOrDigit = ctype_lower($character) || ctype_digit($character);
         }
 
         return $result;

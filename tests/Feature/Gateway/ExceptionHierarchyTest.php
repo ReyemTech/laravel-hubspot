@@ -193,6 +193,66 @@ final class ExceptionHierarchyTest extends TestCase
         );
     }
 
+    /**
+     * The four named constructors 03-01 added, pinned as whole literal strings.
+     *
+     * Whole strings rather than substrings, deliberately: `pest --mutate` generates a concatenation
+     * mutant per `.` operator and a string mutant per literal, and every one of them survives a
+     * `assertStringContainsString` — an earlier plan leaked 31 such survivors before this file
+     * started asserting messages in full.
+     */
+    public function test_object_type_exception_non_string_object_type_explains_where_strict_types_binds(): void
+    {
+        self::assertSame(
+            'A HubSpot object type was given as type int and cannot be normalised. Pass it as a '
+            .'string — for example "deals", "line_items", or a custom object\'s fully-qualified type '
+            .'"p12345_my_object". This is validated here rather than by the parameter type because '
+            .'declare(strict_types=1) binds at the calling file, not at this package\'s: in a file '
+            .'without it, 0 would have arrived as "0" and true as "1", and normalisation would have '
+            .'reported an unknown object type nobody wrote.',
+            ObjectTypeException::nonStringObjectType(0)->getMessage(),
+        );
+    }
+
+    public function test_a_non_string_label_message_says_a_paired_label_is_named_per_direction(): void
+    {
+        self::assertSame(
+            'An association label was given as type bool. Pass the label as a string, exactly as the '
+            .'portal spells it -- a paired label carries a DIFFERENT name in each direction ("Deals" '
+            .'one way, "People" the other), so a label is never derived and never coerced. Pass null '
+            .'only for the unlabelled default type, which resolves through createDefault() and needs '
+            .'no type id at all.',
+            AssociationTypeException::nonStringLabel(true)->getMessage(),
+        );
+    }
+
+    public function test_an_invalid_inverse_type_id_message_says_the_column_is_read_never_written(): void
+    {
+        self::assertSame(
+            'An inverse association type id was given as type string, which is not a positive '
+            .'integer. Record the id HubSpot issues for the OPPOSITE direction -- Contact -> Company '
+            .'is 279 and Company -> Contact is 280 -- as an int, or null where no inverse has been '
+            .'observed. HubSpot issues ids from 1 upward, so a zero or a negative is a value that was '
+            .'defaulted rather than observed. Null is the safe answer of the two: the inverse id is '
+            .'read for traversal and verification and is never written, so an absent one narrows a '
+            .'diagnostic while a wrong one makes it report the wrong association as found.',
+            AssociationTypeException::invalidInverseTypeId('280')->getMessage(),
+        );
+    }
+
+    public function test_a_non_boolean_default_flag_message_names_the_string_false_trap(): void
+    {
+        self::assertSame(
+            'An association type\'s default flag was given as type string. Pass true or false, or '
+            .'null where no source states which type a bare association resolves to -- null is what '
+            .'the seeded baseline carries, because that answer was measured against a real portal for '
+            .'one object-type pair only. This is checked rather than coerced because a non-empty '
+            .'string such as "false" is true in weak mode, which would turn a row that is not the '
+            .'default into one that is.',
+            AssociationTypeException::nonBooleanDefaultFlag('false')->getMessage(),
+        );
+    }
+
     public function test_association_type_exception_direction_not_resolvable_states_the_failed_direction_only(): void
     {
         $exception = AssociationTypeException::directionNotResolvable('contacts', 'companies');

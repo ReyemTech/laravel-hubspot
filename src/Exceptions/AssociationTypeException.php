@@ -167,7 +167,7 @@ final class AssociationTypeException extends RuntimeException implements Hubspot
      */
     public static function invalidInverseTypeId(mixed $received): self
     {
-        return new self(sprintf('An inverse association type id was given as %s, which is not a positive integer. Record the id HubSpot issues for the OPPOSITE direction -- Contact -> Company is 279 and Company -> Contact is 280 -- as an int, or null where no inverse has been observed. Null is the safe answer: the inverse id is read for traversal and verification and is never written, so an absent one narrows a diagnostic while a wrong one makes it report the wrong association as found.', is_int($received) ? (string) $received : 'type '.get_debug_type($received)));
+        return new self(sprintf('An inverse association type id was given as type %s, which is not a positive integer. Record the id HubSpot issues for the OPPOSITE direction -- Contact -> Company is 279 and Company -> Contact is 280 -- as an int, or null where no inverse has been observed. HubSpot issues ids from 1 upward, so a zero or a negative is a value that was defaulted rather than observed. Null is the safe answer of the two: the inverse id is read for traversal and verification and is never written, so an absent one narrows a diagnostic while a wrong one makes it report the wrong association as found.', get_debug_type($received)));
     }
 
     /**

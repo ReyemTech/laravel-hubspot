@@ -48,6 +48,21 @@ final class AssociationDirectionTest extends TestCase
     }
 
     /**
+     * The key's exact shape, pinned. It is the storage key a cache payload and 03-02's database table
+     * are both keyed on, so it is a format rather than an implementation detail — and pinning it is
+     * what makes the ordering of its two halves assertable at all: a key that concatenated the label
+     * before its marker would still be unique, and every uniqueness test below would still pass.
+     */
+    public function test_the_key_states_the_direction_first_and_marks_the_label_half(): void
+    {
+        $direction = AssociationDirection::of(from: 'contacts', to: 'companies');
+
+        self::assertSame('contacts>companies>label:Employer', $direction->key('Employer'));
+        self::assertSame('contacts>companies>default:', $direction->key(null));
+        self::assertSame('contacts>companies>label:', $direction->key(''));
+    }
+
+    /**
      * **The single most important assertion in this file.** Both directions of one pair produce
      * different keys, so a lookup for one can never land on the row stored for the other.
      */

@@ -67,23 +67,31 @@ final class BaselineAssociationTypes
     /**
      * The cited table, as data. Each entry is `[from, to, typeId, label, inverseTypeId]`.
      *
-     * @var list<array{string, string, int, string, int}>
+     * A method rather than a class constant, deliberately: `pest --mutate` reports a mutation on a
+     * constant declaration as UNCOVERED, because a constant has no executed line for coverage to
+     * attribute a test to. Removing a seeded row is a real defect that `BaselineAssociationTypesTest`
+     * really does catch, and holding the table here is what lets the mutation score say so.
+     *
+     * @return list<array{string, string, int, string, int}>
      */
-    private const CITED = [
-        // design spec §6: Contact -> Company is 279, Company -> Contact is 280.
-        ['contacts', 'companies', 279, 'Contact to company', 280],
-        ['companies', 'contacts', 280, 'Company to contact', 279],
-        // design spec §6: Contact -> Primary Company is 1, Company -> Primary Contact is 2.
-        ['contacts', 'companies', 1, 'Contact to primary company', 2],
-        ['companies', 'contacts', 2, 'Company to primary contact', 1],
-        // design spec §6: Deal -> Line Item is 19, Line Item -> Deal is 20.
-        ['deals', 'line_items', 19, 'Deal to line item', 20],
-        ['line_items', 'deals', 20, 'Line item to deal', 19],
-        // design spec §6: Note -> Contact is 202, Contact -> Note is 201 — the pair the design
-        // documents name as the canonical mistake.
-        ['notes', 'contacts', 202, 'Note to contact', 201],
-        ['contacts', 'notes', 201, 'Contact to note', 202],
-    ];
+    private static function cited(): array
+    {
+        return [
+            // design spec §6: Contact -> Company is 279, Company -> Contact is 280.
+            ['contacts', 'companies', 279, 'Contact to company', 280],
+            ['companies', 'contacts', 280, 'Company to contact', 279],
+            // design spec §6: Contact -> Primary Company is 1, Company -> Primary Contact is 2.
+            ['contacts', 'companies', 1, 'Contact to primary company', 2],
+            ['companies', 'contacts', 2, 'Company to primary contact', 1],
+            // design spec §6: Deal -> Line Item is 19, Line Item -> Deal is 20.
+            ['deals', 'line_items', 19, 'Deal to line item', 20],
+            ['line_items', 'deals', 20, 'Line item to deal', 19],
+            // design spec §6: Note -> Contact is 202, Contact -> Note is 201 — the pair the design
+            // documents name as the canonical mistake.
+            ['notes', 'contacts', 202, 'Note to contact', 201],
+            ['contacts', 'notes', 201, 'Contact to note', 202],
+        ];
+    }
 
     /**
      * Every seeded row, in the order the cited table states them.
@@ -94,7 +102,7 @@ final class BaselineAssociationTypes
     {
         $rows = [];
 
-        foreach (self::CITED as [$from, $to, $typeId, $label, $inverseTypeId]) {
+        foreach (self::cited() as [$from, $to, $typeId, $label, $inverseTypeId]) {
             $rows[] = new AssociationTypeRow(
                 direction: AssociationDirection::of(from: $from, to: $to),
                 type: new AssociationType(typeId: $typeId, category: AssociationCategory::HubspotDefined),

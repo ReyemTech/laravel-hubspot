@@ -37,14 +37,6 @@ use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
  */
 final class ServiceProvider extends BaseServiceProvider
 {
-    /**
-     * The store names HUBSPOT_STORE accepts. Named here rather than inline so the selector and the
-     * error message that lists the valid values cannot drift apart.
-     *
-     * @var list<string>
-     */
-    private const SUPPORTED_STORES = ['array', 'cache'];
-
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/hubspot.php', 'hubspot');
@@ -88,7 +80,7 @@ final class ServiceProvider extends BaseServiceProvider
                 'array' => new ArrayAssociationTypeStore,
                 default => throw ConfigurationException::unknownStore(
                     is_string($store) ? $store : get_debug_type($store),
-                    self::SUPPORTED_STORES,
+                    self::supportedStores(),
                 ),
             };
         });
@@ -116,6 +108,21 @@ final class ServiceProvider extends BaseServiceProvider
         // against it, rather than needing to forget a cached gateway instance.
         $this->app->bind(ObjectGatewayContract::class, ObjectGateway::class);
         $this->app->bind(AssociationGatewayContract::class, AssociationGateway::class);
+    }
+
+    /**
+     * The store names HUBSPOT_STORE accepts, named once so the selector above and the error message
+     * that lists the valid values cannot drift apart.
+     *
+     * A method rather than a class constant: `pest --mutate` reports a mutation on a constant
+     * declaration as UNCOVERED, because a constant has no executed line for coverage to attribute a
+     * test to. Dropping a store name from this list is a real defect `RegistryBindingsTest` catches.
+     *
+     * @return list<string>
+     */
+    private static function supportedStores(): array
+    {
+        return ['array', 'cache'];
     }
 
     public function boot(): void

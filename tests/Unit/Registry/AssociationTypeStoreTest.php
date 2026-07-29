@@ -242,6 +242,78 @@ final class AssociationTypeStoreTest extends TestCase
     }
 
     /**
+     * An upsert on its own must persist. Kept separate from the test above, which also marks the
+     * store reconciled: that second write would carry the row to the cache regardless, so a store
+     * that forgot to persist on upsert would still pass it.
+     */
+    public function test_the_cache_store_persists_a_row_upserted_with_no_reconciliation_marker(): void
+    {
+        $cache = new InMemoryRegistryCache;
+
+        (new CacheAssociationTypeStore($cache))->upsert(self::row('tickets', 'companies', 'Escalated to', 4242));
+
+        $row = (new CacheAssociationTypeStore($cache))
+            ->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+
+        self::assertInstanceOf(AssociationTypeRow::class, $row);
+        self::assertSame(4242, $row->type->typeId);
+    }
+
+    /**
+     * The cache is read once per instance, not once per lookup. The store is a container singleton
+     * and a labelled association write goes through `resolve()`, so a re-read per call would put a
+     * cache round trip on every association this package writes.
+     */
+    public function test_the_cache_store_loads_the_payload_once_per_instance(): void
+    {
+        $cache = new InMemoryRegistryCache;
+        $store = new CacheAssociationTypeStore($cache);
+
+        $store->resolve(AssociationDirection::of(from: 'contacts', to: 'companies'), 'Contact to company');
+        $store->upsert(self::row('tickets', 'companies', 'Escalated to', 4242));
+        $store->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+        $store->all();
+        $store->reconciledAt();
+
+        self::assertSame(1, $cache->reads, 'The cache payload must be loaded once for the life of the store.');
+    }
+
+    /**
+     * `all()` and the persistence payload are both LISTS. A store that returned its internal keyed
+     * array would json_encode to an object rather than an array, which is a shape change for every
+     * consumer of the payload — the database store of 03-02 included.
+     *
+     * @param  Closure(): AssociationTypeStore  $make
+     */
+    #[DataProvider('storeProvider')]
+    public function test_the_enumeration_is_a_list_rather_than_a_keyed_array(Closure $make): void
+    {
+        $store = $make();
+        $store->upsert(self::row('tickets', 'companies', 'Escalated to', 4242));
+
+        $all = $store->all();
+
+        self::assertSame(
+            range(0, count($all) - 1),
+            array_keys($all),
+            'all() must return a list. A keyed array json_encodes to an object rather than an array.',
+        );
+    }
+
+    public function test_the_persistence_payload_holds_its_rows_as_a_list(): void
+    {
+        $store = new ArrayAssociationTypeStore;
+        $store->upsert(self::row('tickets', 'companies', 'Escalated to', 4242));
+        $store->upsert(self::row('leads', 'meetings', 'Booked', 5150));
+
+        $rows = $store->toArray()['rows'];
+
+        self::assertIsArray($rows);
+        self::assertTrue(array_is_list($rows), 'The persisted rows must be a list, not a keyed map.');
+        self::assertCount(2, $rows);
+    }
+
+    /**
      * **The cache store never writes a guess.** A read — hit, miss, or baseline read-through — leaves
      * the cache exactly as it found it. A store that persisted its baseline read-through would look
      * identical from every other test in this file, and would then keep answering from a stale copy
