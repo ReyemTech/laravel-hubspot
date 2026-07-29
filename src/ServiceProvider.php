@@ -19,6 +19,7 @@ use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
 use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
+use ReyemTech\Hubspot\Registry\Console\SyncAssociationsCommand;
 use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
@@ -133,6 +134,13 @@ final class ServiceProvider extends BaseServiceProvider
 
     public function boot(): void
     {
+        if ($this->app->runningInConsole()) {
+            // Registered only for a console process. A web request never runs an artisan command, and
+            // registering them regardless would construct the console kernel's command list on every
+            // request for no benefit.
+            $this->commands(self::consoleCommands());
+        }
+
         $this->publishes([
             __DIR__.'/../config/hubspot.php' => $this->app->configPath('hubspot.php'),
         ], 'hubspot-config');
@@ -156,6 +164,23 @@ final class ServiceProvider extends BaseServiceProvider
         }
 
         $this->publishes($publishable, 'hubspot-migrations');
+    }
+
+    /**
+     * The artisan commands this package ships.
+     *
+     * A method rather than a class constant, for the reason `supportedStores()` above is one:
+     * `pest --mutate` reports a mutation on a constant declaration as UNCOVERED, because a constant
+     * has no executed line for coverage to attribute a test to. Dropping a command from this list is
+     * a real defect, and holding the list in a method is what lets the score say so.
+     *
+     * @return list<class-string>
+     */
+    private static function consoleCommands(): array
+    {
+        return [
+            SyncAssociationsCommand::class,
+        ];
     }
 
     /**
