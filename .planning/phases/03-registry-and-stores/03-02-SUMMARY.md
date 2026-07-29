@@ -21,7 +21,7 @@ affects:
 tech-stack:
   added: []
   patterns:
-    - "A NOT NULL encoded lookup key, so a nullable label cannot duplicate under a unique index"
+    - "A NOT NULL hashed lookup key, so a nullable label cannot duplicate and no collation can fold two distinct keys together"
     - "Migration groups as a path => active map: every group publishable, only an active one loaded"
     - "Translate a driver failure only when the schema confirms the cause"
 key-files:
@@ -46,7 +46,7 @@ key-files:
     - tests/Feature/Gateway/ExceptionHierarchyTest.php
 decisions:
   - "R2 widened to admit `Illuminate`, not merely `Illuminate\\Contracts` — maintainer-signed 2026-07-29"
-  - "The unique key is (from_object_type, to_object_type, lookup_key), where lookup_key is the merged AssociationDirection::key() — a nullable label cannot participate in a portable unique index"
+  - "The unique key is (from_object_type, to_object_type, lookup_hash), the SHA-256 digest of the merged AssociationDirection::key() — a nullable label cannot participate in a portable unique index, and a readable key is only as case-sensitive as the column collation"
   - "Reconciliation state lives in its own table, keyed by name, in the same dated migration"
   - "A driver failure becomes a directed error only when hasTable() confirms the table is absent; everything else keeps its own exception"
   - "No integer decoding at the storage boundary: a wrongly typed column throws a named package exception rather than being cast into a real-looking type id"
@@ -132,7 +132,7 @@ rule invariant) and prove it fires through that helper — which would want extr
 
 ## The unique key, and the null default label
 
-**The unique constraint is `(from_object_type, to_object_type, lookup_key)`.**
+**The unique constraint is `(from_object_type, to_object_type, lookup_hash)`.**
 
 The read key is `(direction, label)`, so that is what must be unique. REG-02 originally said the
 direction was unique against `type_id`, which is wrong (Codex P1 on PR #22): rows `(A, B, 10, 'buyer')`
@@ -145,14 +145,40 @@ type), and MySQL, PostgreSQL and SQLite all permit repeated `NULL`s in a unique 
 index over `label` would therefore leave the unlabelled default row duplicable — the same ambiguity
 reached through the one row a `NOT NULL` cannot cover.
 
-`lookup_key` is that triple with the null encoded. It is `NOT NULL` and holds
+`lookup_hash` is that triple with the null encoded, and then hashed. The encoding is
 `AssociationDirection::key($label)` — merged and tested in 03-01 — which maps `null` to `default:` and
 a label to `label:<label>`, so no label can collide with the unlabelled row however it is spelled. The
 index therefore bites on every row including the default one, and the database store keys on the
-identical string the array and cache stores key on: substitutability by construction rather than by
-coincidence.
+identical string the array and cache stores key on, one derivation later: substitutability by
+construction rather than by coincidence.
 
-Two alternatives were considered and rejected:
+**The hashing is the fix for Codex's P1 on PR #27, and it is a real defect rather than a stylistic
+one.** The column started as a readable `varchar`. MySQL's usual default collation —
+`utf8mb4_0900_ai_ci`, and `utf8mb4_unicode_ci` before it — is case **and** accent insensitive, so
+`…>label:Deals` and `…>label:deals` would have been one value to both the unique index and the store's
+own `WHERE`. A row labelled `Deals` would have answered a lookup for `deals`, putting a real type id
+on the wire for a label the portal does not have, and two labels differing only by case or accent could
+not have coexisted at all. That is precisely the silent-wrong-id failure this package exists to
+prevent, arriving through a column definition rather than through code.
+
+A per-driver `COLLATE` clause was the alternative and is rejected: the collation names differ across
+MySQL, PostgreSQL and SQLite, so it would have meant driver branching in the migration that only one
+leg of the matrix could ever execute. A lowercase hex digest has no case and no accents for any
+collation to fold, indexes in a fixed 64 characters whatever the label's length, and needs nothing
+configured.
+
+**It is asserted on the stored representation, not on a collation name.** SQLite's default `TEXT`
+collation is `BINARY`, so a purely behavioural case-sensitivity test stays green here whichever way the
+column is defined — the local suite could not have caught the original defect and cannot prove the fix.
+`test_the_stored_key_is_collation_proof` asserts the column matches `/^[0-9a-f]{64}$/` and contains no
+part of the label, which is the property that makes the collation irrelevant on every driver. The
+behavioural test is committed alongside it anyway.
+
+The other columns are safe under a case-insensitive collation and stay readable: `from_object_type`
+and `to_object_type` are normalised to canonical lower case by `HubspotObjectType` before they are
+written or queried, and `label` is never a predicate.
+
+Two alternatives to the encoded key itself were considered and rejected:
 
 - **A partial/filtered unique index on `is_default`.** MySQL supports neither filtered indexes nor a
   portable index on an expression, and MySQL is in the support matrix. `is_default` is nullable too,
@@ -321,7 +347,7 @@ in its own PR, as 03-01 already recorded.
 
 | Gate | Result |
 |---|---|
-| `vendor/bin/pest` | 574 passed (2272 assertions) — up from 531 on `main` |
+| `vendor/bin/pest` | 577 passed (2278 assertions) — up from 531 on `main` |
 | `vendor/bin/pest --coverage --min=95` | **100.0%** |
 | `vendor/bin/pest --mutate --min=80` | **MSI 99.24%** — 914 tested, 7 untested. **Zero new survivors:** all 7 are the pre-existing documented equivalents (4 in `Testing/HubspotFake.php`, 3 in `Gateway/ObjectGateway.php`). Up from 99.18% |
 | `vendor/bin/phpstan analyse --no-progress` | no errors, no baseline, no new suppression |
@@ -344,8 +370,12 @@ exist and are tested precisely so 03-03 needs no new store code.
 - **03-03 needs no new store code.** All four operations answer against the database store with the
   same guarantees as the other two, proved by test rather than asserted.
 - **A sync must write both directions of a pair as two rows under two names**, and each row's
-  `lookup_key` is derived by the store from the row — a writer that bypasses `upsert()` and inserts
+  `lookup_hash` is derived by the store from the row — a writer that bypasses `upsert()` and inserts
   directly must set it, or the unique index will not bite as intended.
+- **A collation is part of a schema's behaviour, not its decoration.** The one defect review found in
+  this plan was invisible to the whole local suite because SQLite collates `TEXT` as `BINARY` and
+  MySQL does not. Any future indexed column this package compares against user-supplied text needs the
+  same question asked of it.
 - **`hubspot:associations:doctor` can report the store in use and its reconciliation state** from
   `reconciledAt()`, which answers `null` for "never synced" under every store.
 - **REG-02 and REG-03 still do not close here.** REG-02's acceptance criteria name

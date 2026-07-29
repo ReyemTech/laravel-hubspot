@@ -27,15 +27,18 @@ use Throwable;
  *
  * ## The keying, and why it is not `(from, to, label)` in three columns
  *
- * Every read is keyed on `lookup_key`, which holds {@see AssociationDirection::key()} — the identical
- * string the other two stores key on. It is carried in its own `NOT NULL` column because `label` is
- * nullable and every supported database permits repeated `NULL`s in a unique index, which would leave
- * the unlabelled default row duplicable. The migration's own docblock has the full reasoning.
+ * Every read is keyed on `lookup_hash`, the digest of {@see AssociationDirection::key()} — the
+ * identical string the other two stores key on. It is carried in its own `NOT NULL` column because
+ * `label` is nullable and every supported database permits repeated `NULL`s in a unique index, which
+ * would leave the unlabelled default row duplicable. It is hashed rather than stored readably because
+ * MySQL's usual default collation is case and accent insensitive, so a readable key would make both
+ * the index and the `WHERE` below insensitive to a label's spelling (Codex P1 on PR #27). The
+ * migration's own docblock has the full reasoning for both.
  *
  * Reusing the merged key rather than assembling a second encoding here is the point: the encoding
  * lives in one place (STANDARDS §6b), and
- * `tests/Feature/Registry/DatabaseStoreSchemaTest.php::test_the_persisted_lookup_key_is_the_key_the_other_stores_use`
- * asserts the column really holds it, so the two cannot drift.
+ * `tests/Feature/Registry/DatabaseStoreSchemaTest.php::test_the_persisted_lookup_hash_is_the_digest_of_the_key_the_other_stores_use`
+ * asserts the column really holds its digest, so the two cannot drift.
  *
  * **No reversed key is computed anywhere in this class**, and no query names both directions. The
  * table holds both directions of a pair as two rows, so this is the one file in the package where a
@@ -72,7 +75,7 @@ final class DatabaseAssociationTypeStore implements AssociationTypeStore
         $record = $this->guarded(self::TABLE, fn (): mixed => $this->rows()
             ->where('from_object_type', $direction->from->value)
             ->where('to_object_type', $direction->to->value)
-            ->where('lookup_key', $direction->key($label))
+            ->where('lookup_hash', self::lookupHash($direction->key($label)))
             ->first());
 
         // Same key only: the same direction and the same label, never a second lookup.
@@ -90,7 +93,7 @@ final class DatabaseAssociationTypeStore implements AssociationTypeStore
                 [
                     'from_object_type' => $row->direction->from->value,
                     'to_object_type' => $row->direction->to->value,
-                    'lookup_key' => $row->key(),
+                    'lookup_hash' => self::lookupHash($row->key()),
                 ],
                 [
                     'type_id' => $row->type->typeId,
@@ -151,6 +154,19 @@ final class DatabaseAssociationTypeStore implements AssociationTypeStore
                 ['reconciled_at' => $at->getTimestamp()],
             );
         });
+    }
+
+    /**
+     * The indexed form of a storage key.
+     *
+     * SHA-256 is chosen for collision resistance, not for secrecy — there is nothing secret in a
+     * direction and a label. What it buys is a value made only of `0-9a-f`, which no collation on any
+     * driver can fold together, so two keys that differ compare as different everywhere without this
+     * package having to name a collation only one driver understands.
+     */
+    private static function lookupHash(string $key): string
+    {
+        return hash('sha256', $key);
     }
 
     private function rows(): Builder
