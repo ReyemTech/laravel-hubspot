@@ -308,9 +308,10 @@ final class AssociationsDoctorRecordingTest extends TestCase
 
         $row = self::rowFor('deals', 'contacts', 'Deals');
 
-        self::assertSame(77, $row?->type->typeId);
+        self::assertNotNull($row);
+        self::assertSame(77, $row->type->typeId);
         self::assertNull(
-            $row?->inverseTypeId,
+            $row->inverseTypeId,
             'The pairing was observed for type id 1; it says nothing about type id 77.',
         );
     }

@@ -109,6 +109,7 @@ final class AssociationsDoctorCommand extends Command
 
         if (! $forwardFound || ! $inverseFound) {
             $this->line('Recorded nothing: a pairing is recorded only when both directions were observed.');
+            $this->reportThePagingCaveat();
 
             return self::FAILURE;
         }
@@ -175,7 +176,9 @@ final class AssociationsDoctorCommand extends Command
             $label,
             $found ? 'FOUND' : 'NOT FOUND',
             count($reported),
-            implode(', ', array_map(strval(...), $reported)),
+            // `implode()` renders an int list directly; an `array_map(strval(...))` first would be a
+            // conversion with no observable result, i.e. a line no test could ever justify.
+            implode(', ', $reported),
         ));
 
         return $found;
@@ -205,6 +208,36 @@ final class AssociationsDoctorCommand extends Command
             inverseTypeId: $observedInverseTypeId,
             isDefault: $store->resolve($direction, $label)?->isDefault,
         ));
+    }
+
+    /**
+     * The one thing that can make a negative result here a FALSE negative (Codex P2 on PR #28).
+     *
+     * `AssociationGatewayContract::read()` returns the first page only — it calls `getPage()`
+     * with the SDK's own default limit of 500 and discards `paging.next` — so a record with more
+     * associations than that of one object type can carry the requested one on a page this probe
+     * never sees.
+     *
+     * **This is a caveat rather than a fix, deliberately.** The command cannot detect the state: the
+     * read hands back `list<AssociationRow>` with nowhere to carry `paging.next.after`, so even
+     * "stay silent when another page exists" needs the package-owned `AssociationPage` that 02-04's
+     * deferred items describe — a return-shape change on a Gateway contract, which is its own
+     * decision and its own plan. Saying so is the honest thing available today; quietly implementing
+     * a shape change inside a diagnostic command would not be.
+     *
+     * Printed only on a negative result. An operator reading a confirmation does not need it, and a
+     * caveat on every run is a caveat nobody reads.
+     */
+    private function reportThePagingCaveat(): void
+    {
+        // The wording avoids a possessive apostrophe after the product name on purpose: in a
+        // single-quoted PHP string, `HubSpot\'s` compiles to a token whose text contains the exact
+        // needle `tests/Arch/SdkSurfaceTest.php` scans for, so an innocent sentence would fail R1's
+        // non-vacuity check for prose rather than for code (02-05's deferred items).
+        $this->line(
+            'Note: an association read returns only the first page the API returns, so a record with '
+            .'more than 500 associations of one object type can report a false negative here.'
+        );
     }
 
     private static function directionOf(AssociationPair $pair): AssociationDirection

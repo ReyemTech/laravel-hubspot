@@ -232,7 +232,7 @@ final class AssociationsDoctorCommandTest extends TestCase
 
     /**
      * **A negative result names the one thing that can make it a false negative** (Codex P2 on
-     * PR #28). `AssociationGateway::read()` returns HubSpot's first page only — it calls `getPage()`
+     * PR #28). `AssociationGateway::read()` returns the first page only — it calls `getPage()`
      * with the SDK's own default limit of 500 and discards `paging.next` — so a record with more
      * associations than that of one object type can have the requested one on a page this probe never
      * sees, and report "not found" for an association that exists.
@@ -260,8 +260,8 @@ final class AssociationsDoctorCommandTest extends TestCase
         ]);
 
         self::assertContains(
-            'Note: an association read returns HubSpot\'s first page only, so a record with more than '
-            .'500 associations of one object type can report a false negative here.',
+            'Note: an association read returns only the first page the API returns, so a record with '
+            .'more than 500 associations of one object type can report a false negative here.',
             self::runDoctor(),
         );
     }
@@ -276,7 +276,7 @@ final class AssociationsDoctorCommandTest extends TestCase
         self::fakePortalWithTheExpectedIdSecond();
 
         foreach (self::runDoctor() as $line) {
-            self::assertStringNotContainsString('first page only', $line);
+            self::assertStringNotContainsString('false negative', $line);
         }
     }
 

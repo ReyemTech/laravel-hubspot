@@ -142,16 +142,22 @@ final class SyncAssociationsCommand extends Command
     }
 
     /**
-     * The pairs `config('hubspot.associations.sync')` names, as an ordered list.
+     * The pairs `config('hubspot.associations.sync')` names.
      *
-     * @return list<mixed>
+     * The keys are deliberately not normalised away. Nothing here reads one — the pairs are only
+     * iterated — so a consumer who would rather name their entries
+     * (`'deals-to-contacts' => ['from' => ..., 'to' => ...]`) gets exactly the same behaviour as one
+     * who writes a plain list. An `array_values()` here would have been a distinction no caller can
+     * observe, which is a line no test can justify.
+     *
+     * @return array<array-key, mixed>
      */
     private function enabledPairs(): array
     {
         /** @var mixed $configured */
         $configured = $this->laravel->make('config')->get('hubspot.associations.sync');
 
-        return is_array($configured) ? array_values($configured) : [];
+        return is_array($configured) ? $configured : [];
     }
 
     /**
@@ -226,6 +232,23 @@ final class SyncAssociationsCommand extends Command
      * "reconciliation never overwrites a baseline id without saying so": the override itself is
      * correct, since the portal's own id is the one HubSpot will honour, and it is the silence that
      * would not be.
+     *
+     * ## What an UNCHANGED row keeps, and why (Codex P2 on PR #28)
+     *
+     * `inverse_type_id` and `is_default` are **carried across when the type is unchanged**. This
+     * command cannot produce either value — see the class docblock for why the pairing is not
+     * derivable — so the only way a row has one is that `hubspot:associations:doctor` observed it,
+     * which costs a real association on a real record pair in a real portal.
+     *
+     * Rewriting them to null on every re-read would silently throw that measurement away, and the
+     * report would say `unchanged` while it happened, so nobody would know to look. An operator would
+     * have to re-run the doctor after every reconciliation to get back to where they already were.
+     *
+     * They are cleared when the type actually **changes**, and that is not symmetry for its own sake:
+     * the doctor's observation was about one specific type id. If the portal now reports a different
+     * one for this label, whatever was measured was measured about a type this direction no longer
+     * uses, and keeping it would leave a stale inverse id attached to a new type — a number that
+     * looks verified and is not.
      */
     private function record(
         AssociationTypeStore $store,
@@ -234,16 +257,18 @@ final class SyncAssociationsCommand extends Command
         string $label,
     ): void {
         $existing = $store->resolve($direction, $label);
+        $unchanged = $existing !== null && self::isSameType($existing->type, $definition->type);
 
         $store->upsert(new AssociationTypeRow(
             direction: $direction,
             type: $definition->type,
             label: $label,
-            // Never derived, never inferred, never carried over from the other direction's read.
-            inverseTypeId: null,
+            // Never derived from this read, and never carried over from the other direction's — only
+            // ever kept from an observation this row already carried for this same type.
+            inverseTypeId: $unchanged ? $existing->inverseTypeId : null,
             // HubSpot's labels endpoint does not report which type an unlabelled write materialises,
-            // so this stays unknown rather than being guessed at from the category.
-            isDefault: null,
+            // so this is never guessed at from the category — only kept, on the same terms.
+            isDefault: $unchanged ? $existing->isDefault : null,
         ));
 
         if ($existing === null) {
