@@ -96,6 +96,20 @@ final class ObjectTypeException extends InvalidArgumentException implements Hubs
     }
 
     /**
+     * An object type was handed to normalisation as something other than a string.
+     *
+     * Distinct from `nonStringObjectReference()` on purpose: that one is raised while BUILDING an
+     * object reference and names which of its two sides was wrong, so its message talks about a
+     * reference and an id. This one is raised by `Registry\HubspotObjectType::normalise()`, which has
+     * one argument and no id in sight, and steers to the object types normalisation actually accepts.
+     * Sharing one member would mean a message naming "an object id" for a call that has none.
+     */
+    public static function nonStringObjectType(mixed $received): self
+    {
+        return new self(sprintf('A HubSpot object type was given as type %s and cannot be normalised. Pass it as a string — for example "deals", "line_items", or a custom object\'s fully-qualified type "p12345_my_object". This is validated here rather than by the parameter type because declare(strict_types=1) binds at the calling file, not at this package\'s: in a file without it, 0 would have arrived as "0" and true as "1", and normalisation would have reported an unknown object type nobody wrote.', get_debug_type($received)));
+    }
+
+    /**
      * A directed association pair was built with the same record on both sides.
      */
     public static function selfAssociation(string $objectType, string $id): self
