@@ -72,6 +72,51 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Associations
+    |--------------------------------------------------------------------------
+    |
+    | Which object-type pairs `php artisan hubspot:associations:sync`
+    | reconciles against your portal.
+    |
+    | Each entry is one PAIR, and the command reads BOTH of its directions --
+    | `from -> to` and `to -> from` -- as two separate requests, writing one
+    | registry row per direction under that direction's own label. That is not
+    | belt and braces: a paired HubSpot label carries a DIFFERENT NAME in each
+    | direction (measured in a real portal on 2026-07-27: `Deals` one way and
+    | `People` the other), and its type id differs too, so one read cannot
+    | answer for both. Listing a pair once is therefore enough; listing the
+    | same pair reversed as a second entry only duplicates the work.
+    |
+    | The default is empty, and the command FAILS on an empty list rather than
+    | reporting a successful no-op -- a run that printed "done" would tell an
+    | operator their portal has no labels to reconcile when in fact nobody has
+    | said which pairs to look at. Add the pairs your application actually
+    | associates:
+    |
+    |     'sync' => [
+    |         ['from' => 'deals',    'to' => 'contacts'],
+    |         ['from' => 'contacts', 'to' => 'companies'],
+    |     ],
+    |
+    | Object types are normalised the way the rest of the registry normalises
+    | them, so 'Deals', 'deal' and 'deals' all name the same type, and a value
+    | that cannot be normalised throws naming what was passed rather than
+    | being encoded into a real-looking request path.
+    |
+    | Nothing here is required to use the package: the seeded HubSpot-defined
+    | baseline resolves offline whether or not you ever run the command.
+    | Reconciliation is what makes your portal's own USER_DEFINED labels
+    | resolvable, since their ids differ from account to account.
+    |
+    */
+    'associations' => [
+        'sync' => [
+            //
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Transport
     |--------------------------------------------------------------------------
     |

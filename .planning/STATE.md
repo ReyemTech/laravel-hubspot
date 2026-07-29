@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 2
-current_phase_name: Gateway Layer
+current_phase: 3
+current_phase_name: Registry & Stores
 status: complete
-stopped_at: "Phase 2 complete — all six plans merged to main; next action is planning Phase 3 (Registry)"
-last_updated: "2026-07-27T23:40:55.171Z"
-last_activity: 2026-07-27
-last_activity_desc: "executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 354 tests / 1588 assertions, 100.0% coverage, MSI 98.84%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision."
+stopped_at: "Phase 3 plans all executed; 03-03 is on a pushed PR awaiting merge by the orchestrator. Next action after merge is planning Phase 4 (Model Sync)"
+last_updated: "2026-07-29T00:00:00.000Z"
+last_activity: 2026-07-29
+last_activity_desc: "executed 03-03-PLAN.md (definitions read, sync and the two doctors): Gateway\AssociationDefinitionsGateway wraps the Schema-namespaced DefinitionsApi (the phase's only new HubSpot\* reference), hubspot:associations:sync reconciles both directions of each configured pair and leaves inverse_type_id null because the two responses share no join key, hubspot:doctor reports stores/resolver/reconciliation state and NAMES the absent bound-model section, hubspot:associations:doctor searches every reported association type for the expected directional id and records a pairing only when both directions were observed. 625 tests, 100.0% coverage. REG-02 and REG-03 tick; REG-01 and REG-04 stay OPEN with only their Phase 3 halves done."
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 13
-  completed_plans: 13
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 16
+  completed_plans: 16
 ---
 
 # Project State
@@ -27,14 +27,14 @@ HubSpot CRM object type — with no per-type code, no migration step, and no cha
 association backwards. Extended 2026-07-26: …and records intent signals against an anonymous visitor
 that become attributed contact properties the moment an email appears, with no API call in the
 request lifecycle.
-**Current focus:** Phase 2 — Gateway Layer
+**Current focus:** Phase 3 — Registry & Stores
 
 ## Current Position
 
-Phase: 2 of 9 (Gateway Layer) — **COMPLETE**
-Plan: 6 of 6 in current phase, all merged
-Status: **Phase 2 is complete.** All six plans are merged to `main` (PRs #8, #14, #15, #18, #19, #20), each with all 29 required checks green at merge and every Codex review thread read in full, answered with evidence, and then resolved. Merged `main` re-verified after the last merge: 354 tests / 1588 assertions, 100.0% coverage, PHPStan level max clean with no baseline, Pint and phpcs clean, 10/10 architecture rules fired, quality-gate firing harness and source hygiene green. Four Codex findings were raised across the phase and all four were real: two P2s on #18 (`associate()` reporting success on an unexpected 2xx that the SDK deserialises as `Model\Error`; `ObjectRef` relying on the *caller's* `strict_types` and so silently coercing `0`, `true` and large float ids), one P2 on #19 (the labelled reverse write resolving under the forward label — see GW-02's amended surface note), and one P1 on #20 (`assertSynced` assembling a property subset from several records, a false positive in the assertion meant to catch exactly that). **No plans remain in Phase 2. Next action: plan Phase 3 (Registry).**
-Last activity: 2026-07-27 — executed 02-06-PLAN.md (the fake's assertion surface): `assertSynced`, `assertNothingSynced`, `assertAssociated` asserting the DIRECTIONAL type id read from the recorded request body (and failing when the inverse id was written), `assertRequestCount` reporting both counts, and determinism by default — per-fake string id counter plus timestamps from the test clock, proven on byte-identical complete payloads across two fakes. 354 tests / 1588 assertions, 100.0% coverage, MSI 98.84%. GW-04 delivered; `assertWebhookHandled` deferred to Phase 5 as a recorded decision.
+Phase: 3 of 9 (Registry & Stores) — **all three plans executed**
+Plan: 3 of 3 in current phase; 03-01 and 03-02 merged (PRs #24, #27), 03-03 on a pushed PR awaiting the orchestrator's merge
+Status: **Phase 3's work is done, and two of its four requirements deliberately do not close.** 03-01 shipped object-type normalisation, the seeded HubSpot-defined baseline and the store seam (array + cache) with `AssociationTypeRegistry` bound on the Phase 2 resolver key; 03-02 the database store, its dated migration and the directed missing-table error, with the unique key corrected to a collation-proof `lookup_hash`; 03-03 the Gateway-owned association-definitions read, `hubspot:associations:sync`, `hubspot:doctor` and `hubspot:associations:doctor`. **REG-02 and REG-03 tick. REG-01 and REG-04 stay OPEN** — their local-id-resolution and bound-model halves need model binding (SYNC-01) and are Phase 4's as REG-01b and REG-04b. `hubspot:doctor` NAMES its absent model section rather than omitting it, and a test holds that, precisely so nobody reads the command's existence as the requirement being met.
+Last activity: 2026-07-29 — executed 03-03-PLAN.md. `Gateway\AssociationDefinitionsGateway` wraps `Schema\Api\DefinitionsApi` (the phase's only new `HubSpot\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. 625 tests, 100.0% coverage.
 
 Progress: [██████████] 100%
 
@@ -74,6 +74,7 @@ Progress: [██████████] 100%
 | Phase 02 P04 | ~20min | 2 tasks | 19 files |
 | Phase 02 P05 | ~75min | 3 tasks | 19 files |
 | Phase 02 P06 | ~95min | 3 tasks | 10 files |
+| Phase 03 P03 | ~110min | 3 tasks | 20 files |
 
 ## Accumulated Context
 
@@ -214,6 +215,12 @@ None yet.
 
 - ~~Mutation required check (quality.yml) will report red for the remainder of Phase 1: pest --mutate --min=80 over the deliberately-empty src/ triggers PHPUnit's failOnPhpunitWarning path (WARN + exit 1, no score computed), mirroring plan 01's already-flagged coverage-floor gap. Resolves automatically once Phase 2 adds the first mutable file under src/.~~ **RESOLVED as predicted** — the gate has computed a real score since 02-01 and ends Phase 2 at MSI 98.84% against a floor of 80, with 7 documented equivalent survivors (string casts the SDK re-coerces, and unreachable `?? ''` fallbacks). Do not chase them.
 - Git-history attribution defect: commit 022b9e6 (plan 05) accidentally includes three of plan 04's task-2 files (tests/Arch/LayerBoundariesTest.php, SecretLoggingTest.php, StrictTypesTest.php) due to concurrent git staging in a shared (non-worktree) working directory. Content is correct and both plans are green; plan 04 lacks a dedicated GREEN commit for its rule implementations in git log. See 01-05-SUMMARY.md Issues Encountered.
+- [Phase 3]: `DefinitionsApi` lives in `HubSpot\Client\Crm\Associations\V4\Schema\Api`, not the `V4\Api` REG-02 named — so the definitions read is a Gateway-owned collaborator (`Gateway\AssociationDefinitionsGateway`) with its own contract, not a fifth method on `AssociationGatewayContract` whose every method takes a record pair
+- [Phase 3]: `ExceptionTranslator` gained a THIRD SDK namespace (`Associations\V4\Schema`) only once something called it — Phase 2 excluded it deliberately, and the arch test that requires every referenced SDK `ApiException` to be recognised is what forced it at the right moment
+- [Phase 3]: `hubspot:associations:sync` leaves `inverse_type_id` NULL on every row. The two directional `getPage()` responses share no join key, and no read model in the pinned SDK exposes the pairing (`PublicAssociationDefinitionCreateRequest::$inverseLabel` is a WRITE model) — so it is populated only by observation, in `hubspot:associations:doctor`
+- [Phase 3]: The sync SKIPS definitions HubSpot returns with a null label rather than writing them. `AssociationTypeResolver::resolve()` takes a non-nullable label and the unlabelled write path never consults the registry, so such a row is unreachable — and two HubSpot-defined types on one direction would share the `default:` key and overwrite each other
+- [Phase 3]: `hubspot:doctor` ships REG-04a only and NAMES its absent bound-model section in three lines rather than omitting it; REG-01 and REG-04 stay open at the end of Phase 3 with only their Phase 3 halves done
+- [Phase 3]: `Testing\HubspotFake` keys canned responses by ROUTE, not object type: the definitions route is keyed `definitions:{from}>{to}` because reconciling a pair reads both directions and each returns its own labels. The default-response family moved out to `Testing\DefaultResponses`, the extraction 02-06's deferred items named
 
 ## Deferred Items
 
@@ -226,6 +233,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-27T23:22:23.018Z
-Stopped at: Completed 02-06-PLAN.md — Phase 2 complete, PR #20 open
+Last session: 2026-07-29
+Stopped at: Completed 03-03-PLAN.md — Phase 3's three plans all executed; 03-03 on a pushed PR awaiting the orchestrator's merge
 Resume file: None

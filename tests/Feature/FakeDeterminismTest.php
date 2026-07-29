@@ -10,6 +10,7 @@ use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\ObjectRef;
 use ReyemTech\Hubspot\Gateway\SearchQuery;
+use ReyemTech\Hubspot\Testing\DefaultResponses;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\Support\DirectedMapResolver;
 use ReyemTech\Hubspot\Tests\TestCase;
@@ -37,7 +38,10 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * of one field, so a stray random value anywhere in the double fails this file rather than surviving in
  * the one field nobody asserted on.
  */
-mutates(HubspotFake::class);
+mutates(
+    HubspotFake::class,
+    DefaultResponses::class,
+);
 
 final class FakeDeterminismTest extends TestCase
 {

@@ -16,6 +16,7 @@ use ReyemTech\Hubspot\Gateway\AssociationRow;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\ObjectRef;
+use ReyemTech\Hubspot\Testing\DefaultResponses;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\TestCase;
 use RuntimeException;
@@ -42,6 +43,7 @@ mutates(
     AssociationRow::class,
     ExceptionTranslator::class,
     HubspotFake::class,
+    DefaultResponses::class,
 );
 
 final class AssociationGatewayTest extends TestCase

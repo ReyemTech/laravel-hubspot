@@ -57,6 +57,11 @@ function reyemtech_hubspot_sdk_surface_boundary_shape_files(string $gatewayRoot)
         $gatewayRoot.'/ObjectRef.php',
         $gatewayRoot.'/AssociationPair.php',
         $gatewayRoot.'/AssociationRow.php',
+        // Crosses the boundary OUTBOUND into `Registry`: `hubspot:associations:sync` consumes a list
+        // of these, and `Registry` may not name a `HubSpot\*` class (R1). If it grew an SDK
+        // reference -- a `Schema\Model\AssociationSpecWithLabel` field, say -- the sync command
+        // would violate the rule merely by consuming the read it exists to consume.
+        $gatewayRoot.'/AssociationDefinition.php',
         // Both cross the boundary INBOUND, which is the direction that matters most here: Phase 3's
         // registry constructs an AssociationType and hands it to the Gateway, and Registry may not
         // name a `HubSpot\*` class (R1). If either of these grew an SDK reference -- an

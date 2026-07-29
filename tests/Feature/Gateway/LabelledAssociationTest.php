@@ -14,6 +14,7 @@ use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Gateway\AssociationGateway;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
+use ReyemTech\Hubspot\Testing\DefaultResponses;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\Support\AssociationFixtures;
 use ReyemTech\Hubspot\Tests\Support\DirectedMapResolver;
@@ -38,6 +39,7 @@ use Throwable;
 mutates(
     AssociationGateway::class,
     HubspotFake::class,
+    DefaultResponses::class,
 );
 
 final class LabelledAssociationTest extends TestCase

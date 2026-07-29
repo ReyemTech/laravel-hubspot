@@ -134,13 +134,30 @@ an implementation of the acceptance criterion.
 | Plan | Status | Delivers |
 |---|---|---|
 | 03-01 | Complete 2026-07-29 | Object type normalisation, the seeded HubSpot-defined baseline, the store seam (array + cache), and `AssociationTypeRegistry` bound on the Phase 2 resolver key — success criterion 1, and criterion 5's normalisation half |
-| 03-02 | Pending | The database store, its migration, and the missing-table error of criterion 3 |
-| 03-03 | Pending | `hubspot:associations:sync` (criterion 2) and the doctors (criterion 4, REG-04a only) |
+| 03-02 | Complete 2026-07-29 | The database store, its migration, and the missing-table error of criterion 3 |
+| 03-03 | Complete 2026-07-29 | `hubspot:associations:sync` (criterion 2) and the doctors (criterion 4, REG-04a only) |
 
 **Progress note, 2026-07-29 (03-01).** Criterion 1 is met and asserted end to end from the facade
 with no network, no credentials and no database. Criteria 2, 3 and 4 are untouched. Criterion 5's
 local-id half is Phase 4's (REG-01b), so REG-01 and REG-04 both stay **open** at the end of this
 phase, as the split above requires.
+
+**Phase close-out, 2026-07-29 (03-03).** Criteria 1, 2 and 3 are met. Criterion 4 is met **for
+REG-04a only**, which is what this phase scoped: both doctors ship, and `hubspot:associations:doctor`
+ships in full, but `hubspot:doctor`'s bound-model reporting does not exist and is not claimed — the
+command names that section as not built, and a test holds it. Criterion 5's local-id half is Phase
+4's. **REG-01 and REG-04 therefore remain OPEN**, with only their Phase 3 halves marked done;
+REG-02 and REG-03 tick here.
+
+Two things criterion 2's wording invites and the code deliberately does not do, recorded so a later
+audit does not read them as gaps. The SDK class is `Schema\Api\DefinitionsApi`, not the
+`Crm\Associations\V4\Api\DefinitionsApi` the criterion names, and it is called from a
+Gateway-owned collaborator because `Registry` may name no SDK class (R1). And `inverse_type_id` is
+**recorded but left null by the sync**: `getPage()` answers for one direction, the two directional
+responses share no join key, and no read model in the pinned SDK exposes the pairing — so it is
+populated only by observation, in `hubspot:associations:doctor`. The criterion's "provably never read
+on a write path" half is held by `LabelledWriteThroughRegistryTest` and
+`DatabaseStoreNeverTheInverseTest`.
 
 ### Phase 4: Model Sync
 

@@ -63,6 +63,43 @@ HubSpot integration bug, and it is the reason this package is shaped the way it 
 - Intent signals and paid-acquisition attribution that survives a long sales cycle
 - A one-line migration path for existing `tapp/laravel-hubspot` users
 
+## Artisan commands
+
+```
+php artisan hubspot:associations:sync
+```
+
+Reconciles your portal's own association labels into the registry. The seeded baseline covers
+HubSpot-defined types only, and every portal's `USER_DEFINED` label has a portal-specific id, so
+this is what makes your own labels resolvable. List the object-type pairs to reconcile under the
+`associations.sync` key of `config/hubspot.php`; each pair is read in **both** directions, because a
+paired HubSpot label carries a different name and a different id in each. It reports what it added,
+updated, left unchanged and skipped, naming both ids whenever a portal id replaces a seeded one.
+
+It deliberately leaves `inverse_type_id` empty: the two directional responses share no join key, so
+pairing them up would be a guess, and a guessed inverse id is a real, valid, wrong association id.
+
+```
+php artisan hubspot:doctor
+```
+
+Reports what this installation currently believes — which store the registry uses, which resolver is
+bound, whether and when the registry was reconciled, and how many rows across how many directions it
+holds. Local state only: no network, no credentials. It also **names** the bound-model section as not
+yet built, rather than omitting it, because "you have no bound models" and "this package cannot bind
+models yet" are different facts.
+
+```
+php artisan hubspot:associations:doctor deals 10 contacts 20 --label="Deals" --inverse-label="People"
+```
+
+Probes one real association in both directions and reports, per direction, whether the type id the
+registry would send is actually there. It **searches** every association type HubSpot reports for
+that record rather than taking the first one — a read returns a list in no guaranteed order, and
+taking the first would report success regardless of which id was really written. When both
+directions are confirmed it records the observed pairing into the registry; when either is not, it
+records nothing.
+
 ## Requirements
 
 - PHP `^8.3`

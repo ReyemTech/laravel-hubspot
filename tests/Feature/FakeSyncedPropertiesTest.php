@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Tests\Feature;
 
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\HubspotManager;
+use ReyemTech\Hubspot\Testing\DefaultResponses;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Testing\RecordedRequest;
 use ReyemTech\Hubspot\Testing\RequestLog;
@@ -41,6 +42,7 @@ use ReyemTech\Hubspot\Tests\TestCase;
  */
 mutates(
     HubspotFake::class,
+    DefaultResponses::class,
     RequestLog::class,
     RecordedRequest::class,
     HubspotManager::class,

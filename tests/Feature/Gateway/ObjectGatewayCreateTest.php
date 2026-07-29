@@ -11,6 +11,7 @@ use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\HubspotObject;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
 use ReyemTech\Hubspot\HubspotManager;
+use ReyemTech\Hubspot\Testing\DefaultResponses;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\TestCase;
 
@@ -30,6 +31,7 @@ mutates(
     ExceptionTranslator::class,
     HubspotManager::class,
     HubspotFake::class,
+    DefaultResponses::class,
 );
 
 final class ObjectGatewayCreateTest extends TestCase
