@@ -323,6 +323,58 @@ final class SyncAssociationsReportTest extends TestCase
     }
 
     /**
+     * **A stale row belongs to ONE direction, and sharing one end with another is not sharing a
+     * direction.**
+     *
+     * Two pairs are reconciled here, `deals/contacts` and `deals/companies`, and the stale label sits
+     * on `deals -> contacts`. A comparison that matched on either end rather than both would report
+     * `"Sponsor"` under `deals -> companies` as well — a direction confusion inside the one command
+     * whose job is to keep directions apart, and one that would send an operator to check a label
+     * against the wrong object type entirely.
+     */
+    public function test_a_stale_row_is_reported_for_its_own_direction_only(): void
+    {
+        config(['hubspot.associations.sync' => [
+            ['from' => 'deals', 'to' => 'contacts'],
+            ['from' => 'deals', 'to' => 'companies'],
+        ]]);
+
+        self::fakeFourDirections(self::twoLabels());
+        Artisan::call('hubspot:associations:sync');
+
+        self::fakeFourDirections([['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals']]);
+        $lines = self::runSync();
+
+        self::assertContains(
+            'deals -> contacts: the portal no longer reports 1 reconciled label this store still '
+            .'holds: "Sponsor". Nothing was removed.',
+            $lines,
+        );
+
+        foreach ($lines as $line) {
+            self::assertStringNotContainsString('deals -> companies: the portal no longer reports', $line);
+            self::assertStringNotContainsString('companies -> deals: the portal no longer reports', $line);
+            self::assertStringNotContainsString('contacts -> deals: the portal no longer reports', $line);
+        }
+    }
+
+    /**
+     * `deals -> contacts` answers with `$forward`; the other three directions of the two configured
+     * pairs answer empty.
+     *
+     * @param  list<array{category: string, typeId: int, label: string|null}>  $forward
+     */
+    private static function fakeFourDirections(array $forward): void
+    {
+        Hubspot::fake([
+            'definitions:deals>contacts' => Hubspot::response(self::body($forward), 200),
+            'definitions:contacts>deals' => Hubspot::response(self::body([]), 200),
+            'definitions:deals>companies' => Hubspot::response(self::body([]), 200),
+            'definitions:companies>deals' => Hubspot::response(self::body([]), 200),
+        ]);
+    }
+
+    /**
      * And a direction whose reconciled rows the portal still reports says nothing at all. No "0 stale
      * rows" line: a report that speaks on every run is a report nobody reads.
      */

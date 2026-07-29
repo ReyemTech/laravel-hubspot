@@ -354,11 +354,12 @@ final class SyncAssociationsCommand extends Command
         AssociationDirection $direction,
         array $reportedLabels,
     ): void {
-        $seeded = [];
-
-        foreach (BaselineAssociationTypes::rows() as $row) {
-            $seeded[$row->key()] = true;
-        }
+        // A list of keys rather than a `key => true` map, deliberately: `isset()` answers true for a
+        // value of `false`, so a map's flag would be a value no test could ever observe.
+        $seeded = array_map(
+            static fn (AssociationTypeRow $row): string => $row->key(),
+            BaselineAssociationTypes::rows(),
+        );
 
         $stale = [];
 
@@ -367,7 +368,7 @@ final class SyncAssociationsCommand extends Command
                 continue;
             }
 
-            if (isset($seeded[$row->key()]) || in_array($row->label, $reportedLabels, true)) {
+            if (in_array($row->key(), $seeded, true) || in_array($row->label, $reportedLabels, true)) {
                 continue;
             }
 
