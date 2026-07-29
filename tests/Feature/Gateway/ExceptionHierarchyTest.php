@@ -180,6 +180,22 @@ final class ExceptionHierarchyTest extends TestCase
         );
     }
 
+    /**
+     * The message an operator meets on their first deploy with `HUBSPOT_STORE=database`. It has to
+     * name the command, and it has to answer the question naming the command raises — every other
+     * Laravel package that ships a migration wants `vendor:publish` first, so a reader told to
+     * migrate will go looking for a publish step that this package does not need.
+     */
+    public function test_configuration_exception_missing_registry_table_names_the_command_to_run(): void
+    {
+        self::assertSame(
+            'HUBSPOT_STORE is set to "database" but the "hubspot_association_types" table does not '
+            .'exist. Run `php artisan migrate` to create it. Nothing needs publishing first: this '
+            .'package loads its own migrations whenever HUBSPOT_STORE=database.',
+            ConfigurationException::missingRegistryTable('hubspot_association_types')->getMessage(),
+        );
+    }
+
     public function test_object_type_exception_unmappable_names_the_offending_type_and_the_fix(): void
     {
         $exception = ObjectTypeException::unmappable('p_widgetz');

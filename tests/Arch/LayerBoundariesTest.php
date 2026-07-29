@@ -49,8 +49,38 @@ arch('R1: Gateway is the only layer that may reference HubSpot\* SDK classes')->
  * `Sync`/`Webhooks`/`Frontend`, never on `Exceptions`, so every one of them fires unchanged.
  */
 
+/*
+ * R2 additionally allows `Illuminate`, added 2026-07-29.
+ *
+ * **The framework namespace was never what R2 existed to keep out.** R2 is a rule about this
+ * package's INTERNAL layering: `Registry` must not reach into `Sync`, `Webhooks` or `Gateway`
+ * internals, because those dependencies are the ones that turn six layers into one. `Illuminate`
+ * tripping it was incidental — `pest-plugin-arch`'s dependency scan keeps user-defined vendor classes
+ * and filters only PHP internals, so an `Illuminate\*` import read as a layer violation.
+ *
+ * Plan 03-01 worked around that for a two-method cache by inverting the dependency
+ * (`Registry\Contracts\RegistryCache` as the port, `ReyemTech\Hubspot\IlluminateRegistryCache` at the
+ * composition root as the adapter), which was cheap at that size. It is not cheap for 03-02's
+ * database store: a package-owned port over query-builder and schema access is a large, leaky
+ * abstraction invented solely to satisfy a lint rule, in a package whose entire purpose is Laravel
+ * integration. `illuminate/database` is already a production `require` in `composer.json`, so naming
+ * `Illuminate\Database\ConnectionInterface` or `Illuminate\Database\QueryException` installs nothing
+ * and admits nothing that was not already shipped.
+ *
+ * This widens no LAYER boundary. R2's own committed violation fixture,
+ * `tests/Arch/Fixtures/R2/RegistryDependsOnSync.php`, still makes the rule go red under
+ * `scripts/ci/verify-arch-rules-fire.sh`, because the boundary it violates — `Registry` reaching into
+ * `Sync` — is the boundary R2 is actually for, and is untouched. 03-01's `RegistryCache` port stays
+ * exactly where it is: it is merged, tested and harmless, and rewriting it to match the widened rule
+ * would be churn.
+ *
+ * R3 through R5 deliberately do NOT gain `Illuminate`. `Sync`, `Webhooks` and `Signals` have not
+ * needed it yet, and a rule widened before something needs it is a rule nobody can argue against
+ * later.
+ */
+
 // @phpstan-ignore method.notFound, method.nonObject
-arch('R2: Registry may depend only on Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Registry')->toOnlyUse(['ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
+arch('R2: Registry may depend only on Gateway, the package exceptions and the framework')->expect('ReyemTech\Hubspot\Registry')->toOnlyUse(['ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions', 'Illuminate']);
 
 // @phpstan-ignore method.notFound, method.nonObject
 arch('R3: Sync may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Sync')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);

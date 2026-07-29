@@ -15,6 +15,7 @@ use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
+use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\ServiceProvider;
 use ReyemTech\Hubspot\Tests\TestCase;
 
@@ -93,25 +94,24 @@ final class RegistryBindingsTest extends TestCase
             self::fail('Expected an unrecognised store name to throw rather than fall back.');
         } catch (ConfigurationException $exception) {
             self::assertSame(
-                ConfigurationException::unknownStore('redis', ['array', 'cache'])->getMessage(),
+                ConfigurationException::unknownStore('redis', ['array', 'cache', 'database'])->getMessage(),
                 $exception->getMessage(),
             );
         }
     }
 
     /**
-     * `database` is documented, loads this package's migrations, and has no store behind it until the
-     * plan that ships that migration. Until then it is rejected with the same directed error as any
-     * other unsupported value, rather than quietly resolving to the cache store — which would leave a
-     * portal reading a cache it believed was a table.
+     * `database` became a valid value in 03-02, which is the plan that shipped the migration and the
+     * store behind it. Before that it was rejected by name rather than quietly resolving to the cache
+     * store — which would have left a portal reading a cache it believed was a table. It is asserted
+     * here from a default-configured application, so the binding is proved to follow the config alone
+     * and not the environment `DatabaseStoreTestCase` sets up.
      */
-    public function test_the_database_store_is_not_silently_treated_as_the_cache_store(): void
+    public function test_the_database_store_is_selectable(): void
     {
         config(['hubspot.store' => 'database']);
 
-        $this->expectException(ConfigurationException::class);
-
-        app(AssociationTypeStore::class);
+        self::assertInstanceOf(DatabaseAssociationTypeStore::class, app(AssociationTypeStore::class));
     }
 
     /**

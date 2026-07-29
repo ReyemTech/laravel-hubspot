@@ -43,7 +43,7 @@ final class DatabaseStoreMissingTableTest extends DatabaseStoreTestCase
      * Every operation on the contract, not just the read: a sync writing into an unmigrated database
      * deserves the same sentence as a lookup.
      *
-     * @param  Closure(AssociationTypeStore): mixed  $operation
+     * @param  Closure(AssociationTypeStore): void  $operation
      */
     #[DataProvider('operationProvider')]
     public function test_every_operation_names_the_migration_when_its_table_is_absent(
@@ -67,7 +67,7 @@ final class DatabaseStoreMissingTableTest extends DatabaseStoreTestCase
     }
 
     /**
-     * @return array<string, array{Closure(AssociationTypeStore): mixed, string}>
+     * @return array<string, array{Closure(AssociationTypeStore): void, string}>
      */
     public static function operationProvider(): array
     {
@@ -81,28 +81,33 @@ final class DatabaseStoreMissingTableTest extends DatabaseStoreTestCase
 
         return [
             'resolve' => [
-                static fn (AssociationTypeStore $store): mixed => $store->resolve(
-                    AssociationDirection::of(from: 'tickets', to: 'companies'),
-                    'Escalated to',
-                ),
+                static function (AssociationTypeStore $store): void {
+                    $store->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+                },
                 DatabaseAssociationTypeStore::TABLE,
             ],
             'upsert' => [
-                static fn (AssociationTypeStore $store): mixed => $store->upsert($row),
+                static function (AssociationTypeStore $store) use ($row): void {
+                    $store->upsert($row);
+                },
                 DatabaseAssociationTypeStore::TABLE,
             ],
             'all' => [
-                static fn (AssociationTypeStore $store): mixed => $store->all(),
+                static function (AssociationTypeStore $store): void {
+                    $store->all();
+                },
                 DatabaseAssociationTypeStore::TABLE,
             ],
             'reconciledAt' => [
-                static fn (AssociationTypeStore $store): mixed => $store->reconciledAt(),
+                static function (AssociationTypeStore $store): void {
+                    $store->reconciledAt();
+                },
                 DatabaseAssociationTypeStore::STATE_TABLE,
             ],
             'markReconciled' => [
-                static fn (AssociationTypeStore $store): mixed => $store->markReconciled(
-                    new DateTimeImmutable('@1000000000'),
-                ),
+                static function (AssociationTypeStore $store): void {
+                    $store->markReconciled(new DateTimeImmutable('@1000000000'));
+                },
                 DatabaseAssociationTypeStore::STATE_TABLE,
             ],
         ];
@@ -111,10 +116,16 @@ final class DatabaseStoreMissingTableTest extends DatabaseStoreTestCase
     /**
      * **A database failure that is not a missing table is not relabelled as one.**
      *
-     * The table is replaced by one of the same name without the columns the store queries, so the
-     * query fails while `hasTable()` still answers true. Reporting "run `php artisan migrate`" here
+     * The table is replaced by one of the same name without the columns the store writes, so the
+     * write fails while `hasTable()` still answers true. Reporting "run `php artisan migrate`" here
      * would send the reader to a command that has already been run and would leave the real fault — a
      * schema someone else edited — undiagnosed.
+     *
+     * A write rather than a read, because of a SQLite behaviour worth knowing about before writing a
+     * similar test: an unrecognised **double-quoted identifier** in a `WHERE` clause is silently
+     * reinterpreted as a string literal, so a `SELECT` against a table missing the columns it filters
+     * on returns no rows instead of failing. An `INSERT` names its columns and does fail
+     * (`table ... has no column named ...`), on every supported driver.
      */
     public function test_a_query_failure_with_the_table_present_is_not_reported_as_a_missing_table(): void
     {
@@ -129,6 +140,12 @@ final class DatabaseStoreMissingTableTest extends DatabaseStoreTestCase
 
         $this->expectException(QueryException::class);
 
-        $this->store()->resolve(AssociationDirection::of(from: 'tickets', to: 'companies'), 'Escalated to');
+        $this->store()->upsert(new AssociationTypeRow(
+            direction: AssociationDirection::of(from: 'tickets', to: 'companies'),
+            type: new AssociationType(typeId: 4242, category: 'USER_DEFINED'),
+            label: 'Escalated to',
+            inverseTypeId: null,
+            isDefault: null,
+        ));
     }
 }
