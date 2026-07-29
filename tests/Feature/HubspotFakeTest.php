@@ -9,6 +9,7 @@ use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\ObjectRef;
 use ReyemTech\Hubspot\Gateway\SearchQuery;
 use ReyemTech\Hubspot\HubspotManager;
+use ReyemTech\Hubspot\Testing\DefaultResponses;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Testing\RecordedRequest;
 use ReyemTech\Hubspot\Testing\RequestLog;
@@ -43,6 +44,7 @@ use RuntimeException;
  */
 mutates(
     HubspotFake::class,
+    DefaultResponses::class,
     RequestLog::class,
     RecordedRequest::class,
     HubspotManager::class,

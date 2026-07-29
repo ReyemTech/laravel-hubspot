@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Facades;
 
 use Illuminate\Support\Facades\Facade;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\HubspotManager;
@@ -52,6 +53,7 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  *
  * @method static ObjectGatewayContract objects()
  * @method static AssociationGatewayContract associations()
+ * @method static AssociationDefinitionsGatewayContract associationDefinitions()
  * @method static HubspotFake fake(array<string, CannedResponse|CannedConnectionFailure> $responses = [])
  * @method static CannedResponse response(array<string, mixed> $body, int $status = 200)
  * @method static CannedConnectionFailure connectionFailure()

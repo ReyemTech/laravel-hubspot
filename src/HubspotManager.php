@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot;
 
 use Illuminate\Contracts\Container\Container;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
@@ -41,11 +42,30 @@ final class HubspotManager
     }
 
     /**
+     * The portal's own association-label catalogue — what association types it defines for a stated
+     * direction between two object types.
+     *
+     * Its own gateway rather than a method on `associations()`: that surface is about associating two
+     * RECORDS and every method on it takes an `AssociationPair` carrying two record ids, while a
+     * definitions read has no records in it at all. `php artisan hubspot:associations:sync` is its
+     * consumer.
+     */
+    public function associationDefinitions(): AssociationDefinitionsGatewayContract
+    {
+        return $this->container->make(AssociationDefinitionsGatewayContract::class);
+    }
+
+    /**
      * Installs a Guzzle `MockHandler`-backed transport under the real SDK so no HTTP leaves the
      * process. Deterministic by default: ids come from a counter that restarts on every call to
      * this method — no Faker, no randomness (02-CONTEXT.md).
      *
-     * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by object type
+     * Canned responses are keyed by **route key**: the object type for every `/objects/` route, and
+     * `definitions:{fromObjectType}>{toObjectType}` for the association-definitions route, which is
+     * keyed on its direction because reconciling a pair reads both directions and each returns its own
+     * labels under its own names. See `Testing\HubspotFake::routeKeyOf()`.
+     *
+     * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by route key
      */
     public function fake(array $responses = []): HubspotFake
     {
@@ -53,7 +73,7 @@ final class HubspotManager
     }
 
     /**
-     * Builds a canned response body + HTTP status for one object type, to be passed into
+     * Builds a canned response body + HTTP status for one route key, to be passed into
      * `fake()`'s keyed map.
      *
      * @param  array<string, mixed>  $body

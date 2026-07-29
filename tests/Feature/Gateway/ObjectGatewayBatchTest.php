@@ -12,6 +12,7 @@ use ReyemTech\Hubspot\Gateway\BatchResult;
 use ReyemTech\Hubspot\Gateway\HubspotObject;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
 use ReyemTech\Hubspot\Testing\CannedResponse;
+use ReyemTech\Hubspot\Testing\DefaultResponses;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\TestCase;
 
@@ -37,6 +38,7 @@ mutates(
     BatchError::class,
     ApiException::class,
     HubspotFake::class,
+    DefaultResponses::class,
 );
 
 final class ObjectGatewayBatchTest extends TestCase

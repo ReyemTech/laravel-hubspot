@@ -6,6 +6,8 @@ namespace ReyemTech\Hubspot\Gateway;
 
 use HubSpot\Client\Crm\Associations\V4\ApiException as SdkAssociationsV4ApiException;
 use HubSpot\Client\Crm\Associations\V4\Model\Error as SdkAssociationsV4Error;
+use HubSpot\Client\Crm\Associations\V4\Schema\ApiException as SdkAssociationsV4SchemaApiException;
+use HubSpot\Client\Crm\Associations\V4\Schema\Model\Error as SdkAssociationsV4SchemaError;
 use HubSpot\Client\Crm\Objects\ApiException as SdkObjectsApiException;
 use HubSpot\Client\Crm\Objects\Model\Error as SdkObjectsError;
 use ReyemTech\Hubspot\Exceptions\ApiException;
@@ -16,12 +18,19 @@ use Throwable;
  * Translates the SDK's per-namespace ApiException into the package's own ApiException, so a raw
  * `HubSpot\*` exception never reaches userland (STANDARDS §9). The SDK has no shared
  * `ApiException` base class — it is codegen'd once per API namespace (02-RESEARCH.md Pitfall 1,
- * 60 distinct FQCNs, each independently `extends \Exception`). Recognises the Objects and
- * Associations\V4 namespaces — the only two this phase's Gateway calls into
+ * 60 distinct FQCNs, each independently `extends \Exception`). Recognises the Objects,
+ * Associations\V4 and Associations\V4\Schema namespaces — the three the Gateway calls into
  * (tests/Arch/SdkSurfaceTest.php proves this list stays complete against the Gateway's own
- * source). The Associations\V4\Schema namespace is deliberately excluded: nothing in Phase 2
- * calls it, and a speculative catch would be unreachable code dragging on the coverage and
- * mutation floors (02-02-PLAN.md's scope note).
+ * source).
+ *
+ * **Associations\V4\Schema was added by plan 03-03, when something finally called it.** Phase 2
+ * deliberately excluded it: `Gateway\AssociationDefinitionsGateway` did not exist, so the branch
+ * would have been unreachable code dragging on the coverage and mutation floors (02-02-PLAN.md's
+ * scope note). That gateway now reads
+ * `HubSpot\Client\Crm\Associations\V4\Schema\Api\DefinitionsApi`, whose namespace has its own
+ * codegen'd `ApiException` and its own `Model\Error` — so without this branch a failed definitions
+ * read would fall through to the untyped tail below and lose HubSpot's correlation id, which is the
+ * one field a support ticket needs.
  */
 final class ExceptionTranslator
 {
@@ -38,6 +47,7 @@ final class ExceptionTranslator
         return [
             SdkObjectsApiException::class,
             SdkAssociationsV4ApiException::class,
+            SdkAssociationsV4SchemaApiException::class,
         ];
     }
 
@@ -80,18 +90,27 @@ final class ExceptionTranslator
             return $this->translateRecognised($exception, $correlationId);
         }
 
+        if ($exception instanceof SdkAssociationsV4SchemaApiException) {
+            $responseObject = $exception->getResponseObject();
+            $correlationId = $responseObject instanceof SdkAssociationsV4SchemaError ? $responseObject->getCorrelationId() : null;
+
+            return $this->translateRecognised($exception, $correlationId);
+        }
+
         // Not one of the recognised SDK namespaces — still never let it escape untranslated.
         return ApiException::httpError((int) $exception->getCode(), null, null, $exception);
     }
 
     /**
-     * Both recognised namespaces expose the identical method shape (`getCode()`,
+     * All three recognised namespaces expose the identical method shape (`getCode()`,
      * `getResponseBody()`, `getResponseObject()`) since they come from the same code generator —
-     * one routine handles both once the caller has already resolved the namespace-specific
+     * one routine handles them once the caller has already resolved the namespace-specific
      * correlation id above.
      */
-    private function translateRecognised(SdkObjectsApiException|SdkAssociationsV4ApiException $exception, ?string $correlationId): ApiException
-    {
+    private function translateRecognised(
+        SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException $exception,
+        ?string $correlationId,
+    ): ApiException {
         $status = (int) $exception->getCode();
 
         if ($status === 0) {

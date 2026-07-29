@@ -9,7 +9,9 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
+use ReyemTech\Hubspot\Gateway\AssociationDefinitionsGateway;
 use ReyemTech\Hubspot\Gateway\AssociationGateway;
+use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
@@ -111,6 +113,7 @@ final class ServiceProvider extends BaseServiceProvider
         // against it, rather than needing to forget a cached gateway instance.
         $this->app->bind(ObjectGatewayContract::class, ObjectGateway::class);
         $this->app->bind(AssociationGatewayContract::class, AssociationGateway::class);
+        $this->app->bind(AssociationDefinitionsGatewayContract::class, AssociationDefinitionsGateway::class);
     }
 
     /**
