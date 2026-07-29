@@ -33,6 +33,7 @@ tech-stack:
     - "Record a pairing only from observation; never from inference across two directional reads"
 key-files:
   created:
+    - .planning/phases/03-registry-and-stores/deferred-items.md
     - src/Gateway/AssociationDefinition.php
     - src/Gateway/Contracts/AssociationDefinitionsGatewayContract.php
     - src/Gateway/AssociationDefinitionsGateway.php
@@ -44,6 +45,8 @@ key-files:
     - tests/Feature/Registry/SyncAssociationsCommandTest.php
     - tests/Feature/Registry/DoctorCommandTest.php
     - tests/Feature/Registry/AssociationsDoctorCommandTest.php
+    - tests/Feature/Registry/SyncAssociationsReportTest.php
+    - tests/Feature/Registry/AssociationsDoctorRecordingTest.php
     - tests/Unit/Gateway/AssociationDefinitionTest.php
     - tests/Support/CommandOutput.php
   modified:
@@ -65,6 +68,8 @@ decisions:
   - "hubspot:associations:doctor records a pairing only when both directions were observed; a half-observed pairing writes nothing"
   - "HubspotFake keys canned responses by ROUTE, with definitions:{from}>{to} for the labels route"
   - "The default-response family moved out of HubspotFake into Testing\\DefaultResponses, taking the id counter with it"
+  - "An unchanged definition keeps the inverse_type_id the doctor observed; a changed type id clears it (Codex P2)"
+  - "The sync REPORTS rows the portal no longer returns and removes none of them; seeded keys are excluded so the baseline is not reported every run (Codex P2, mitigation not fix)"
 metrics:
   duration: one session, 2026-07-29
   completed: 2026-07-29
@@ -496,7 +501,7 @@ exact needle `tests/Arch/SdkSurfaceTest.php` scans for. R1's non-vacuity test we
 not for code. 02-05's deferred items predicted this precisely; the fix is the rephrasing, and the
 reason is now a comment at the call site.
 
-### P2 — *"Prune labels missing from a completed sync"* — REPORTED, not implemented. This is the seam finding.
+### P2 — *"Prune labels missing from a completed sync"* — MITIGATED, not fixed. This is the seam finding.
 
 The finding is real: a label deleted or renamed in HubSpot leaves a row nobody removes, the store is
 marked freshly reconciled anyway, and the stale row keeps resolving a type id that may no longer
@@ -521,11 +526,35 @@ miss, so:
   map — so pruning needs a notion of "this direction's response was complete" that the paging item
   above says the package cannot currently express.
 
-**Recommendation for whoever takes it:** it wants its own plan, its own decision on the baseline
-read-through, and an owner sign-off on the contract change — the same shape 03-01's `Illuminate`/R2
-question took before 03-02 resolved it. A cheaper interim mitigation that needs no contract change:
-have the sync **report** rows it holds for a direction that the portal did not return, without
-removing them. That turns a silent staleness into a visible one, and is additive.
+**The interim mitigation this summary originally proposed was accepted by the maintainer and now
+ships.** After each direction is reconciled, the sync names rows this store holds that the portal did
+not return, and removes none of them:
+
+```
+deals -> contacts: the portal no longer reports 1 reconciled label this store still holds: "Sponsor". Nothing was removed.
+```
+
+Silent staleness became visible staleness — the same move the paging caveat makes in the doctor.
+Nothing about the store contract changed, and the exit status does not change either: a stale row is
+a report, not a failure.
+
+**Seeded keys are excluded, and that exclusion is the whole difficulty.** `all()` returns "what it has
+been given, plus the seeded baseline it falls back to", and HubSpot answers `label: null` for its
+`HUBSPOT_DEFINED` types — which the sync skips — so a seeded label can **never** appear in a portal
+response. A naive comparison would therefore report the baseline's own labels on every single run;
+`contacts -> companies` alone would emit two phantom stale rows every time, which trains an operator
+to ignore the one line that eventually matters.
+`test_the_seeded_baseline_is_never_reported_as_stale` is the regression test for exactly that.
+
+**The blind spot this leaves, stated rather than hidden:** a row an earlier reconciliation wrote under
+a key the baseline also seeds is excluded by the filter and goes unreported. That is the same baseline
+read-through ambiguity that makes real pruning undecidable, surfacing one layer earlier — and it is
+precisely why this is a mitigation and not the fix. It is documented at the method, not only here.
+
+**Real pruning still needs its own plan, its own decision on the baseline read-through, and an owner
+sign-off on the contract change** — the same shape 03-01's `Illuminate`/R2 question took before 03-02
+resolved it. The full argument is in `.planning/phases/03-registry-and-stores/deferred-items.md`,
+where Phase 4 will find it.
 
 ## Known stubs
 
@@ -534,6 +563,9 @@ section — is absent by phase boundary, is **named in the command's own output*
 has a test asserting that naming, and is owned by Phase 4 as REG-04b with the requirement left open.
 
 ## Deferred items this plan touched but did not fix
+
+**All of these are also written to `.planning/phases/03-registry-and-stores/deferred-items.md`**, so
+Phase 4 finds them where it looks rather than only inside a summary it may not read.
 
 - **Association reads still do not page past HubSpot's first 500** (02-04's entry). Reachable from
   `hubspot:associations:doctor`: a record with more than 500 associations of one object type would
@@ -546,6 +578,12 @@ has a test asserting that naming, and is owned by Phase 4 as REG-04b with the re
   So a portal with more label definitions for one pair than HubSpot returns in one page has no
   expressible second page in the pinned SDK. This is an **upstream** gap, not a package one, and it is
   new: it belongs with the read-paging item above if either is ever taken on.
+- **`src/Registry/Console/SyncAssociationsCommand.php` is 417 lines** against a 300-line review
+  target (the 500-line hard gate passes). Recorded so the next person extracts rather than appends;
+  the natural seam is the reporting — the tally, the per-outcome lines, the stale-row report and the
+  summary line, ~120 lines that would move out as a stateless collaborator. Not extracted here because
+  the change that pushed it there was a review fix, and splitting a class in the same commit would
+  have made the correctness diff harder to read.
 - **`composer.lock` is still stale** (`composer validate --strict` exits 2 locally, passes in CI).
   Pre-existing, still owed its own maintenance PR, deliberately not folded into this feature branch.
 - **STANDARDS §7's "every `HUBSPOT_*` env var listed in the README with its default" is still unmet.**
