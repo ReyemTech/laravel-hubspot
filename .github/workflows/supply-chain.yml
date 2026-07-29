@@ -58,13 +58,28 @@ jobs:
           php-version: '8.4'
           coverage: none
 
-      - name: Check whether a previous release exists
+      # This step resolves the previous release ONCE and hands the tag name to the check below,
+      # rather than only answering yes/no and letting roave detect the release itself. roave's own
+      # detection parses tag names as version strings via composer/semver, and this repository's
+      # tags do not parse: release-please is configured with a component, so it produces
+      # `reyemtech/laravel-hubspot-v0.2.0`, and `Semver::sort()` throws
+      # `UnexpectedValueException: Invalid version string` on that name where it reads `v0.2.0`
+      # fine. The result was `Could not detect any released versions for the given repository` --
+      # a hard failure on every pull request from the moment the first tag existed, comparing
+      # nothing. It went unnoticed at 0.2.0 because that release's own supply-chain run happened
+      # before its tag was pushed.
+      #
+      # `--sort=-v:refname` orders by the embedded version rather than lexically, so 0.10.0 sorts
+      # above 0.9.0 once this package gets that far.
+      - name: Resolve the previous release, if there is one
         id: previous-release
         run: |
-          if [ -z "$(git tag -l)" ]; then
+          previous="$(git tag -l --sort=-v:refname | head -n 1)"
+          if [ -z "$previous" ]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
           else
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$previous" >> "$GITHUB_OUTPUT"
           fi
 
       # The guard is on tag ABSENCE, not on the tool's exit code -- no unconditional
@@ -96,6 +111,9 @@ jobs:
       # Phase 9 follow-up work in docs/repo/owner-gated-checklist.md rather than silently dropped,
       # since wiring it safely (without becoming a permanent escape hatch on this step) needs its
       # own design pass.
+      #
+      # `--from` is passed explicitly, and is not optional here: without it roave falls back to
+      # detecting the previous release from tag names it cannot parse. See the resolve step above.
       - name: Run the backward-compatibility check
         if: steps.previous-release.outputs.exists == 'true'
-        run: vendor/bin/roave-backward-compatibility-check --format=github-actions
+        run: vendor/bin/roave-backward-compatibility-check --from="${{ steps.previous-release.outputs.tag }}" --format=github-actions
