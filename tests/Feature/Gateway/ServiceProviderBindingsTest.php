@@ -15,8 +15,8 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
-use ReyemTech\Hubspot\Gateway\UnresolvedAssociationTypeResolver;
 use ReyemTech\Hubspot\HubspotManager;
+use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
 use ReyemTech\Hubspot\ServiceProvider;
 use ReyemTech\Hubspot\Tests\TestCase;
 
@@ -106,17 +106,25 @@ final class ServiceProviderBindingsTest extends TestCase
 
     /**
      * The resolver seam's default binding, and the reason it is a singleton where the gateways are
-     * not: `UnresolvedAssociationTypeResolver` holds no state and no transport, so there is nothing
-     * for `Hubspot::fake()` to invalidate. Phase 3 rebinds this key to its registry-backed
-     * implementation — that rebinding is the extension point, and it is the only change Phase 3
-     * needs to make to turn every labelled write in this package from a throw into a resolved
-     * request. If this test needs editing to accommodate it, the seam was shaped wrongly.
+     * not: neither the Phase 2 default nor the Phase 3 registry holds a transport, so there is
+     * nothing for `Hubspot::fake()` to invalidate.
+     *
+     * **Phase 3 rebound this key, which is what the seam was shaped for.** The prediction this test
+     * carried until 03-01 — "that rebinding is the only change Phase 3 needs to make to turn every
+     * labelled write from a throw into a resolved request" — held exactly: one line moved in
+     * `ServiceProvider::register()`, no Gateway signature changed, and the test below still passes
+     * unedited. What changed here is the NAME of the class the key points at, which is the one thing
+     * a rebinding is supposed to change; the seam's shape did not.
+     *
+     * `Gateway\UnresolvedAssociationTypeResolver` is still shipped and still public — it is what a consumer
+     * binds to disable labelled writes outright — and its behaviour is still asserted, explicitly
+     * bound, in `NeverTheInverseTest` and `AssertAssociatedDirectionTest`.
      */
-    public function test_the_association_type_resolver_defaults_to_the_one_that_resolves_nothing(): void
+    public function test_the_association_type_resolver_is_bound_to_the_registry_as_a_singleton(): void
     {
         $resolver = app(AssociationTypeResolver::class);
 
-        self::assertInstanceOf(UnresolvedAssociationTypeResolver::class, $resolver);
+        self::assertInstanceOf(AssociationTypeRegistry::class, $resolver);
         self::assertSame($resolver, app(AssociationTypeResolver::class));
     }
 

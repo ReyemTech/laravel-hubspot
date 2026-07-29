@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot;
 
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\AssociationGateway;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
@@ -13,7 +15,11 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
-use ReyemTech\Hubspot\Gateway\UnresolvedAssociationTypeResolver;
+use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
+use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
+use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
+use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
+use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -31,6 +37,14 @@ use ReyemTech\Hubspot\Gateway\UnresolvedAssociationTypeResolver;
  */
 final class ServiceProvider extends BaseServiceProvider
 {
+    /**
+     * The store names HUBSPOT_STORE accepts. Named here rather than inline so the selector and the
+     * error message that lists the valid values cannot drift apart.
+     *
+     * @var list<string>
+     */
+    private const SUPPORTED_STORES = ['array', 'cache'];
+
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/hubspot.php', 'hubspot');
@@ -52,16 +66,48 @@ final class ServiceProvider extends BaseServiceProvider
 
         $this->app->singleton(ExceptionTranslator::class);
 
-        // The association-type resolver seam. Shared, unlike the gateways: the default
-        // implementation holds no state and no transport, so there is nothing for Hubspot::fake()
-        // to invalidate by swapping the client factory underneath it.
+        // The association-type registry, and the store it reads.
         //
-        // This one line is the whole extension point (decision #5). Phase 3 (REG-02) rebinds this
-        // key to a registry-backed implementation and every labelled write in the package starts
-        // resolving instead of throwing — with no change to any Gateway signature, because the
-        // gateway takes its resolver from the container rather than constructing one. Until then the
-        // honest answer to "what type id is this?" is an exception naming the direction that failed.
-        $this->app->singleton(AssociationTypeResolver::class, UnresolvedAssociationTypeResolver::class);
+        // The store selector is HUBSPOT_STORE. An unrecognised value throws rather than falling back
+        // to another store: a package that fell back would keep answering — from the seeded
+        // baseline — while the operator believed their portal's own reconciled ids were in use, which
+        // is the silent-wrong-id failure this package exists to prevent, wearing a config bug's
+        // clothes. `database` is documented and loads this package's migrations, and gains its store
+        // in the plan that ships that migration; until then it is rejected here like any other
+        // unsupported value.
+        $this->app->singleton(RegistryCache::class, function (Application $app): RegistryCache {
+            return new IlluminateRegistryCache($app->make(CacheRepository::class));
+        });
+
+        $this->app->singleton(AssociationTypeStore::class, function (Application $app): AssociationTypeStore {
+            /** @var mixed $store */
+            $store = $app->make('config')->get('hubspot.store');
+
+            return match ($store) {
+                'cache' => new CacheAssociationTypeStore($app->make(RegistryCache::class)),
+                'array' => new ArrayAssociationTypeStore,
+                default => throw ConfigurationException::unknownStore(
+                    is_string($store) ? $store : get_debug_type($store),
+                    self::SUPPORTED_STORES,
+                ),
+            };
+        });
+
+        // The association-type resolver seam. Shared, unlike the gateways: the registry holds no
+        // transport, so there is nothing for Hubspot::fake() to invalidate by swapping the client
+        // factory underneath it.
+        //
+        // **This one line is the whole of Phase 3's integration** (decision #5). It moved from
+        // Gateway\UnresolvedAssociationTypeResolver — which resolved nothing and threw honestly,
+        // the correct behaviour for a package whose registry did not exist yet — to
+        // Registry\AssociationTypeRegistry, and every labelled write in the package started resolving
+        // instead of throwing. No Gateway signature changed, because the gateway takes its resolver
+        // from the container rather than constructing one.
+        //
+        // UnresolvedAssociationTypeResolver is deliberately still shipped and still public: it is the
+        // honest resolver for a consumer who wants labelled writes disabled outright, and removing a
+        // public class would be a backward-compatibility break for a behaviour nobody asked to lose.
+        $this->app->singleton(AssociationTypeResolver::class, AssociationTypeRegistry::class);
 
         $this->app->singleton(HubspotManager::class);
 
