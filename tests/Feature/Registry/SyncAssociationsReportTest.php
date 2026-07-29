@@ -8,12 +8,14 @@ use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Artisan;
 use ReyemTech\Hubspot\Facades\Hubspot;
+use ReyemTech\Hubspot\Registry\AssociationDirection;
 use ReyemTech\Hubspot\Registry\AssociationTypeRow;
 use ReyemTech\Hubspot\Registry\Console\SyncAssociationsCommand;
 use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Tests\Support\CommandOutput;
 use ReyemTech\Hubspot\Tests\TestCase;
+use Symfony\Component\Console\Command\Command;
 
 /**
  * **What `hubspot:associations:sync` SAYS it did.**
@@ -227,6 +229,128 @@ final class SyncAssociationsReportTest extends TestCase
             self::assertStringNotContainsString('skipped 0', $line);
             self::assertDoesNotMatchRegularExpression('/: skipped /', $line);
         }
+    }
+
+    /**
+     * **A label the portal stopped reporting is named, and the row is left exactly where it was.**
+     *
+     * Codex's third P2 on PR #28 is real: a label deleted or renamed in HubSpot leaves a row nobody
+     * removes, the store is marked freshly reconciled anyway, and that row keeps resolving a type id
+     * the portal may no longer honour. Actually pruning it needs an operation
+     * `Registry\Contracts\AssociationTypeStore` does not have, and is not even well defined against
+     * the seeded baseline's read-through — so what ships is the mitigation: **the staleness becomes
+     * visible instead of silent**, and nothing is removed.
+     *
+     * Both halves are asserted here. Naming it without leaving it in place would be a prune wearing a
+     * report's clothes, and leaving it in place without naming it is the state this change exists to
+     * end.
+     */
+    public function test_a_label_the_portal_no_longer_reports_is_named_and_left_in_place(): void
+    {
+        self::fakePortal(self::twoLabels());
+        Artisan::call('hubspot:associations:sync');
+
+        self::fakePortal([['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals']]);
+        $lines = self::runSync();
+
+        self::assertContains(
+            'deals -> contacts: the portal no longer reports 1 reconciled label this store still '
+            .'holds: "Sponsor". Nothing was removed.',
+            $lines,
+        );
+
+        $stillThere = app(AssociationTypeStore::class)->resolve(
+            AssociationDirection::of(from: 'deals', to: 'contacts'),
+            'Sponsor',
+        );
+
+        self::assertNotNull($stillThere, 'The row must be left in place; this report prunes nothing.');
+        self::assertSame(5, $stillThere->type->typeId);
+    }
+
+    /**
+     * Two of them read as "labels", and they are listed in a stable order. A report whose wording or
+     * ordering depends on a store's internal iteration is a report two runs cannot be diffed against
+     * each other.
+     */
+    public function test_several_stale_labels_are_listed_together_in_a_stable_order(): void
+    {
+        self::fakePortal([
+            ['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals'],
+            ['category' => 'USER_DEFINED', 'typeId' => 5, 'label' => 'Sponsor'],
+            ['category' => 'USER_DEFINED', 'typeId' => 9, 'label' => 'Advisor'],
+        ]);
+        Artisan::call('hubspot:associations:sync');
+
+        self::fakePortal([['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals']]);
+
+        self::assertContains(
+            'deals -> contacts: the portal no longer reports 2 reconciled labels this store still '
+            .'holds: "Advisor", "Sponsor". Nothing was removed.',
+            self::runSync(),
+        );
+    }
+
+    /**
+     * **The trap this report is most likely to fall into, pinned as a regression test.**
+     *
+     * `AssociationTypeStore::all()` includes the seeded baseline by contract — "what it has been
+     * given, plus the seeded baseline it falls back to". A naive "held for this direction but absent
+     * from the response" comparison would therefore report the baseline's own labels on **every
+     * single run**: HubSpot returns `label: null` for its `HUBSPOT_DEFINED` types and this command
+     * skips those, so a seeded label can never appear in a portal response.
+     * `contacts -> companies` alone would emit two phantom stale rows every time.
+     *
+     * Noise on every run is worse than no report at all — it trains an operator to ignore the one
+     * line that will eventually matter. So seeded keys are excluded, and what is reported is a row
+     * that neither the portal returned nor the baseline seeds: precisely a row an earlier
+     * reconciliation wrote and this portal no longer reports.
+     */
+    public function test_the_seeded_baseline_is_never_reported_as_stale(): void
+    {
+        config(['hubspot.associations.sync' => [['from' => 'contacts', 'to' => 'companies']]]);
+
+        Hubspot::fake([
+            'definitions:contacts>companies' => Hubspot::response(self::body([]), 200),
+            'definitions:companies>contacts' => Hubspot::response(self::body([]), 200),
+        ]);
+
+        foreach (self::runSync() as $line) {
+            self::assertStringNotContainsString('no longer reports', $line);
+            self::assertStringNotContainsString('Contact to company', $line);
+            self::assertStringNotContainsString('Company to contact', $line);
+        }
+    }
+
+    /**
+     * And a direction whose reconciled rows the portal still reports says nothing at all. No "0 stale
+     * rows" line: a report that speaks on every run is a report nobody reads.
+     */
+    public function test_a_direction_with_nothing_stale_produces_no_line_at_all(): void
+    {
+        self::fakePortal(self::twoLabels());
+        Artisan::call('hubspot:associations:sync');
+
+        self::fakePortal(self::twoLabels());
+
+        foreach (self::runSync() as $line) {
+            self::assertStringNotContainsString('no longer reports', $line);
+        }
+    }
+
+    /**
+     * A stale row is a fact to report, not a failure. An operator scripting this command in a
+     * deployment would otherwise see a red exit for a label somebody renamed in HubSpot months ago,
+     * which is exactly the state this report exists to surface calmly.
+     */
+    public function test_a_stale_row_does_not_change_the_exit_status(): void
+    {
+        self::fakePortal(self::twoLabels());
+        Artisan::call('hubspot:associations:sync');
+
+        self::fakePortal([['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals']]);
+
+        self::assertSame(Command::SUCCESS, Artisan::call('hubspot:associations:sync'));
     }
 
     /**

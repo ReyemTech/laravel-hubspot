@@ -309,6 +309,14 @@ final class AssociationsDoctorCommandTest extends TestCase
             $lines,
         );
 
+        // And it reports ONE thing about each direction, not two. Falling through to the search after
+        // an empty read would add "NOT FOUND among 0 reported: ." beneath a line that already said
+        // there is nothing there -- two different-sounding reports of one fact, which is how an
+        // operator ends up debugging the wrong thing.
+        foreach ($lines as $line) {
+            self::assertStringNotContainsString('among 0 reported', $line);
+        }
+
         self::assertNull(self::rowFor('deals', 'contacts', 'Deals')?->inverseTypeId);
         self::assertNull(self::rowFor('contacts', 'deals', 'People')?->inverseTypeId);
 
