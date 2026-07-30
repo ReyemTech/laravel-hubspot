@@ -52,7 +52,11 @@ PHP `^8.3`; this package targets `^8.2` for reach.
 - **Never use `$request->fullUrl()` for signature verification.** Symfony sorts query params;
   HubSpot signs the raw URI.
 - **Never add a runtime dependency** without justification in the PR description. Production
-  `require` is `php`, `hubspot/api-client`, `illuminate/contracts` — and stays that way.
+  `require` is **seven** entries and stays that way — `php`, `hubspot/api-client`,
+  `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `illuminate/view` and
+  `laravel/prompts`. The `manifest shape (seven production requires)` CI gate is authoritative.
+  Anything Laravel-standard is therefore already available and costs nothing to name; the rule is
+  about adding *new* packages, not about avoiding the framework.
 - **Never add a PHPStan baseline.** Fix it or suppress it per-line with a written reason.
 - **Never let a raw SDK exception reach userland.** Wrap it in the package's hierarchy.
 - **Never run tests against a real HubSpot portal** in the default suite. Integration tests are a
@@ -73,6 +77,15 @@ PHP `^8.3`; this package targets `^8.2` for reach.
   discipline in this repository to quietly drop. Read every Codex comment in full, then either fix
   it or reply saying with evidence why it is wrong. Closing a thread in silence is not allowed, and
   "it's only a bot" is not a reason.
+- **Every resolved thread gets a written reply, including the ones you fixed.** A fix is not a
+  reply. The reply names the commit carrying it and says whether the finding was fixed, mitigated,
+  or judged wrong — otherwise the thread records only that somebody clicked resolve, and nobody can
+  tell later whether the fix matched what was asked.
+- **Comment `@codex review` after pushing fixes, before merging.** Codex reviews trigger on pull
+  request open, on draft-ready, and on that comment — **never on a push**. So the commits that fix a
+  finding are by default never reviewed by the thing that found it, and "no new comments appeared"
+  means nobody looked. Never report that as a clean result. Every Phase 3 PR merged this way; see
+  `STANDARDS.md` §12.
 - **Local green is not evidence.** Phase 1 shipped four gate failures that passed on the machine
   and failed in CI — no `composer.lock` on a matrix build, a missing workflow permission, a Node
   pin below what pnpm requires, and a missing coverage driver. None were reachable without pushing.

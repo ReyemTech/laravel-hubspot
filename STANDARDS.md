@@ -331,11 +331,21 @@ somebody considered the feedback.
 - **Every automated review comment is read in full before its thread is resolved.** Codex, or
   whatever replaces it. There is no "these are just bot comments" exemption — they read the diff
   more carefully than a tired human does at 2am.
-- **A thread is closed by fixing the finding, or by a reply explaining with evidence why it is
-  wrong.** Never by silence. If the finding is correct but out of scope, say so and record where
-  the work went.
+- **Every resolved thread carries a written reply — including the ones that were fixed.** A fix
+  is not a reply. Resolving a thread silently because the code changed leaves no record of *what*
+  changed, whether the fix matches what was asked, or what was deliberately left undone; the
+  reviewer, and the next person reading the thread, sees only a closed conversation. The reply
+  names the commit that carries the fix, and states plainly whether the finding was fixed,
+  mitigated, or judged wrong with evidence.
+- **A finding that is correct but out of scope is answered, not deferred in silence.** Say so, say
+  why, and name where the work went — a deferred-items file, a requirement, a phase.
 - **Resolving to unblock a merge is forbidden.** This is the specific failure that produced this
   section, not a hypothetical.
+- **Re-request review after pushing fixes.** Codex reviews trigger on pull-request open, on a
+  draft being marked ready, and on an explicit `@codex review` comment — **not on a push.** So the
+  commits that fix a finding are, by default, never reviewed by the thing that found it. Absence
+  of new comments after a fix push is absence of review, not a clean result, and must never be
+  reported as one. Comment `@codex review` once the fixes are pushed and before merging.
 - **Verify before implementing.** A reviewer asserts; it does not prove. Several findings in the
   incident below were reproducible locally in minutes, and one recommendation would have been
   wrong to follow as written.
@@ -349,6 +359,16 @@ trigger it, so Pages would have silently never deployed — the exact failure th
 to prevent. A third finding was a defect in this repository's own release configuration, where
 `bump-patch-for-minor-pre-major` downgraded `feat:` commits to patch bumps below 1.0.0 while the
 commit message introducing it claimed the opposite.
+
+**The re-review rule has its own incident.** Phase 3 (2026-07-29) went the other way and handled
+every finding properly: eight findings across five pull requests, all eight real, all read, all
+answered, all resolved. But every one of those pull requests merged at a commit *later* than the
+one Codex had reviewed, and no re-review was requested — so the commits fixing the findings were
+never seen by the reviewer that raised them. PR #28 merged nine unreviewed commits, including a
+~120-line feature added in response to a finding. Worse, an executor reported "no new Codex
+findings" on those commits and that was relayed as a clean result, when Codex had simply never
+looked. Given the project's hit rate at that point — nineteen findings, nineteen real — the fixes
+were the last thing that should have gone unreviewed.
 
 None of them were found by CI. All of them were sitting in threads someone had already closed.
 
