@@ -1,0 +1,142 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Phase 3 — the registry, the baseline map, and the definitions read, against a real portal.
+ *
+ * Three things here have never been exercised outside the fake:
+ *
+ * 1. **A seeded baseline id is real.** `contacts -> companies` is typeId 279 in this package's
+ *    baseline because the design spec says so. This is where that number meets HubSpot: it is
+ *    resolved offline with no network, put on the wire, and read back by SEARCHING the returned
+ *    list for it. A wrong baseline id is the failure this package exists to prevent, and it is
+ *    accepted silently by HubSpot -- so no test against a fake could ever catch it.
+ *
+ * 2. **`DefinitionsApi` lives where 03-CONTEXT says it does.** REG-02 originally named
+ *    `Crm\Associations\V4\Api\DefinitionsApi`, which does not exist; the real class is under a
+ *    `Schema` segment. That correction was made by reading the vendor tree. This calls it.
+ *
+ * 3. **HubSpot really does return `label: null` for HUBSPOT_DEFINED types.** The entire decision to
+ *    give baseline rows this package's own canonical names rests on that being true. It was
+ *    measured twice in FOUND-03 and never since.
+ *
+ * The read-back deliberately SEARCHES the returned association types rather than taking the first.
+ * `associationTypes` comes back in no guaranteed order, so "the only one" or "the first one" would
+ * report success regardless of which id was actually written -- the exact bug the doctor was
+ * written to avoid.
+ */
+
+use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
+use ReyemTech\Hubspot\Gateway\AssociationPair;
+use ReyemTech\Hubspot\Gateway\ObjectRef;
+use ReyemTech\Hubspot\Probes\Probe;
+use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
+use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
+
+return function (Probe $p): void {
+    $stamp = $p->stamp;
+
+    // An EMPTY store. Everything resolved below comes from the seeded baseline read-through, which
+    // is the claim being tested: a labelled write works straight after `composer require`, with no
+    // sync, no database and no portal round trip to discover the id.
+    $registry = new AssociationTypeRegistry(ArrayAssociationTypeStore::fromArray([]));
+
+    $p->section('Phase 3 — the baseline resolves offline (REG-02)');
+
+    $label = 'Contact to company';
+
+    try {
+        $resolved = $registry->resolve(
+            new AssociationPair(from: new ObjectRef('contacts', '0'), to: new ObjectRef('companies', '0')),
+            $label,
+        );
+
+        $resolved->typeId === 279
+            ? $p->ok('resolved a baseline label with no network', "\"{$label}\" -> typeId 279")
+            : $p->fail('resolved a baseline label', "expected typeId 279, got {$resolved->typeId}");
+    } catch (AssociationTypeException $e) {
+        $p->fail('resolved a baseline label with no network', $e->getMessage());
+
+        return;
+    }
+
+    // The rule the whole phase exists to hold: a direction the registry does not know THROWS and
+    // never answers with the inverse. `companies -> contacts` under this label is a different row
+    // with a different id, and it must not be substituted.
+    try {
+        $registry->resolve(
+            new AssociationPair(from: new ObjectRef('contacts', '0'), to: new ObjectRef('companies', '0')),
+            'a label no portal has ever defined',
+        );
+        $p->fail('an unknown label throws', 'it RESOLVED -- a miss must never answer');
+    } catch (AssociationTypeException $e) {
+        $p->ok('an unknown label throws, naming the direction', 'no inverse substituted');
+    }
+
+    $p->section('Phase 3 — a labelled write reaches the wire with the right id (REG-02)');
+
+    $contact = $p->objects->create('contacts', [
+        'email' => "phase3-smoke-{$stamp}@example.com",
+        'firstname' => 'Phase Three',
+        'lastname' => 'Smoke',
+    ]);
+    $p->track('contacts', $contact->id);
+    $p->ok('created a contact', "id {$contact->id}");
+
+    $company = $p->objects->create('companies', ['name' => "Phase 3 smoke {$stamp}"]);
+    $p->track('companies', $company->id);
+    $p->ok('created a company', "id {$company->id}");
+
+    $pair = new AssociationPair(
+        from: new ObjectRef('contacts', $contact->id),
+        to: new ObjectRef('companies', $company->id),
+    );
+
+    $p->associationsResolvedBy($registry)->associateWithLabel($pair, $label);
+    $p->ok('labelled write accepted', 'resolved offline, sent typeId 279');
+
+    // SEARCH the list. Taking the first would pass whatever was written.
+    $rows = $p->associations->read($pair);
+    $ids = array_map(static fn ($r): int => $r->typeId, $rows);
+
+    in_array(279, $ids, true)
+        ? $p->ok('read it back and FOUND typeId 279', sprintf('among %d row(s): %s', count($rows), implode(', ', $ids)))
+        : $p->fail('read it back and found typeId 279', sprintf('got %s instead', implode(', ', $ids) ?: 'nothing'));
+
+    $inverseRows = $p->associations->read($pair->reversed());
+    $inverseIds = array_map(static fn ($r): int => $r->typeId, $inverseRows);
+    $p->ok('read the INVERSE direction', sprintf('typeId %s', implode(', ', $inverseIds) ?: 'none'));
+
+    in_array(280, $inverseIds, true)
+        ? $p->ok('the inverse is 280, as the baseline claims', 'both directions confirmed live')
+        : $p->note(
+            'The baseline names 280 as the inverse of 279. This portal reported '
+            .(implode(', ', $inverseIds) ?: 'nothing')
+            .'. Worth investigating before trusting that row -- it is recorded for traversal, never read on a write path.'
+        );
+
+    $p->section('Phase 3 — the definitions read, through the Schema-namespaced DefinitionsApi');
+
+    $definitions = $p->definitions->listFor('contacts', 'companies');
+    $p->ok('read this portal\'s definitions', sprintf('%d definition(s)', count($definitions)));
+
+    $unlabelled = array_filter($definitions, static fn ($d): bool => $d->label === null);
+    $labelled = array_filter($definitions, static fn ($d): bool => $d->label !== null);
+
+    $p->ok(
+        'counted labelled vs unlabelled',
+        sprintf('%d with a label, %d with label: null', count($labelled), count($unlabelled)),
+    );
+
+    count($unlabelled) > 0
+        ? $p->ok('HubSpot really does return label: null', 'the baseline naming decision holds')
+        : $p->note(
+            'This portal returned a label for every definition. The baseline gives HUBSPOT_DEFINED '
+            .'rows this package\'s own canonical names precisely because FOUND-03 measured null '
+            .'labels; if that is no longer true, revisit that decision.'
+        );
+
+    $p->associationsResolvedBy($registry)->dissociate($pair);
+    $p->ok('dissociated', '');
+};
