@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Registry & Stores
 status: complete
-stopped_at: "Phase 3 plans all executed; 03-03 is on a pushed PR awaiting merge by the orchestrator. Next action after merge is planning Phase 4 (Model Sync)"
-last_updated: "2026-07-29T00:00:00.000Z"
+stopped_at: "Phase 3 complete — 03-01 (#24), 03-02 (#27) and 03-03 (#28) all merged to main, trackers reconciled. Next action is planning Phase 4 (Model Sync), which owns REG-01b and REG-04b"
+last_updated: "2026-07-29T21:30:00.000Z"
 last_activity: 2026-07-29
-last_activity_desc: "executed 03-03-PLAN.md (definitions read, sync and the two doctors): Gateway\AssociationDefinitionsGateway wraps the Schema-namespaced DefinitionsApi (the phase's only new HubSpot\* reference), hubspot:associations:sync reconciles both directions of each configured pair and leaves inverse_type_id null because the two responses share no join key, hubspot:doctor reports stores/resolver/reconciliation state and NAMES the absent bound-model section, hubspot:associations:doctor searches every reported association type for the expected directional id and records a pairing only when both directions were observed. 625 tests, 100.0% coverage. REG-02 and REG-03 tick; REG-01 and REG-04 stay OPEN with only their Phase 3 halves done."
+last_activity_desc: "executed 03-03-PLAN.md (definitions read, sync and the two doctors): Gateway\AssociationDefinitionsGateway wraps the Schema-namespaced DefinitionsApi (the phase's only new HubSpot\* reference), hubspot:associations:sync reconciles both directions of each configured pair and leaves inverse_type_id null because the two responses share no join key, hubspot:doctor reports stores/resolver/reconciliation state and NAMES the absent bound-model section, hubspot:associations:doctor searches every reported association type for the expected directional id and records a pairing only when both directions were observed. Codex raised three P2s on #28: verified inverse ids are now carried across an unchanged re-read, the doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is deferred to Phase 4. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%. REG-02 and REG-03 tick; REG-01 and REG-04 stay OPEN with only their Phase 3 halves done."
 progress:
   total_phases: 3
   completed_phases: 3
@@ -32,9 +32,9 @@ request lifecycle.
 ## Current Position
 
 Phase: 3 of 9 (Registry & Stores) — **all three plans executed**
-Plan: 3 of 3 in current phase; 03-01 and 03-02 merged (PRs #24, #27), 03-03 on a pushed PR awaiting the orchestrator's merge
+Plan: 3 of 3 in current phase; 03-01, 03-02 and 03-03 all merged (PRs #24, #27, #28). Phase 3 is complete
 Status: **Phase 3's work is done, and two of its four requirements deliberately do not close.** 03-01 shipped object-type normalisation, the seeded HubSpot-defined baseline and the store seam (array + cache) with `AssociationTypeRegistry` bound on the Phase 2 resolver key; 03-02 the database store, its dated migration and the directed missing-table error, with the unique key corrected to a collation-proof `lookup_hash`; 03-03 the Gateway-owned association-definitions read, `hubspot:associations:sync`, `hubspot:doctor` and `hubspot:associations:doctor`. **REG-02 and REG-03 tick. REG-01 and REG-04 stay OPEN** — their local-id-resolution and bound-model halves need model binding (SYNC-01) and are Phase 4's as REG-01b and REG-04b. `hubspot:doctor` NAMES its absent model section rather than omitting it, and a test holds that, precisely so nobody reads the command's existence as the requirement being met.
-Last activity: 2026-07-29 — executed 03-03-PLAN.md. `Gateway\AssociationDefinitionsGateway` wraps `Schema\Api\DefinitionsApi` (the phase's only new `HubSpot\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. 625 tests, 100.0% coverage.
+Last activity: 2026-07-29 — executed 03-03-PLAN.md. `Gateway\AssociationDefinitionsGateway` wraps `Schema\Api\DefinitionsApi` (the phase's only new `HubSpot\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%.
 
 Progress: [██████████] 100%
 
@@ -234,5 +234,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-07-29
-Stopped at: Completed 03-03-PLAN.md — Phase 3's three plans all executed; 03-03 on a pushed PR awaiting the orchestrator's merge
+Stopped at: Phase 3 complete — 03-01 (#24), 03-02 (#27) and 03-03 (#28) all merged to main and the trackers reconciled. Next action is planning Phase 4 (Model Sync), which owns REG-01b and REG-04b
 Resume file: None
