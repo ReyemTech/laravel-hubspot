@@ -106,7 +106,113 @@ $requireKeys = array_keys($require);
 
 $qualifiedNames = [];
 
-foreach (PhpToken::tokenize($contents) as $token) {
+$tokens = PhpToken::tokenize($contents);
+
+// Indices of the tokens that carry meaning, so lookahead can step over whitespace and comments
+// without counting them.
+$significant = [];
+
+foreach ($tokens as $index => $token) {
+    if (in_array($token->id, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+        continue;
+    }
+
+    $significant[] = $index;
+}
+
+// GROUP USE must be reassembled before anything is classified.
+//
+// `use Illuminate\{Console\Command, Support\Carbon};` does NOT tokenize the way a reader expects.
+// PHP emits the prefix and the members as separate tokens -- T_STRING "Illuminate", T_NS_SEPARATOR,
+// then T_NAME_QUALIFIED "Console\Command" and T_NAME_QUALIFIED "Support\Carbon". Classified naively,
+// each member's FIRST segment reads as a vendor root, so `Console` and `Support` get reported as
+// unapproved third-party roots and this gate rejects a legal import. Worse in the other direction:
+// an undeclared Illuminate root hidden inside a group use would never be seen at all, because the
+// root token says `Contracts`, not `Illuminate`.
+//
+// Codex raised this on PR #37 and it reproduced exactly: a tracked src/ file importing
+// `use Illuminate\{Console\Command, Support\Carbon};` drove Direction B red naming both members.
+//
+// The prefix is stitched back on here, and the member tokens are marked consumed so the generic
+// pass below cannot classify them a second time under the wrong root.
+$consumed = [];
+$count = count($significant);
+
+for ($k = 0; $k < $count; $k++) {
+    if ($tokens[$significant[$k]]->id !== T_USE) {
+        continue;
+    }
+
+    $cursor = $k + 1;
+
+    // `use function Foo\{...}` and `use const Foo\{...}` put a keyword between T_USE and the prefix.
+    if (isset($significant[$cursor]) && in_array($tokens[$significant[$cursor]]->id, [T_FUNCTION, T_CONST], true)) {
+        $cursor++;
+    }
+
+    $prefixIndex = $significant[$cursor] ?? null;
+    $separatorIndex = $significant[$cursor + 1] ?? null;
+    $braceIndex = $significant[$cursor + 2] ?? null;
+
+    if ($prefixIndex === null || $separatorIndex === null || $braceIndex === null) {
+        continue;
+    }
+
+    $prefixToken = $tokens[$prefixIndex];
+
+    // A group use is exactly: <prefix> \ { -- anything else is an ordinary import the generic pass
+    // already handles correctly.
+    if (! in_array($prefixToken->id, [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+        continue;
+    }
+
+    if ($tokens[$separatorIndex]->id !== T_NS_SEPARATOR || $tokens[$braceIndex]->text !== '{') {
+        continue;
+    }
+
+    $prefix = ltrim($prefixToken->text, '\\');
+    $consumed[$prefixIndex] = true;
+
+    $member = $cursor + 3;
+    $skipAlias = false;
+
+    while ($member < $count) {
+        $memberIndex = $significant[$member];
+        $memberToken = $tokens[$memberIndex];
+
+        if ($memberToken->text === '}') {
+            break;
+        }
+
+        if ($memberToken->id === T_AS) {
+            // The identifier after `as` is a local alias, not a namespace segment.
+            $skipAlias = true;
+            $member++;
+
+            continue;
+        }
+
+        if (in_array($memberToken->id, [T_STRING, T_NAME_QUALIFIED], true)) {
+            $consumed[$memberIndex] = true;
+
+            if ($skipAlias) {
+                $skipAlias = false;
+            } else {
+                $qualifiedNames[] = $prefix.'\\'.$memberToken->text;
+            }
+        }
+
+        $member++;
+    }
+
+    $k = $member;
+}
+
+foreach ($tokens as $index => $token) {
+    if (isset($consumed[$index])) {
+        continue;
+    }
+
     // T_NAME_RELATIVE (`namespace\Foo`) is deliberately excluded: it always resolves relative to
     // the current file's own namespace, so it can never name a vendor root.
     if (in_array($token->id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
@@ -289,11 +395,119 @@ PHP
         failed=1
     fi
 
+    # Group use, all three ways. The accept half proves the gate does not reject a legal
+    # `use Illuminate\{Console\Command, Support\Carbon};`; the reject halves prove it did not buy
+    # that by going blind, which is the failure mode that matters -- before this was handled, a
+    # violation inside a group use was not misfiled, it was invisible, because the token said
+    # `Cache`, not `Illuminate`.
+    #
+    # These are heredocs rather than committed fixtures, unlike Direction A's and B's, for a
+    # deliberate reason: pint.json applies the `laravel` preset repo-wide with no exclusions, and
+    # that preset includes `single_import_per_statement`. A committed fixture using group-use
+    # syntax would be rewritten by the formatter and fail `pint --test` in CI. That same fact is
+    # why this blind spot was latent rather than live -- Pint rejects a grouped import in src/
+    # before this gate ever sees it. The gate is fixed anyway: its correctness should not depend
+    # on another tool's style preset continuing to forbid the syntax.
+    local scratch_group_ok="${tmp_dir}/GroupUseImports.php"
+    cat > "$scratch_group_ok" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Self-test-only fixture -- never production code, and never committed as a .php file, because
+ * Pint's laravel preset would rewrite its grouped imports.
+ *
+ * Every root named here IS declared and every alias is a local name rather than a namespace
+ * segment, so this file must produce no finding in either direction.
+ */
+
+namespace ReyemTech\Hubspot\Sync;
+
+use Illuminate\{Console\Command, Support\Carbon};
+use Illuminate\Contracts\Bus\{Dispatcher as Bus};
+use Illuminate\Database\{Connection, QueryException};
+
+final class GroupUseImports extends Command
+{
+    public function __construct(private Connection $connection, private Bus $bus)
+    {
+        parent::__construct();
+    }
+
+    public function stampedAt(): Carbon
+    {
+        return Carbon::now();
+    }
+
+    /**
+     * @throws QueryException
+     */
+    public function touch(): void
+    {
+        $this->connection->statement('select 1');
+    }
+}
+PHP
+
+    local group_ok_output
+    group_ok_output="$(detect_violations "$scratch_group_ok" "$scratch_composer")"
+    if [ -n "$group_ok_output" ]; then
+        echo "Self-test FAILED: a legal grouped import of declared roots was rejected:" >&2
+        echo "$group_ok_output" >&2
+        failed=1
+    fi
+
+    local scratch_group_a="${tmp_dir}/GroupUseHidesUndeclared.php"
+    cat > "$scratch_group_a" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Sync;
+
+use Illuminate\{Cache\Repository, Support\Carbon};
+
+final class GroupUseHidesUndeclared
+{
+    public function __construct(private Repository $cache, private Carbon $at) {}
+}
+PHP
+
+    # $'\t' is required: in a POSIX grep pattern '\t' is a literal "t", so a plain-quoted pattern
+    # here silently never matches and the assertion passes vacuously. Caught by this self-test
+    # failing when the behaviour it checks was already correct.
+    if ! detect_violations "$scratch_group_a" "$scratch_composer" | grep -q "^DIRECTION_A"$'\t'"illuminate/cache"; then
+        echo "Self-test FAILED: Direction A missed an undeclared Illuminate root hidden inside a group use." >&2
+        failed=1
+    fi
+
+    local scratch_group_b="${tmp_dir}/GroupUseHidesThirdParty.php"
+    cat > "$scratch_group_b" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Sync;
+
+use Symfony\{Component\Console\Input\InputInterface};
+
+final class GroupUseHidesThirdParty
+{
+    public function __construct(private InputInterface $input) {}
+}
+PHP
+
+    if ! detect_violations "$scratch_group_b" "$scratch_composer" | grep -q "^DIRECTION_B"$'\t'"Symfony"; then
+        echo "Self-test FAILED: Direction B missed a third-party vendor root hidden inside a group use." >&2
+        failed=1
+    fi
+
     if [ "$failed" -ne 0 ]; then
         return 1
     fi
 
-    echo "Self-test passed: Direction A rejects an undeclared Illuminate root, Direction B rejects an unapproved third-party vendor root, and a clean file is accepted by both."
+    echo "Self-test passed: Direction A rejects an undeclared Illuminate root, Direction B rejects an unapproved third-party vendor root, a clean file is accepted by both, and group use is handled in all three ways -- legal imports accepted, and violations hidden inside a group still rejected in both directions."
 
     return 0
 }
