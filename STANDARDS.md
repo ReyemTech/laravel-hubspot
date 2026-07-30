@@ -336,6 +336,14 @@ somebody considered the feedback.
   changed, whether the fix matches what was asked, or what was deliberately left undone; the
   reviewer, and the next person reading the thread, sees only a closed conversation.
 
+  **Only the bot-authored half of this is gate-enforced, and the gap is stated rather than
+  papered over.** `scripts/ci/check-review-threads.sh` asks whether a resolved thread contains any
+  comment authored by a `User`. On a Codex thread that is exactly right: the only way a `User`
+  comment appears is if somebody replied. On a thread a *human* opened, their own opening comment
+  satisfies the check, so a human thread can still be resolved in silence and the gate will pass
+  it. The rule above binds either way — it is a standard, not a CI feature — but nobody should
+  read a green `review-threads` check as evidence that a human-started thread was answered.
+
   The reply states which of four dispositions applies, and carries what that disposition needs.
   The requirements differ because two of them have no commit to point at:
 
@@ -393,9 +401,18 @@ were the last thing that should have gone unreviewed.
 None of them were found by CI. All of them were sitting in threads someone had already closed.
 
 **Enforcement.** `scripts/ci/check-review-threads.sh` fails the build when a resolved review thread
-has no reply from a human author. That catches silent resolution, which is the mechanical half of
-the failure. It cannot verify that anyone *understood* what they read — like §6a's TDD ordering,
-the remainder holds because review enforces it.
+has no comment from a human author — which, **on a bot-opened thread**, means no reply. That catches
+silent resolution of automated review, which is the mechanical half of the failure and the half this
+section exists for.
+
+**It does not catch the same thing on a human-opened thread**, and the wording above is deliberately
+narrower than it used to be. There, the reviewer's own opening comment is itself a human comment, so
+the check is satisfied before anyone answers. The reply rule still binds — it is a standard, not a CI
+feature — but a green `review-threads` check is not evidence that a human-started thread was
+answered, and this document should not imply otherwise.
+
+Neither case can verify that anyone *understood* what they read. Like §6a's TDD ordering, that
+remainder holds because review enforces it.
 
 **Commits:**
 
