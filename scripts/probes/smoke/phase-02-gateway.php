@@ -55,8 +55,16 @@ return function (Probe $p): void {
         ? $p->ok('found it back', $foundEmail)
         : $p->fail('found it back', "expected {$email}, got {$foundEmail}");
 
+    // Read back, rather than trusting a 200. An update that is accepted while sending an empty or
+    // wrong value would otherwise report success having verified nothing -- and the search below
+    // asks only for the email, so nothing downstream would notice either (Codex P2, PR #34).
     $p->objects->update('contacts', $contact->id, ['lastname' => 'Smoked']);
-    $p->ok('updated it', 'lastname => Smoked');
+    $updated = $p->objects->find('contacts', $contact->id, ['lastname']);
+    $updatedLastName = (string) ($updated->properties['lastname'] ?? '');
+
+    $updatedLastName === 'Smoked'
+        ? $p->ok('updated it', 'lastname => Smoked, confirmed by reading it back')
+        : $p->fail('updated it', sprintf('expected lastname "Smoked", read back "%s"', $updatedLastName));
 
     // Retried, because HubSpot's search index is eventually consistent: a contact created seconds
     // ago can legitimately return zero results while create, find and update have all succeeded
