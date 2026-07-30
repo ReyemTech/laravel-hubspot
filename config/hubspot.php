@@ -117,6 +117,48 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Models
+    |--------------------------------------------------------------------------
+    |
+    | Which Eloquent models sync to HubSpot, and what each one syncs to.
+    | Applying `ReyemTech\Hubspot\Sync\SyncsToHubspot` to a model plus one
+    | entry here is the whole of the setup -- the ServiceProvider attaches
+    | the sync observer at boot, so nothing is required in your own
+    | AppServiceProvider.
+    |
+    |     'models' => [
+    |         App\Models\Lead::class => ['object' => 'contacts', 'id_property' => 'email'],
+    |     ],
+    |
+    | - object: the HubSpot object type this model syncs to. Normalised the
+    |   same way the rest of the registry normalises one, so 'Contacts',
+    |   'contact' and 'contacts' all name the same type.
+    | - id_property: the HubSpot-side property an upsert converges ON --
+    |   'email' for a contact, 'domain' for a company -- NOT a column on
+    |   your own table. A retried write upserts on this property rather
+    |   than creating again, so a create whose response was lost converges
+    |   instead of duplicating. Every binding must declare one; a binding
+    |   without it throws a ConfigurationException while your application
+    |   boots, naming the model and the key to add, rather than guessing.
+    |
+    | The local HubSpot id this package resolves back for a bound model
+    | never lives on your own table -- it lives in this package's own
+    | hubspot_object_links table, read through the trait's `hubspotLink`
+    | relation and `hubspotId()` accessor. No migration this package ships
+    | ever alters a table you own.
+    |
+    | The default is empty, and that is what keeps a bare `composer
+    | require` migration-free: declaring even one binding here is what
+    | makes this package load its own `hubspot_object_links` migration
+    | (`php artisan migrate`) -- nothing needs publishing first.
+    |
+    */
+    'models' => [
+        //
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Transport
     |--------------------------------------------------------------------------
     |

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Support\Sync;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
+use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\SyncsToHubspot;
 
 /**
@@ -16,6 +18,13 @@ use ReyemTech\Hubspot\Sync\SyncsToHubspot;
  * and `firstname`, so the test proves a SECOND property travels alongside the id rather than only
  * the id field itself. The dot-notation and closure forms `PropertyMapper` will grow are 04-03's;
  * a tracer proves one path end to end, not every form of it.
+ *
+ * @property int $id
+ * @property string $email
+ * @property string|null $first_name
+ * @property Carbon $created_at
+ * @property Carbon $updated_at
+ * @property-read HubspotObjectLink|null $hubspotLink
  */
 final class SyncedLead extends Model
 {

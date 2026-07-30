@@ -8,13 +8,14 @@ use Illuminate\Foundation\Application;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\ServiceProvider;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
+use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
 use ReyemTech\Hubspot\Tests\TestCase;
 use Throwable;
 
 /**
  * # D-12: a binding without `id_property` throws while the application boots, not on first use.
  *
- * That has to be proved from a genuinely fresh application: {@see \ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase}'s
+ * That has to be proved from a genuinely fresh application: {@see SyncTestCase}'s
  * shared app is deliberately valid for every other Sync test, so this file builds its own,
  * isolated the same way `ServiceProviderDatabaseStoreTest` is isolated from `ServiceProviderTest`
  * -- a class-level `defineEnvironment()` fixes one config for every test in the class, and the
@@ -76,7 +77,7 @@ final class MissingIdPropertyThrowsAtBootTest extends TestCase
 
         self::assertSame(
             ConfigurationException::missingIdProperty(SyncedLead::class)->getMessage(),
-            $this->bootException?->getMessage(),
+            $this->bootException->getMessage(),
         );
     }
 }

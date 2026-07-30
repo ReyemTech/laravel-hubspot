@@ -9,6 +9,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schema;
+use ReyemTech\Hubspot\Tests\Support\DatabaseStoreTestCase;
 use ReyemTech\Hubspot\Tests\TestCase;
 
 /**
@@ -16,7 +17,7 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * `contacts` with `id_property` set to `email`.
  *
  * `defineEnvironment()` is the hook that runs early enough to matter here, for the identical
- * reason {@see \ReyemTech\Hubspot\Tests\Support\DatabaseStoreTestCase}'s docblock already gives:
+ * reason {@see DatabaseStoreTestCase}'s docblock already gives:
  * `ServiceProvider::boot()` reads `hubspot.models`, validates it and attaches the generic observer
  * while the application is still being created, so a test that set the binding in its own body
  * would be setting it after every decision that depends on it had already been made.
