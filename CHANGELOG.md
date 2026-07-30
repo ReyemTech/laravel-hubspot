@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.1](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.3.0...reyemtech/laravel-hubspot-v0.3.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* assert against the records this probe created ([e3f6b5c](https://github.com/ReyemTech/laravel-hubspot/commit/e3f6b5c8a90c7e77acc265784bff962515ce249d))
+* bound how much of hubspot's explanation reaches the message ([4f7920d](https://github.com/ReyemTech/laravel-hubspot/commit/4f7920d6d519b3726337cd99ac6d56f46f218514))
+* carry the deserialised error object onto the rebuilt exception ([47182db](https://github.com/ReyemTech/laravel-hubspot/commit/47182db61f21d25afaa475554f61e55f2e08ea3c))
+* check each seeded type, and record what that found ([ec50ea3](https://github.com/ReyemTech/laravel-hubspot/commit/ec50ea32e86bbf1c0a3b6afc6eb2ed19e3c22c4e))
+* confirm the update instead of trusting the response ([d65e057](https://github.com/ReyemTech/laravel-hubspot/commit/d65e0575271ba186e772e396ea700cc82dce8f02))
+* decide on this attempt's results, merge each page as it arrives ([7f6aaa8](https://github.com/ReyemTech/laravel-hubspot/commit/7f6aaa81cc037a5026feaa70b2c322ec84df57be))
+* end the sweep on tracked ids being visible, not on a count ([74be152](https://github.com/ReyemTech/laravel-hubspot/commit/74be152a56f1c83dc12dc824bb015931c0c69a8c))
+* keep found records when a later sweep attempt fails ([4b61c84](https://github.com/ReyemTech/laravel-hubspot/commit/4b61c84af2469dc3866ce9fe15932b6a2c8ebbf1))
+* keep getprevious()'s type while dropping the inlined body ([f4d0a0b](https://github.com/ReyemTech/laravel-hubspot/commit/f4d0a0b79d643cfca85e7ba04428e8264cae7029))
+* keep hubspot's echoed text out of the message and the string cast ([7637331](https://github.com/ReyemTech/laravel-hubspot/commit/763733161c45978806dc44c1bce48ab3c0ab2fdd))
+* key the seeded lookup by category, and prove the dissociate happened ([8412646](https://github.com/ReyemTech/laravel-hubspot/commit/8412646e235fce579f68e690db5917666aec3318))
+* key tracked records by type, and page the sweep ([3f98fe7](https://github.com/ReyemTech/laravel-hubspot/commit/3f98fe7d25ed60714c45cb7912f341573092c2b1))
+* let a 4xx message carry hubspot's own explanation ([832e858](https://github.com/ReyemTech/laravel-hubspot/commit/832e858d0d2660dc44d8ffbfa76c56ef5cfd7954))
+* let a 4xx message carry HubSpot's own explanation ([00d643a](https://github.com/ReyemTech/laravel-hubspot/commit/00d643a6e3ee43f8f63fd37bfec4fa3ebea80e6b))
+* make the probe fail when its own claims do not hold ([63ae47e](https://github.com/ReyemTech/laravel-hubspot/commit/63ae47e76483dcd3e65784110df53b70b96bf7ce))
+* make the sweep survive its own stopping condition ([7388233](https://github.com/ReyemTech/laravel-hubspot/commit/73882337eda6517c989c2fc49e8cdb68f930de01))
+* make the unscrubbed paths safe by default ([c3e30f6](https://github.com/ReyemTech/laravel-hubspot/commit/c3e30f611dd211440da98e08fa1a3866d63f8b36))
+* narrow the sdk response object before asserting on it ([059ef3c](https://github.com/ReyemTech/laravel-hubspot/commit/059ef3c7562a3ef4fea63d4f91661e63ebeefb25))
+* normalise unicode separators, not just ascii controls ([ce99d93](https://github.com/ReyemTech/laravel-hubspot/commit/ce99d9310bfcc185e62c7ab3e3fe2e263b7a227f))
+* pin reason truncation to utf-8 ([7b83945](https://github.com/ReyemTech/laravel-hubspot/commit/7b83945f5d6a448ec6f8c66412e9085575612681))
+* poll the whole window, not until the tracked ids show up ([7582a78](https://github.com/ReyemTech/laravel-hubspot/commit/7582a78b7b939aea3a3d7a987bfc17db8a721d1c))
+* reject the inverse id on each direction, not just require the right one ([76b5898](https://github.com/ReyemTech/laravel-hubspot/commit/76b58985978adf961fb4fb959dc8e4937dc22a67))
+* report the last attempt's count in the sweep warning ([8c0809a](https://github.com/ReyemTech/laravel-hubspot/commit/8c0809a03ecc7b1acf230ae0f15efaeedc0430be))
+* sanitise the retained chain, not just the string cast ([c66457c](https://github.com/ReyemTech/laravel-hubspot/commit/c66457c29ce7dcd2723d182d85478e2e3f0044c9))
+* stop the bc check comparing a release against itself ([7fab6c7](https://github.com/ReyemTech/laravel-hubspot/commit/7fab6c7800560c76abe538d01695e7c00d412e5a))
+* stop the bc check comparing a release against itself ([54a9322](https://github.com/ReyemTech/laravel-hubspot/commit/54a9322459f860ac80c23f9c56e5fd1990e1fa5d))
+* stop the translator retaining the credentials it scrubs ([96e4355](https://github.com/ReyemTech/laravel-hubspot/commit/96e4355687db881fa281b4372f70e1b6a22b194a))
+* sweep for records a lost response left untracked ([6c30295](https://github.com/ReyemTech/laravel-hubspot/commit/6c30295407b4ba0a6eb566431917bedec6a3063a))
+* union sweep results by id instead of replacing them ([c923716](https://github.com/ReyemTech/laravel-hubspot/commit/c923716f286562c984b259df3059189d10f91b31))
+
 ## [0.3.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.2.0...reyemtech/laravel-hubspot-v0.3.0) (2026-07-29)
 
 
