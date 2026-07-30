@@ -177,7 +177,16 @@ final class Probe
      */
     private function sweepUntracked(): void
     {
-        $trackedIds = array_map(static fn (array $r): string => $r[1], $this->created);
+        // Keyed by TYPE AND id. HubSpot record ids are unique only within an object type, so an
+        // untracked contact can legitimately carry the same numeric id as a tracked deal -- and an
+        // id-only comparison would read that contact as already tracked, skip it, and leave it
+        // stranded while `archiveTracked()` removed only the deal (Codex P2, PR #34).
+        $tracked = [];
+
+        foreach ($this->created as [$trackedType, $trackedId]) {
+            $tracked[$trackedType.':'.$trackedId] = true;
+        }
+
         $swept = 0;
 
         foreach (array_keys($this->touchedTypes) as $type) {
@@ -208,10 +217,18 @@ final class Probe
                 }
 
                 try {
-                    $page = $this->objects->search(
-                        $type,
-                        SearchQuery::make()->where($property, 'CONTAINS_TOKEN', $this->stamp),
-                    );
+                    // Every page, not the first. Retry middleware can produce more stamped records
+                    // than fit one page, and a sweep that reads only page one archives some of them
+                    // and reports nothing about the rest (Codex P2, PR #34).
+                    $found = [];
+                    $after = null;
+
+                    do {
+                        $query = SearchQuery::make()->where($property, 'CONTAINS_TOKEN', $this->stamp);
+                        $page = $this->objects->search($type, $after === null ? $query : $query->after($after));
+                        $found = array_merge($found, $page->results);
+                        $after = $page->after;
+                    } while ($after !== null && $after !== '');
                 } catch (Throwable $e) {
                     $failure = $e->getMessage();
 
@@ -219,7 +236,6 @@ final class Probe
                 }
 
                 $failure = null;
-                $found = $page->results;
 
                 if ($attempt >= 3 && count($found) >= $expected) {
                     break;
@@ -247,7 +263,7 @@ final class Probe
             }
 
             foreach ($found as $record) {
-                if (in_array($record->id, $trackedIds, true)) {
+                if (isset($tracked[$type.':'.$record->id])) {
                     continue;
                 }
 
