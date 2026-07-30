@@ -328,6 +328,27 @@ final class ApiExceptionTest extends TestCase
     }
 
     /**
+     * ASCII C0 and DEL are not the whole alphabet. U+0085 NEL, U+2028 LINE SEPARATOR and U+2029
+     * PARAGRAPH SEPARATOR are all rendered as line breaks by log viewers, so stripping only the
+     * ASCII range leaves the same injection available in a different encoding.
+     */
+    public function test_unicode_line_separators_are_normalised_too(): void
+    {
+        $exception = ApiException::httpError(
+            400,
+            (string) json_encode(['message' => "Invalid:\u{0085}NEL\u{2028}LS\u{2029}PS\u{200B}zw"]),
+            null,
+            new RuntimeException('sdk'),
+            [],
+        );
+
+        self::assertSame(
+            'HubSpot rejected the request with status 400: Invalid: NEL LS PS zw',
+            $exception->getMessage(),
+        );
+    }
+
+    /**
      * The body is retained whatever the message says — it always was, and the fix must not trade
      * one for the other.
      */

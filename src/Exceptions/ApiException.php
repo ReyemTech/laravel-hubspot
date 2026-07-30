@@ -127,7 +127,13 @@ final class ApiException extends RuntimeException implements HubspotException
         // value echoed back by HubSpot could forge extra log lines or emit terminal escapes into
         // whatever reads them (Codex P2, PR #35). Collapsed to single spaces rather than stripped,
         // so words either side do not run together and the text stays readable.
-        $reason = (string) preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $reason);
+        //
+        // Unicode classes, not an ASCII range. Stripping only C0 and DEL leaves U+0085 NEL,
+        // U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR intact, and log viewers render all
+        // three as line breaks — so the injection survives in a different alphabet (Codex P2,
+        // PR #35). `Cc` covers C0 and C1, `Cf` the invisible formatting characters including
+        // bidirectional overrides, `Zl`/`Zp` the separators.
+        $reason = (string) preg_replace('/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/u', ' ', $reason);
         $reason = trim((string) preg_replace('/ {2,}/', ' ', $reason));
 
         return $reason === '' ? null : $reason;
