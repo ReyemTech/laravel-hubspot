@@ -107,17 +107,27 @@ final class SyncHubspotObjectJob implements ShouldQueue
         // which one a bound model uses.
         $modelId = (string) $this->model->getKey(); // @phpstan-ignore-line cast.string
 
+        // getMorphClass(), never get_class(): SyncsToHubspot::hubspotLink()'s morphOne() queries
+        // model_type with getMorphClass(), so under Relation::morphMap() the two differ and a row
+        // written under the FQCN is one no read path can ever find. The sync would succeed and
+        // hubspotId() would return null forever. Codex, PR #39.
+        $morphClass = $this->model->getMorphClass();
+
         HubspotObjectLink::query()->updateOrCreate(
             [
-                // getMorphClass(), never get_class(): SyncsToHubspot::hubspotLink()'s morphOne()
-                // queries model_type with getMorphClass(), so under Relation::morphMap() the two
-                // differ and a row written under the FQCN is one no read path can ever find. The
-                // sync would succeed and hubspotId() would return null forever. Codex, PR #39.
-                'model_type' => $this->model->getMorphClass(),
+                // lookup_hash, never the raw model_type, is what identifies the row: getMorphClass()
+                // returns a USER-DEFINED morph-map alias, no longer a value this package controls
+                // the shape of, and MySQL's usual default collation folds case -- so two aliases
+                // differing only by case would collide on a raw model_type predicate. Codex, PR #39.
+                // See the migration's own docblock for the full argument.
+                'lookup_hash' => HubspotObjectLink::lookupHashFor($morphClass),
                 'model_id' => $modelId,
                 'object_type' => $binding->objectType,
             ],
             [
+                // model_type is still written, and kept current on every re-sync -- it is the
+                // operator-readable column beside the indexed digest, never a predicate itself.
+                'model_type' => $morphClass,
                 'hubspot_id' => $object->id,
                 'synced_at' => Carbon::now(),
             ],

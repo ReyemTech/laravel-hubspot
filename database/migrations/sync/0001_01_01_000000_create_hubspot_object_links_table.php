@@ -29,29 +29,55 @@ use Illuminate\Support\Facades\Schema;
  * wrong call" defect this package's own STANDARDS exist to catch before release. A plain `string`
  * accepts all three key shapes with nothing to migrate later.
  *
+ * ## Why the unique index carries `lookup_hash` instead of the raw `model_type` (Codex, PR #39)
+ *
+ * **This section previously argued the opposite, and that argument no longer holds.** It said
+ * `model_type` was safe to index raw because "the package itself reads it via `get_class()`" and
+ * is therefore package- and PHP-controlled, the same reasoning that keeps `model_id` and
+ * `object_type` raw below. That was true when this migration was first written and stopped being
+ * true one commit later, in this same PR: the write path (`SyncHubspotObjectJob::handle()`) moved
+ * from `get_class()` to `getMorphClass()`, because `morphOne()`'s own read query compares against
+ * `getMorphClass()` and a `get_class()` write is invisible to it under a configured
+ * `Relation::morphMap()`. `getMorphClass()` returns a USER-DEFINED alias — whatever string an
+ * application author chose when declaring the morph map — so `model_type` is no longer a value
+ * this package controls the shape of.
+ *
+ * That is the identical defect Codex raised as a **P1 on PR #27** for `hubspot_association_types`'
+ * `label` column: MySQL's usual default collation (`utf8mb4_0900_ai_ci`, and `utf8mb4_unicode_ci`
+ * before it) is case- and accent-insensitive, so two morph aliases differing only by case —
+ * `Lead` and `lead` — would compare EQUAL to both this unique index and any `WHERE model_type = ?`
+ * clause. Two distinct local models bound under those two aliases would then collide: one sync
+ * could silently overwrite the other's link row, or a read could resolve the wrong one — the
+ * silent-wrong-id failure this package exists to prevent, arriving through a column definition
+ * rather than an API call.
+ *
+ * The fix mirrors the association-types precedent exactly: `lookup_hash` carries the SHA-256
+ * digest of the raw `model_type` value, is `NOT NULL`, and the unique index is built over the
+ * digest instead of the raw discriminator. A hex digest has no character any collation can fold,
+ * so it behaves identically on every driver in this package's support matrix with nothing to
+ * configure per driver. `model_type` itself is kept, readable, for an operator inspecting the
+ * table — the same role `label` plays beside `lookup_hash` on the association-types table — but,
+ * like `label`, it is never a predicate: both the job's write and the trait's read key on
+ * `lookup_hash` (`Sync\HubspotObjectLink::lookupHashFor()`).
+ *
+ * `model_id` and `object_type` are NOT hashed, and stay raw, indexed columns: `model_id` is a
+ * primary-key value the package itself reads via `getKey()`, and `object_type` is normalised to
+ * canonical lower case by `Registry\HubspotObjectType` before it is ever written or queried —
+ * both are still package- and PHP-controlled values with no "same value, spelled differently"
+ * ambiguity for a collation to introduce.
+ *
  * ## Why there is only ONE composite index, not two
  *
- * D-18 also names a composite `['model_type', 'model_id']` index. The table's correctness
- * constraint is the UNIQUE index on `(model_type, model_id, object_type)` below — one link row per
- * model instance per object type, which is what lets three distinct local models bind to
+ * D-18 names a composite `['model_type', 'model_id']` index, satisfied here through
+ * `lookup_hash` rather than `model_type` directly, for the reason above. The table's correctness
+ * constraint is the UNIQUE index on `(lookup_hash, model_id, object_type)` below — one link row
+ * per model instance per object type, which is what lets three distinct local models bind to
  * `contacts` simultaneously without colliding. That unique index's LEFTMOST PREFIX is exactly
- * `(model_type, model_id)`, and every engine this package's support matrix covers (MySQL,
+ * `(lookup_hash, model_id)`, and every engine this package's support matrix covers (MySQL,
  * PostgreSQL, SQLite) satisfies a leftmost-prefix lookup from a composite index without a second,
  * standalone one. A second index over the same two leading columns would cost write amplification
  * on every insert for no read benefit it does not already have — deliberate, not an omission a
  * future reader should "fix" back in.
- *
- * ## Why there is no `lookup_hash` collation workaround here
- *
- * The association-types migration beside this one carries a `lookup_hash` column specifically
- * because `label` is free-text, user-supplied and compared case-insensitively for MEANING under
- * MySQL's default collation. Neither indexed column here has that problem: `model_type` is a
- * fully-qualified PHP class name the package itself reads via `get_class()`, and `model_id` is a
- * primary-key value the package itself reads via `getKey()` — both are package- and
- * PHP-controlled, never free text a human typed with an accent or a case a MySQL collation might
- * fold. There is no "same value, different case, meant to be a different row" ambiguity for a
- * class name or a numeric/UUID primary key string, so the digest workaround is deliberately not
- * repeated here.
  *
  * ## Why `hubspot_id` is never nulled, only flagged
  *
@@ -69,6 +95,12 @@ return new class extends Migration
             $table->id();
 
             $table->string('model_type');
+
+            // Fixed width, because a SHA-256 hex digest is always 64 characters. See the class
+            // docblock for why the digest, rather than model_type itself, is what the unique
+            // index and every query key on.
+            $table->char('lookup_hash', 64);
+
             $table->string('model_id');
 
             // 64 is comfortably above the longest canonical HubSpot object type and any
@@ -85,9 +117,9 @@ return new class extends Migration
             $table->timestamps();
 
             // One link row per model instance per object type -- see the class docblock for why
-            // this single composite index also satisfies D-18's named ['model_type', 'model_id']
-            // index via its leftmost prefix, and why a second index is not added.
-            $table->unique(['model_type', 'model_id', 'object_type']);
+            // this single composite index carries lookup_hash rather than model_type, and why a
+            // second index over the same leading columns is not added.
+            $table->unique(['lookup_hash', 'model_id', 'object_type']);
 
             // The reverse lookup: given a HubSpot id and object type, which local model does it
             // belong to (the shape a webhook handler needs).

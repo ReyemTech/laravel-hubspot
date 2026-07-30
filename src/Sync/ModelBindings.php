@@ -81,11 +81,19 @@ final class ModelBindings
      * Throws for the first binding missing `id_property` (D-12). Called once, from
      * `ServiceProvider::boot()`, before any observer is attached -- a hard failure on a config
      * shape consumers will have written, never a guessed default.
+     *
+     * The trimmed value is compared, not the raw one (Codex, PR #39): `'id_property' => '   '` is
+     * neither absent nor the literal empty string, so an `=== ''` check alone lets it boot clean.
+     * The failure it defers is exactly the one D-12 exists to prevent -- `PropertyMapper::map()`
+     * casts every resolved value to a string and `SyncHubspotObjectJob::handle()` reads
+     * `$properties[$binding->idProperty]`, so a whitespace key that resolves to nothing throws
+     * `idPropertyNotMapped()` instead, on a worker, long after the config that caused it was
+     * written.
      */
     public function validate(): void
     {
         foreach ($this->all() as $binding) {
-            if ($binding->idProperty === '') {
+            if (trim($binding->idProperty) === '') {
                 throw ConfigurationException::missingIdProperty($binding->modelClass);
             }
         }

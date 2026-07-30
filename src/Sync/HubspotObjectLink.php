@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Sync;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Carbon;
 
 /**
@@ -18,6 +19,7 @@ use Illuminate\Support\Carbon;
  *
  * @property int $id
  * @property string $model_type
+ * @property string $lookup_hash
  * @property string $model_id
  * @property string $object_type
  * @property string $hubspot_id
@@ -32,6 +34,44 @@ final class HubspotObjectLink extends Model
     protected $table = 'hubspot_object_links';
 
     protected $guarded = [];
+
+    /**
+     * The indexed form of a `model_type` value (Codex, PR #39).
+     *
+     * `model_type` stopped being package-controlled the moment the write path moved to
+     * `getMorphClass()`: under a `Relation::morphMap()` it is a USER-DEFINED alias, and MySQL's
+     * usual default collation folds case, so two aliases differing only by case would compare
+     * equal to a raw `model_type` predicate or unique index. SHA-256 is chosen for collision
+     * resistance, not for secrecy -- there is nothing secret in a class name -- and it buys a
+     * value made only of `0-9a-f`, which no collation on any driver can fold, so two values that
+     * differ compare as different everywhere. Both the write path ({@see SyncHubspotObjectJob})
+     * and the read path ({@see SyncsToHubspot::hubspotLink()}) call this rather than each hashing
+     * its own copy, for the identical reason
+     * `Registry\Stores\DatabaseAssociationTypeStore::lookupHash()` is the one place its own digest
+     * is computed: two independent encodings of the same key is how the two drift apart.
+     */
+    public static function lookupHashFor(string $modelType): string
+    {
+        return hash('sha256', $modelType);
+    }
+
+    /**
+     * The inverse of {@see SyncsToHubspot::hubspotLink()} -- the linked model itself, resolved
+     * from the same `model_type`/`model_id` pair the forward relation writes. Named explicitly
+     * (`name`, `type`, `id`) rather than relying on the method-name convention `morphTo()` would
+     * otherwise infer, to state the columns as unambiguously as `hubspotLink()` does on the other
+     * side of the pair.
+     *
+     * 04-02-PLAN.md promised this relation and the migration ships the `(object_type, hubspot_id)`
+     * index for the reverse lookup a webhook handler needs -- the model itself never grew it
+     * (Codex, PR #39).
+     *
+     * @return MorphTo<Model, $this>
+     */
+    public function model(): MorphTo
+    {
+        return $this->morphTo(name: 'model', type: 'model_type', id: 'model_id');
+    }
 
     /**
      * Names its own connection, deliberately.

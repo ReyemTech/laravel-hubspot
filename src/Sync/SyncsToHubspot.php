@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Sync;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Support\Facades\App;
 
 /**
  * The single model trait that binds an Eloquent model to HubSpot (D-05, SYNC-01a).
@@ -27,6 +28,23 @@ use Illuminate\Database\Eloquent\Relations\MorphOne;
  * `getAttribute()`/magic relation access below are `Model` methods this trait does not itself
  * declare, and every class listed as a `hubspot.models` binding is one.
  *
+ * `hubspotLink()` resolves the CURRENT binding's `object_type` from `ModelBindings` at call time
+ * (never cached in a property -- the identical reason `HubspotObserver::created()` looks its own
+ * binding up per call rather than at construction) and filters on both that and the digest of its
+ * own `getMorphClass()` (Codex, PR #39). Two distinct defects, closed by the same two predicates:
+ *
+ * 1. `SyncHubspotObjectJob::handle()` keys its `updateOrCreate()` on
+ *    `(model_type, model_id, object_type)`. If a model's binding changes object type after it has
+ *    already synced, a SECOND row is written under the new object type and the FIRST is left
+ *    behind -- an unscoped `morphOne()` cannot tell them apart and may resolve whichever one the
+ *    query happens to return, so `hubspotId()` could keep answering with an obsolete id forever.
+ * 2. `model_type` is no longer package-controlled: it is written via `getMorphClass()`, which
+ *    returns a USER-DEFINED alias under a configured `Relation::morphMap()`. MySQL's usual default
+ *    collation folds case, so a raw `model_type` predicate could resolve a DIFFERENT model's row
+ *    under a case-differing alias. `HubspotObjectLink::lookupHashFor()` is collation-proof where
+ *    the built-in `model_type` predicate `morphOne()` already applies is not, and ANDing the two
+ *    only narrows a match, never widens one.
+ *
  * The query scopes (`whereHubspotId()`, `syncedToHubspot()`, `pendingHubspotSync()`) and the
  * static `syncManyToHubspot()` collection entry point are deliberately NOT here -- 04-04 and 04-08
  * add them respectively. This plan proves one relation and one read path end to end.
@@ -46,11 +64,28 @@ trait SyncsToHubspot
     /**
      * The package-owned row carrying this model instance's HubSpot id, if it has synced yet.
      *
+     * Scoped to the CURRENT binding's `object_type` and to the digest of this model's own
+     * `getMorphClass()` -- see the class docblock for why both are necessary. `ModelBindings` is
+     * resolved from the container at call time through the `App` facade rather than injected:
+     * this trait is composed into whatever model class applies it, so it has no constructor of its
+     * own to receive a dependency through, the same constraint every other model trait in the
+     * framework (`SoftDeletes`, `Prunable`) shares. `App`, not the global `app()` helper: the
+     * helper lives in `Illuminate\Foundation\helpers.php`, which D-08 already established has no
+     * split package this layer may declare a dependency on, while `Illuminate\Support\Facades\App`
+     * ships inside `illuminate/support`, already declared.
+     *
      * @return MorphOne<HubspotObjectLink, $this>
      */
     public function hubspotLink(): MorphOne
     {
-        return $this->morphOne(HubspotObjectLink::class, 'model', 'model_type', 'model_id');
+        /** @var ModelBindings $bindings */
+        $bindings = App::make(ModelBindings::class);
+
+        $objectType = $bindings->for(static::class)->objectType;
+
+        return $this->morphOne(HubspotObjectLink::class, 'model', 'model_type', 'model_id')
+            ->where('lookup_hash', HubspotObjectLink::lookupHashFor($this->getMorphClass()))
+            ->where('object_type', $objectType);
     }
 
     /**
