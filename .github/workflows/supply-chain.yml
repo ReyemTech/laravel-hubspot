@@ -83,11 +83,30 @@ jobs:
       # The glob restricts them to this component's release tags, so an unrelated tag pushed by
       # hand cannot become the comparison base. It has to match what release-please is configured
       # to produce in release-please-config.json.
+      #
+      # A tag pointing AT the built commit is excluded, and that case is not exotic -- it is what
+      # happens on every release (Codex P2, PR #25). Merging the release PR triggers this workflow
+      # and release-please.yml from the same push, so once release-please has created the tag, the
+      # newest reachable release tag IS `HEAD`. `git tag --merged` counts a tag at the commit
+      # itself as merged, so it would be selected, and roave would then compare the tree against
+      # ITSELF and report green having compared nothing -- at exactly the moment the check matters
+      # most. That is the same compare-nothing-and-pass failure the rest of this step exists to
+      # prevent, reached through a different door.
       - name: Resolve the previous release, if there is one
         id: previous-release
         run: |
           pattern='reyemtech/laravel-hubspot-v*'
-          previous="$(git tag -l --merged HEAD --sort=-v:refname "$pattern" | head -n 1)"
+          head_commit="$(git rev-parse 'HEAD^{commit}')"
+
+          # `git rev-list -n 1 <tag>` dereferences an annotated tag to the commit it points at;
+          # comparing tag names would not catch this.
+          previous=''
+          for tag in $(git tag -l --merged HEAD --sort=-v:refname "$pattern"); do
+            if [ "$(git rev-list -n 1 "$tag")" != "$head_commit" ]; then
+              previous="$tag"
+              break
+            fi
+          done
 
           if [ -n "$previous" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -95,10 +114,21 @@ jobs:
             exit 0
           fi
 
-          # Nothing reachable. Distinguish the two ways that happens, because only one of them is
-          # a legitimate reason to compare nothing and still report success.
+          # No usable base. Three ways that happens, and only two of them may report success.
           if [ -z "$(git tag -l "$pattern")" ]; then
+            # Greenfield: no release has ever been tagged.
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "reason=greenfield" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "$(git tag -l --merged HEAD "$pattern")" ]; then
+            # Every reachable release tag is at HEAD, so this commit IS the first release. There is
+            # no earlier release to compare against, which is a fact about the history rather than
+            # a misconfiguration. At any later release an earlier tag is also reachable and not at
+            # HEAD, so the loop above finds it and this branch is not taken.
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "reason=first-release" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -110,10 +140,18 @@ jobs:
       # escape hatch would pass forever, including after the first release -- exactly when this
       # check starts mattering. This message is the only thing that tells a human reading a green
       # run that nothing was actually compared yet.
+      # Two distinct reasons reach this step and they are reported distinctly. Printing "no git tag
+      # yet" on the commit that carries the FIRST release tag would be false, and a message that is
+      # false about why nothing was compared is worse than no message: it is the one line a human
+      # reading a green run has to go on.
       - name: Skip -- no previous release to compare against
         if: steps.previous-release.outputs.exists == 'false'
         run: |
-          echo "::notice title=Backward-compatibility check skipped::This is a greenfield package with no git tag yet, so there is no previous release for roave/backward-compatibility-check to compare against. This check has NOT verified anything and becomes live automatically at the first tagged release."
+          if [ "${{ steps.previous-release.outputs.reason }}" = 'first-release' ]; then
+            echo "::notice title=Backward-compatibility check skipped::This commit carries the first release tag, so there is no earlier release for roave/backward-compatibility-check to compare against. This check has NOT verified anything on this run and becomes live at the next tagged release."
+          else
+            echo "::notice title=Backward-compatibility check skipped::This is a greenfield package with no git tag yet, so there is no previous release for roave/backward-compatibility-check to compare against. This check has NOT verified anything and becomes live automatically at the first tagged release."
+          fi
 
       - name: Install dependencies
         if: steps.previous-release.outputs.exists == 'true'
