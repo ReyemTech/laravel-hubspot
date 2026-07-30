@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Unit\Exceptions;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Tests\Feature\Gateway\ExceptionTranslationTest;
 use ReyemTech\Hubspot\Tests\TestCase;
@@ -133,9 +134,8 @@ final class ApiExceptionTest extends TestCase
     /**
      * When there is no usable reason the old wording is exactly right, and must not degrade into
      * something like "status 400: " with nothing after the colon.
-     *
-     * @dataProvider unusableBodies
      */
+    #[DataProvider('unusableBodies')]
     public function test_a_client_error_with_no_usable_reason_falls_back(?string $body): void
     {
         $exception = self::raise(400, $body, 'corr-400');

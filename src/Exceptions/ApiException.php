@@ -38,11 +38,51 @@ final class ApiException extends RuntimeException implements HubspotException
      */
     public static function httpError(int $status, ?string $body, ?string $correlationId, Throwable $previous): self
     {
-        $message = $correlationId !== null
-            ? sprintf('HubSpot API request failed with status %d. Quote correlation id %s to HubSpot support.', $status, $correlationId)
-            : sprintf('HubSpot API request failed with status %d.', $status);
+        $reason = $status >= 400 && $status < 500 ? self::reasonFrom($body) : null;
+
+        if ($reason !== null) {
+            // A 4xx is the CALLER's to fix and HubSpot has just said how, so its words lead. The
+            // correlation id still follows for the rare case where the explanation looks wrong.
+            $message = sprintf('HubSpot rejected the request with status %d: %s', $status, $reason)
+                .($correlationId !== null ? sprintf(' (correlation id %s)', $correlationId) : '');
+        } elseif ($correlationId !== null) {
+            // A 5xx, or a 4xx whose body said nothing usable. Nothing here is the caller's to fix,
+            // so quoting a correlation id to support IS the fix rather than a deflection.
+            $message = sprintf('HubSpot API request failed with status %d. Quote correlation id %s to HubSpot support.', $status, $correlationId);
+        } else {
+            $message = sprintf('HubSpot API request failed with status %d.', $status);
+        }
 
         return new self($message, $status, $body, $correlationId, $previous);
+    }
+
+    /**
+     * HubSpot's own explanation, when it gave one that can be read.
+     *
+     * **Only the `message` field, never the whole body.** A body is arbitrary remote text of
+     * unbounded shape, and this package holds that an access token must never reach an exception
+     * message; lifting one named string keeps that promise cheap to verify, where echoing the body
+     * would make it a matter of hoping HubSpot never reflects one back.
+     *
+     * Everything unusable returns null so the caller falls back to the support wording rather than
+     * emitting `status 400: ` with nothing after the colon — a body may be HTML from a proxy, JSON
+     * without a `message`, a bare scalar, or a `message` that is not a string at all.
+     */
+    private static function reasonFrom(?string $body): ?string
+    {
+        if ($body === null) {
+            return null;
+        }
+
+        $decoded = json_decode($body, true);
+
+        if (! is_array($decoded) || ! isset($decoded['message']) || ! is_string($decoded['message'])) {
+            return null;
+        }
+
+        $reason = trim($decoded['message']);
+
+        return $reason === '' ? null : $reason;
     }
 
     /**
