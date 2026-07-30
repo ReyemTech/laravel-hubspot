@@ -21,6 +21,30 @@ mid-run failure still cleans up — that path is exercised, not theoretical. A p
 
 If a record cannot be archived, the probe says so per record and exits non-zero.
 
+### What happens if a create commits but its response is lost
+
+`track()` runs on the line after `create()` returns, so a write HubSpot **committed** whose response
+never arrived — a timeout, a dropped connection, a retried 5xx after the write landed — throws
+before the id is known. That record exists and nothing tracked it.
+
+So cleanup runs in two passes. First it **sweeps** by the run's unique stamp, which every created
+record carries in a searchable property, and archives anything the tracked pass does not know about.
+Then it archives the tracked records.
+
+The order matters and was got wrong the first time: sweeping *after* archiving means the tracked
+records are already gone from the search index, so their count is no longer a usable lower bound and
+every run reports a false "the index is behind".
+
+The sweep uses that count deliberately. HubSpot's search index is eventually consistent, so an empty
+result is ambiguous between *nothing untracked* and *the index has not caught up* — and the first
+version of this sweep was fooled by exactly that, missing a deliberately untracked contact and
+leaving it in the portal. Finding fewer records than are known to exist proves the index is behind,
+so the sweep waits and retries. If it still cannot see them it says so and fails, rather than
+reporting a clean cleanup it cannot substantiate.
+
+**Adding a phase that creates records:** call `$p->willCreate('contacts')` *before* the first
+`create()` of each type, so the sweep still covers that type when the create itself is what failed.
+
 ## Running it
 
 ```bash

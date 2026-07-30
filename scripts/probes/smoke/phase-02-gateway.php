@@ -25,6 +25,11 @@ return function (Probe $p): void {
 
     $p->section('Phase 2 — generic object core (GW-01): one class, many object types');
 
+    // Declared BEFORE the creates, so the cleanup sweep still covers these types if a create
+    // commits and then loses its response -- the one case `track()` cannot reach.
+    $p->willCreate('contacts');
+    $p->willCreate('deals');
+
     // `.test` is reserved by RFC 2606 but HubSpot's own email validation rejects it with a 400.
     // Measured, not assumed -- it is what made the first run of this script fail.
     $contact = $p->objects->create('contacts', [

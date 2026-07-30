@@ -10,6 +10,7 @@ use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
+use ReyemTech\Hubspot\Gateway\SearchQuery;
 use ReyemTech\Hubspot\Gateway\UnresolvedAssociationTypeResolver;
 use Throwable;
 
@@ -112,6 +113,17 @@ final class Probe
     public function track(string $objectType, string $id): void
     {
         $this->created[] = [$objectType, $id];
+        $this->touchedTypes[$objectType] = true;
+    }
+
+    /**
+     * Declares an object type the run is ABOUT to create in, so the sweep still covers it when the
+     * create itself fails before `track()` is reached. Call it before the first `create()` of each
+     * type -- that ordering is the whole point.
+     */
+    public function willCreate(string $objectType): void
+    {
+        $this->touchedTypes[$objectType] = true;
     }
 
     /**
@@ -123,18 +135,131 @@ final class Probe
     }
 
     /**
-     * Archives everything tracked, newest first, and reports anything it could not remove loudly
-     * enough that a human will go and delete it by hand.
+     * The object types a phase created, so the sweep knows where to look.
+     *
+     * @var array<string, true>
+     */
+    private array $touchedTypes = [];
+
+    /**
+     * Archives everything tracked, newest first, then sweeps for records that were created but
+     * never tracked, and reports anything it could not remove loudly enough that a human will go
+     * and delete it by hand.
      */
     public function cleanUp(): void
     {
+        // Sweep FIRST. The tracked records still exist at this point, which is what makes their
+        // count a usable lower bound on what the search index should return -- archive them first
+        // and the index correctly stops returning them, turning every run into a false "the index
+        // is behind" alarm. Found that by testing the sweep against a deliberately untracked
+        // record rather than by reasoning about it.
+        echo "\nCleanup\n";
+
+        $this->sweepUntracked();
+        $this->archiveTracked();
+    }
+
+    /**
+     * **The gap `track()` cannot close.**
+     *
+     * `track()` runs on the line after `create()` returns, so a create HubSpot COMMITTED but whose
+     * response was lost -- a timeout, a dropped connection, a retried 5xx after the write landed --
+     * throws before the id is ever known. A retry can commit a second record while only the last
+     * response's id comes back. Those records exist, are untracked, and the `finally` cannot see
+     * them (Codex P2, PR #34).
+     *
+     * Every record this probe creates carries the run's unique stamp in a searchable property, so
+     * the sweep finds them by that and archives whatever the tracked pass missed.
+     *
+     * **Best effort, and it says so.** HubSpot's search index is eventually consistent, so a record
+     * committed seconds ago may not be findable yet; the sweep is therefore a second chance rather
+     * than a guarantee, and it reports what it removed instead of staying silent.
+     */
+    private function sweepUntracked(): void
+    {
+        $trackedIds = array_map(static fn (array $r): string => $r[1], $this->created);
+        $swept = 0;
+
+        foreach (array_keys($this->touchedTypes) as $type) {
+            // How many of this type we KNOW exist. That is the lever: HubSpot's search index is
+            // eventually consistent, so an empty result is ambiguous between "nothing untracked"
+            // and "the index has not caught up" -- and the first run of this sweep was fooled by
+            // exactly that, missing a deliberately untracked contact and leaving it in the portal.
+            // Finding fewer than we tracked proves the index is behind, so it is worth waiting.
+            $expected = count(array_filter($this->created, static fn (array $r): bool => $r[0] === $type));
+            $property = match ($type) {
+                'contacts' => 'email',
+                'companies' => 'name',
+                default => 'dealname',
+            };
+
+            $found = [];
+
+            for ($attempt = 1; $attempt <= 6; $attempt++) {
+                if ($attempt > 1) {
+                    sleep(3);
+                }
+
+                try {
+                    $page = $this->objects->search(
+                        $type,
+                        SearchQuery::make()->where($property, 'CONTAINS_TOKEN', $this->stamp),
+                    );
+                } catch (Throwable $e) {
+                    echo "  !! could not sweep {$type} for stamp {$this->stamp}: ".$e->getMessage()."\n";
+
+                    continue 2;
+                }
+
+                $found = $page->results;
+
+                if (count($found) >= $expected) {
+                    break;
+                }
+            }
+
+            if (count($found) < $expected) {
+                echo "  !! sweep of {$type} saw only ".count($found)." of {$expected} known record(s); "
+                    ."the search index is behind and an untracked record could be invisible.\n";
+                $this->failures[] = [
+                    "sweep of {$type} was inconclusive",
+                    'the search index returned fewer records than are known to exist, so this sweep '
+                    .'cannot prove nothing was stranded.',
+                ];
+            }
+
+            foreach ($found as $record) {
+                if (in_array($record->id, $trackedIds, true)) {
+                    continue;
+                }
+
+                try {
+                    $this->objects->archive($type, $record->id);
+                    echo "  swept UNTRACKED {$type}/{$record->id} (created but never tracked)\n";
+                    $swept++;
+                } catch (Throwable $e) {
+                    echo "  !! could not archive swept {$type}/{$record->id}: ".$e->getMessage()."\n";
+                    $this->failures[] = ["sweep of {$type}/{$record->id}", $e->getMessage()];
+                }
+            }
+        }
+
+        if ($swept > 0) {
+            $this->failures[] = [
+                'untracked records existed',
+                $swept.' record(s) were created without being tracked -- a create most likely '
+                .'committed and lost its response. They were archived, but investigate.',
+            ];
+        }
+    }
+
+    private function archiveTracked(): void
+    {
         if ($this->created === []) {
-            echo "\nCleanup: nothing was created.\n";
+            echo "  nothing tracked was created.\n";
 
             return;
         }
-
-        echo "\nCleanup\n";
 
         foreach (array_reverse($this->created) as [$type, $id]) {
             try {

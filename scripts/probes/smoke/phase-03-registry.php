@@ -76,6 +76,9 @@ return function (Probe $p): void {
 
     $p->section('Phase 3 — a labelled write reaches the wire with the right id (REG-02)');
 
+    $p->willCreate('contacts');
+    $p->willCreate('companies');
+
     $contact = $p->objects->create('contacts', [
         'email' => "phase3-smoke-{$stamp}@example.com",
         'firstname' => 'Phase Three',
