@@ -34,6 +34,35 @@ final class HubspotObjectLink extends Model
     protected $guarded = [];
 
     /**
+     * Names its own connection, deliberately.
+     *
+     * `HasRelationships::newRelatedInstance()` assigns the PARENT model's connection to a related
+     * model that names none -- it only sets it `if (! $instance->getConnectionName())`. So while
+     * this model named no connection, a bound model on a second connection made
+     * `SyncsToHubspot::hubspotLink()` read a database this package's table is not in, while the
+     * job's own write went to the default connection. The sync succeeded and the link was
+     * unreadable, or the read raised a missing-table error. Codex found this on PR #39.
+     *
+     * The default connection is the right answer because it is the one the `sync` migration group
+     * runs against -- the table and its reads must not be able to diverge.
+     *
+     * An explicitly-set connection still wins, so a consumer that moves the package table can say
+     * so via `setConnection()` and both halves follow.
+     */
+    public function getConnectionName(): ?string
+    {
+        // parent::getConnectionName() is delegated to rather than reading $this->connection
+        // directly: the framework stores it as string|UnitEnum and unwraps it with enum_value(),
+        // and duplicating that here would be a second implementation of someone else's detail.
+        //
+        // Null is still reachable, and correctly so: with no resolver there is no default
+        // connection to name, which is the case outside a booted application. Inheriting the
+        // parent's connection is the right behaviour there -- the defect this fixes only exists
+        // when a real connection could have been named and was not.
+        return parent::getConnectionName() ?? self::getConnectionResolver()?->getDefaultConnection();
+    }
+
+    /**
      * A method rather than the `$casts` property: `pest --mutate` reports a mutation on a
      * property's own default-value declaration as UNCOVERED, the identical reason
      * `ServiceProvider::supportedStores()`/`consoleCommands()` are methods rather than class

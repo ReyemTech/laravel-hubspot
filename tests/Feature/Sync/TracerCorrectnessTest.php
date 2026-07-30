@@ -82,12 +82,15 @@ final class TracerCorrectnessTest extends SyncTestCase
             'The link row must carry the morph alias, since that is what the relation queries with.'
         );
 
+        $fresh = $lead->fresh();
+
+        $this->assertNotNull($fresh);
         $this->assertNotNull(
-            $lead->fresh()?->hubspotLink,
+            $fresh->hubspotLink,
             'The link row must be findable through the relation. Storing get_class() while '
             .'morphOne() queries getMorphClass() writes a row no read path can ever see.'
         );
-        $this->assertNotNull($lead->fresh()?->hubspotId());
+        $this->assertNotNull($fresh->hubspotId());
     }
 
     /**

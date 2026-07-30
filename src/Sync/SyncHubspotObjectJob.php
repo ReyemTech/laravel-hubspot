@@ -109,7 +109,11 @@ final class SyncHubspotObjectJob implements ShouldQueue
 
         HubspotObjectLink::query()->updateOrCreate(
             [
-                'model_type' => get_class($this->model),
+                // getMorphClass(), never get_class(): SyncsToHubspot::hubspotLink()'s morphOne()
+                // queries model_type with getMorphClass(), so under Relation::morphMap() the two
+                // differ and a row written under the FQCN is one no read path can ever find. The
+                // sync would succeed and hubspotId() would return null forever. Codex, PR #39.
+                'model_type' => $this->model->getMorphClass(),
                 'model_id' => $modelId,
                 'object_type' => $binding->objectType,
             ],

@@ -37,6 +37,15 @@ final class HubspotObserver
         // class ServiceProvider::boot() had not, in fact, bound.
         $this->bindings->for(get_class($model));
 
-        $this->dispatcher->dispatch(new SyncHubspotObjectJob($model));
+        // afterCommit() is load-bearing, not defensive. SerializesModels re-fetches by key on the
+        // worker; a job made visible before its creating transaction commits cannot find that row,
+        // and because the job declares deleteWhenMissingModels = true, Laravel DISCARDS it rather
+        // than retrying. The transaction then commits and the model is silently never synced --
+        // no retry, no failed_jobs row, no log line. Codex found this on PR #39.
+        //
+        // This is set on the job rather than left to the queue connection's own `after_commit`
+        // option because the package cannot assume a consumer has enabled it, and the failure it
+        // prevents is invisible.
+        $this->dispatcher->dispatch((new SyncHubspotObjectJob($model))->afterCommit());
     }
 }
