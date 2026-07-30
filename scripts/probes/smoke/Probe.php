@@ -206,7 +206,11 @@ final class Probe
             // and "the index has not caught up" -- and the first run of this sweep was fooled by
             // exactly that, missing a deliberately untracked contact and leaving it in the portal.
             // Finding fewer than we tracked proves the index is behind, so it is worth waiting.
-            $expected = count(array_filter($this->created, static fn (array $r): bool => $r[0] === $type));
+            $expectedIds = array_values(array_map(
+                static fn (array $r): string => $r[1],
+                array_filter($this->created, static fn (array $r): bool => $r[0] === $type),
+            ));
+            $expected = count($expectedIds);
             // Explicit per type, with NO default. `willCreate()` accepts any object type and the
             // README advertises future line_items and custom-object phases, so falling back to
             // `dealname` would issue a deal-specific search against those types -- silently
@@ -230,6 +234,7 @@ final class Probe
             $found = [];
             $failure = null;
             $lastAttemptCount = 0;
+            $missingTracked = $expectedIds;
 
             // A MINIMUM number of passes regardless of `$expected`, then more while the index is
             // demonstrably behind. Stopping as soon as `count($found) >= $expected` looked right and
@@ -246,7 +251,7 @@ final class Probe
                     // Every page, not the first. Retry middleware can produce more stamped records
                     // than fit one page, and a sweep that reads only page one archives some of them
                     // and reports nothing about the rest (Codex P2, PR #34).
-                    $thisAttempt = 0;
+                    $thisAttemptIds = [];
                     $after = null;
 
                     do {
@@ -262,7 +267,7 @@ final class Probe
                         // untracked id already seen. Anything ever observed stays observed.
                         foreach ($page->results as $record) {
                             $found[$record->id] = $record;
-                            $thisAttempt++;
+                            $thisAttemptIds[$record->id] = true;
                         }
 
                         $after = $page->after;
@@ -280,13 +285,20 @@ final class Probe
 
                 $failure = null;
 
-                // THIS attempt's count, not the union's. The union retains ids from earlier
-                // attempts, so a current attempt returning fewer than `$expected` -- the very
-                // signal that the index is behind -- would still satisfy a union-based check and
-                // stop polling early (Codex P2, PR #34).
-                $lastAttemptCount = $thisAttempt;
+                // Readiness is IDENTITY, not arithmetic. A count reaching `$expected` does not mean
+                // the tracked records are the ones visible: with duplicates from retry middleware,
+                // one tracked record plus one duplicate satisfies a count of two while a second
+                // tracked record and a second duplicate are both still unindexed -- so polling
+                // stopped, the visible duplicate was archived, and the other stranded record went
+                // unreported (Codex P2, PR #34). The index is only demonstrably caught up when
+                // every id we KNOW exists is actually in this attempt's result set.
+                $lastAttemptCount = count($thisAttemptIds);
+                $missingTracked = array_values(array_filter(
+                    $expectedIds,
+                    static fn (string $id): bool => ! isset($thisAttemptIds[$id]),
+                ));
 
-                if ($attempt >= 3 && $thisAttempt >= $expected) {
+                if ($attempt >= 3 && $missingTracked === []) {
                     break;
                 }
             }
@@ -303,11 +315,12 @@ final class Probe
                 // records whose ids are already known.
             }
 
-            if ($lastAttemptCount < $expected) {
+            if ($missingTracked !== []) {
                 // `$lastAttemptCount`, not the union: the union can exceed `$expected` after a
                 // fluctuating search, so printing it produces "saw only 2 of 1" and hides how far
                 // behind the final search actually was (Codex P3, PR #34).
-                echo "  !! sweep of {$type} saw only {$lastAttemptCount} of {$expected} known record(s) on its last attempt; "
+                echo "  !! sweep of {$type} saw only {$lastAttemptCount} of {$expected} known record(s) on its last attempt "
+                    .'(missing '.implode(', ', $missingTracked).'); '
                     ."the search index is behind and an untracked record could be invisible.\n";
                 $this->failures[] = [
                     "sweep of {$type} was inconclusive",
