@@ -35,6 +35,17 @@ use Throwable;
  */
 final class Probe
 {
+    /**
+     * The searchable property carrying the run stamp, per object type. The cleanup sweep needs one
+     * for every type a phase creates in; a type missing here cannot be swept and says so.
+     */
+    private const STAMP_PROPERTIES = [
+        'contacts' => 'email',
+        'companies' => 'name',
+        'deals' => 'dealname',
+        'line_items' => 'name',
+    ];
+
     private int $step = 0;
 
     /** @var list<array{string, string}> */
@@ -196,11 +207,23 @@ final class Probe
             // exactly that, missing a deliberately untracked contact and leaving it in the portal.
             // Finding fewer than we tracked proves the index is behind, so it is worth waiting.
             $expected = count(array_filter($this->created, static fn (array $r): bool => $r[0] === $type));
-            $property = match ($type) {
-                'contacts' => 'email',
-                'companies' => 'name',
-                default => 'dealname',
-            };
+            // Explicit per type, with NO default. `willCreate()` accepts any object type and the
+            // README advertises future line_items and custom-object phases, so falling back to
+            // `dealname` would issue a deal-specific search against those types -- silently
+            // returning nothing, and reporting a clean sweep it never performed (Codex P2,
+            // PR #34). An unmapped type is a failure, not a guess.
+            $property = self::STAMP_PROPERTIES[$type] ?? null;
+
+            if ($property === null) {
+                echo "  !! no stamp property is mapped for {$type}, so it cannot be swept\n";
+                $this->failures[] = [
+                    "sweep of {$type} is not possible",
+                    'add it to Probe::STAMP_PROPERTIES with the searchable property that carries '
+                    .'the run stamp, or the sweep cannot recover a lost create for this type.',
+                ];
+
+                continue;
+            }
 
             $found = [];
             $failure = null;
@@ -220,16 +243,25 @@ final class Probe
                     // Every page, not the first. Retry middleware can produce more stamped records
                     // than fit one page, and a sweep that reads only page one archives some of them
                     // and reports nothing about the rest (Codex P2, PR #34).
-                    $found = [];
+                    $pageResults = [];
                     $after = null;
 
                     do {
                         $query = SearchQuery::make()->where($property, 'CONTAINS_TOKEN', $this->stamp);
                         $page = $this->objects->search($type, $after === null ? $query : $query->after($after));
-                        $found = array_merge($found, $page->results);
+                        $pageResults = array_merge($pageResults, $page->results);
                         $after = $page->after;
                     } while ($after !== null && $after !== '');
+
+                    // Only replace a previous attempt's results once this attempt completed every
+                    // page, so a mid-pagination failure cannot shrink what we already know about.
+                    $found = $pageResults;
                 } catch (Throwable $e) {
+                    // `$found` deliberately keeps whatever an earlier attempt discovered. Resetting
+                    // it meant a final attempt throwing would abandon a record already identified,
+                    // leaving it in the portal while the run reported only the search failure
+                    // (Codex P2, PR #34). A record whose id is known must be archived even if the
+                    // sweep afterwards became inconclusive.
                     $failure = $e->getMessage();
 
                     continue;
@@ -246,10 +278,12 @@ final class Probe
                 // Printed AND recorded. A sweep that could not run is inconclusive, and an
                 // inconclusive cleanup reported as success is the failure this whole pass is about:
                 // retry middleware may have left a duplicate that was never inspected.
-                echo "  !! could not sweep {$type} for stamp {$this->stamp}: {$failure}\n";
-                $this->failures[] = ["sweep of {$type} could not run", $failure];
+                echo "  !! sweep of {$type} ended on a failure: {$failure}\n";
+                $this->failures[] = ["sweep of {$type} was inconclusive", $failure];
 
-                continue;
+                // NOT `continue`. Anything an earlier attempt already found still gets archived
+                // below -- an inconclusive sweep is a reason to report, not a reason to abandon
+                // records whose ids are already known.
             }
 
             if (count($found) < $expected) {
