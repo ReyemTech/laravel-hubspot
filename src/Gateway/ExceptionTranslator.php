@@ -35,15 +35,31 @@ use Throwable;
 final class ExceptionTranslator
 {
     /**
-     * @param  list<string>|null  $redact  secrets this package holds -- the access token and the webhook
-     *                                     client secret -- scrubbed from any HubSpot explanation before
-     *                                     it reaches an exception message. Defaults to none so a
-     *                                     hand-wired translator (the smoke probe, a test) still works;
-     *                                     `ServiceProvider` supplies the real values, and
-     *                                     `tests/Feature/Gateway/ExceptionTranslationTest.php` asserts
-     *                                     that wiring rather than trusting it.
+     * **A resolver, not the secrets.**
+     *
+     * Holding the token and client secret as a promoted array leaves them retained on a container
+     * singleton, where any debug dumper prints both in full. STANDARDS §12 forbids that outright:
+     * credentials are never logged, never in exception messages, and never left in a state a
+     * dumper can reveal (Codex P2, PR #35).
+     *
+     * The closure `ServiceProvider` supplies is `static` and captures nothing, so dumping this
+     * object reveals a closure and no credentials; config is read only at the moment an exception
+     * is being built.
+     *
+     * `null` means no caller said what to scrub, and no remote text is lifted into a message at
+     * all — see {@see ApiException::httpError()}.
+     *
+     * @param  (\Closure(): list<string>)|null  $redact
      */
-    public function __construct(private readonly ?array $redact = null) {}
+    public function __construct(private readonly ?\Closure $redact = null) {}
+
+    /**
+     * @return list<string>|null
+     */
+    private function redactions(): ?array
+    {
+        return $this->redact === null ? null : ($this->redact)();
+    }
 
     /**
      * The SDK API-namespace `ApiException` FQCNs this translator recognises. `public static` so
@@ -109,7 +125,7 @@ final class ExceptionTranslator
         }
 
         // Not one of the recognised SDK namespaces — still never let it escape untranslated.
-        return ApiException::httpError((int) $exception->getCode(), null, null, $exception, $this->redact);
+        return ApiException::httpError((int) $exception->getCode(), null, null, $exception, $this->redactions());
     }
 
     /**
@@ -195,7 +211,7 @@ final class ExceptionTranslator
             is_string($body) ? $body : null,
             $correlationId,
             self::withoutTheInlinedBody($exception, $status),
-            $this->redact,
+            $this->redactions(),
         );
     }
 }

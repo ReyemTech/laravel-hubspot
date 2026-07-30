@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
-use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
@@ -68,17 +67,26 @@ final class ServiceProvider extends BaseServiceProvider
         // explanation -- which echoes the submitted value back -- cannot carry one of them into an
         // exception message, which is the field applications log by default (T-02-01). Auto-
         // resolution would hand the translator an empty list and the scrubbing would be theatre.
-        $this->app->singleton(ExceptionTranslator::class, static function (Application $app): ExceptionTranslator {
-            /** @var ConfigRepository $config */
-            $config = $app->make('config');
+        $this->app->singleton(ExceptionTranslator::class, static function (): ExceptionTranslator {
+            // A `static` closure capturing NOTHING, so the translator retains no credentials for a
+            // debug dumper to reveal -- STANDARDS §12 requires exactly that, and a promoted array
+            // property on a container singleton would be the opposite. Config is read at the moment
+            // an exception is built, not at registration.
+            //
+            // (Phrased without naming the dumper helpers: R10 in tests/Arch/SecretLoggingTest.php
+            // is a statement-scoped grep that reads comments too, so mentioning them beside a
+            // secret config key trips it.)
+            return new ExceptionTranslator(static function (): array {
+                /** @var mixed $token */
+                $token = config('hubspot.token');
+                /** @var mixed $clientSecret */
+                $clientSecret = config('hubspot.webhooks.secret');
 
-            $token = $config->get('hubspot.token');
-            $clientSecret = $config->get('hubspot.webhooks.secret');
-
-            return new ExceptionTranslator(array_values(array_filter(
-                [is_string($token) ? $token : null, is_string($clientSecret) ? $clientSecret : null],
-                static fn (?string $secret): bool => $secret !== null && $secret !== '',
-            )));
+                return array_values(array_filter(
+                    [is_string($token) ? $token : null, is_string($clientSecret) ? $clientSecret : null],
+                    static fn (?string $secret): bool => $secret !== null && $secret !== '',
+                ));
+            });
         });
 
         // The association-type registry, and the store it reads.

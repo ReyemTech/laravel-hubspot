@@ -225,6 +225,58 @@ final class ExceptionTranslationTest extends TestCase
      * and only the message changed. `instanceof` and every accessor a consumer already calls still
      * work.
      */
+    /**
+     * **STANDARDS §12: credentials are never in `dd()`-able state.**
+     *
+     * The translator is a container singleton, so holding the token as a promoted property would
+     * print it in full from `dd(app(ExceptionTranslator::class))` or a plain `var_dump()`. It holds
+     * a capture-free resolver instead, and reads config only while building an exception.
+     */
+    public function test_the_translator_does_not_hold_the_credentials_it_scrubs(): void
+    {
+        config([
+            'hubspot.token' => 'pat-na1-shh-do-not-log-me-11111',
+            'hubspot.webhooks.secret' => 'client-secret-do-not-log-me-22222',
+        ]);
+
+        $translator = app(ExceptionTranslator::class);
+
+        ob_start();
+        var_dump($translator);
+        $dumped = (string) ob_get_clean();
+
+        self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-11111', $dumped);
+        self::assertStringNotContainsString('client-secret-do-not-log-me-22222', $dumped);
+
+        // Reflection over every property value, which is what a dumper walks.
+        $retained = [];
+
+        foreach ((new \ReflectionObject($translator))->getProperties() as $property) {
+            $value = $property->getValue($translator);
+            $retained[] = is_array($value) ? implode('|', array_filter($value, 'is_string')) : (is_string($value) ? $value : '');
+        }
+
+        $retainedText = implode('|', $retained);
+        self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-11111', $retainedText);
+        self::assertStringNotContainsString('client-secret-do-not-log-me-22222', $retainedText);
+
+        // And it still scrubs, so this is not passing by having lost the capability.
+        Hubspot::fake([
+            'deals' => Hubspot::response([
+                'message' => 'rejected pat-na1-shh-do-not-log-me-11111',
+                'correlationId' => 'corr-400',
+            ], 400),
+        ]);
+
+        try {
+            Hubspot::objects()->create('deals', ['dealname' => 'Test Deal']);
+            self::fail('Expected a canned 400 to throw.');
+        } catch (ApiException $exception) {
+            self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-11111', $exception->getMessage());
+            self::assertStringContainsString('[redacted]', $exception->getMessage());
+        }
+    }
+
     public function test_nothing_reaching_userland_carries_the_authorization_header_or_the_token(): void
     {
         config(['hubspot.token' => 'shh-do-not-log-me-99999']);
