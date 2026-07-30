@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Registry & Stores
 status: complete
-stopped_at: Phase 4 context gathered
-last_updated: "2026-07-30T16:48:52.241Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-07-30T19:34:45.907Z"
 last_activity: 2026-07-29
 last_activity_desc: "executed 03-03-PLAN.md. `Gateway\\\\AssociationDefinitionsGateway` wraps `Schema\\\\Api\\\\DefinitionsApi` (the phase's only new `HubSpot\\\\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%."
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 16
-  completed_plans: 16
+  total_plans: 25
+  completed_plans: 17
 ---
 
 # Project State
@@ -36,7 +36,7 @@ Plan: 3 of 3 in current phase; 03-01, 03-02 and 03-03 all merged (PRs #24, #27, 
 Status: **Phase 3's work is done, and two of its four requirements deliberately do not close.** 03-01 shipped object-type normalisation, the seeded HubSpot-defined baseline and the store seam (array + cache) with `AssociationTypeRegistry` bound on the Phase 2 resolver key; 03-02 the database store, its dated migration and the directed missing-table error, with the unique key corrected to a collation-proof `lookup_hash`; 03-03 the Gateway-owned association-definitions read, `hubspot:associations:sync`, `hubspot:doctor` and `hubspot:associations:doctor`. **REG-02 and REG-03 tick. REG-01 and REG-04 stay OPEN** — their local-id-resolution and bound-model halves need model binding (SYNC-01) and are Phase 4's as REG-01b and REG-04b. `hubspot:doctor` NAMES its absent model section rather than omitting it, and a test holds that, precisely so nobody reads the command's existence as the requirement being met.
 Last activity: 2026-07-29 — executed 03-03-PLAN.md. `Gateway\AssociationDefinitionsGateway` wraps `Schema\Api\DefinitionsApi` (the phase's only new `HubSpot\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%.
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 68%
 
 ## Performance Metrics
 
@@ -75,6 +75,7 @@ Progress: [██████████] 100%
 | Phase 02 P05 | ~75min | 3 tasks | 19 files |
 | Phase 02 P06 | ~95min | 3 tasks | 10 files |
 | Phase 03 P03 | ~110min | 3 tasks | 20 files |
+| Phase 04 P01 | 1h15m | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: With no frozen clock the fake stamps one fixed instant rather than the real one, and never mutates the global clock — determinism must hold across processes, not only within one
 - [Phase ?]: assertWebhookHandled deferred to Phase 5 with recorded reasoning: no webhook path exists, a no-op stub would pass and prove nothing, and adding it later is semver-safe
 - [Phase ?]: assertSynced's property subset must be carried by ONE record, never assembled from several — Codex P1 on PR #20; the per-property search stays only as the diagnosis producing the useful message
+- [Phase ?]: composer.lock is gitignored for this library and was never committed; verified the four new illuminate requires add zero installed packages locally (content-hash-only diff) rather than via a committed git diff
+- [Phase ?]: D-04's vendor-namespace gate uses PhpToken::tokenize() (T_NAME_QUALIFIED/T_NAME_FULLY_QUALIFIED), not a raw regex -- a regex draft false-positived on docblock prose and a regex string literal in the real src/ tree
+- [Phase ?]: SYNC-01 split into SYNC-01a (Phase 4: Attached/API-only, id_property) and SYNC-01b (Phase 9, with SHIP-01: Generated mode), matching the REG-01a/b and REG-04a/b precedent
 
 ### Pending Todos
 
@@ -221,6 +225,7 @@ None yet.
 - [Phase 3]: The sync SKIPS definitions HubSpot returns with a null label rather than writing them. `AssociationTypeResolver::resolve()` takes a non-nullable label and the unlabelled write path never consults the registry, so such a row is unreachable — and two HubSpot-defined types on one direction would share the `default:` key and overwrite each other
 - [Phase 3]: `hubspot:doctor` ships REG-04a only and NAMES its absent bound-model section in three lines rather than omitting it; REG-01 and REG-04 stay open at the end of Phase 3 with only their Phase 3 halves done
 - [Phase 3]: `Testing\HubspotFake` keys canned responses by ROUTE, not object type: the definitions route is keyed `definitions:{from}>{to}` because reconciling a pair reads both directions and each returns its own labels. The default-response family moved out to `Testing\DefaultResponses`, the extraction 02-06's deferred items named
+- 04-01-PLAN.md's acceptance criteria assume composer.lock is committed (git diff HEAD~1 -- composer.lock); it is gitignored for this library and was never committed. Verified the substance locally instead (no new packages installed); the two literal git-diff acceptance criteria are not satisfiable as written. See 04-01-SUMMARY.md Deviations.
 
 ## Deferred Items
 
@@ -233,9 +238,9 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-30T16:48:52.189Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-model-sync/04-CONTEXT.md
+Last session: 2026-07-30T19:34:45.870Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**
 
