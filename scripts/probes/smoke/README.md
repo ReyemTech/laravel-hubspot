@@ -49,9 +49,12 @@ Grant these on the private app. Measured against a real portal, not copied from 
 crm.objects.contacts.read       crm.objects.contacts.write
 crm.objects.companies.read      crm.objects.companies.write
 crm.objects.deals.read          crm.objects.deals.write
-crm.objects.line_items.read     crm.objects.line_items.write
 crm.schemas.contacts.read       crm.schemas.companies.read
 ```
+
+That list is exactly what the phases below touch, and nothing more. A probe token is a real
+credential on a real portal, so a scope granted "while you are in there" is standing access
+nothing exercises — the opposite of what a diagnostic should cost.
 
 The two `crm.schemas.*` entries are **required by the current probe**, not aspirational: phase 3
 calls `listFor('contacts', 'companies')`, which reads the association-definitions schema for that
@@ -61,10 +64,15 @@ not say which scope is missing — see below.
 Worth granting at the same time, for phases not yet probed:
 
 ```
+crm.objects.line_items.read     crm.objects.line_items.write
 crm.schemas.deals.read          crm.schemas.line_items.read
 crm.objects.custom.read         crm.objects.custom.write
 crm.schemas.custom.read
 ```
+
+`line_items` is here rather than above because **no phase touches it yet**. The baseline seeds
+`deals ↔ line_items` (typeIds 19 and 20) and nothing has ever verified that pair against a portal,
+so a future phase will want these — but granting them today buys access no code uses.
 
 The remaining `crm.schemas.*` scopes are for property definitions, which model sync needs for
 mapping. The `custom` ones matter because `Registry\HubspotObjectType` supports `p_*` custom objects
