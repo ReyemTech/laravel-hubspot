@@ -423,7 +423,14 @@ final class ExceptionHierarchyTest extends TestCase
         self::assertInstanceOf(HubspotException::class, $result);
         self::assertSame(404, $result->status());
         self::assertSame('raw associations body', $result->body());
-        self::assertSame($sdkException, $result->getPrevious());
+        // Not the SDK exception itself: its message inlines the raw response body, which a log
+        // normaliser walking getPrevious() would record verbatim. The retained surrogate names the
+        // class it stood in for, and body() still holds the payload.
+        $previous = $result->getPrevious();
+        self::assertNotNull($previous);
+        self::assertNotSame($sdkException, $previous);
+        self::assertStringContainsString(\HubSpot\Client\Crm\Associations\V4\ApiException::class, $previous->getMessage());
+        self::assertStringNotContainsString('raw associations body', $previous->getMessage());
     }
 
     public function test_a_canned_associations_v4_error_with_a_deserialised_response_object_preserves_its_correlation_id(): void

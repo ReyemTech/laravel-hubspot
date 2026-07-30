@@ -61,7 +61,43 @@ final class ApiException extends RuntimeException implements HubspotException
             $message = sprintf('HubSpot API request failed with status %d.', $status);
         }
 
-        return new self($message, $status, $body, $correlationId, $previous);
+        return new self($message, $status, $body, $correlationId, self::sanitisedPrevious($previous, $status));
+    }
+
+    /**
+     * **The SDK exception, replaced by one that says the same thing without quoting the body.**
+     *
+     * Scrubbing this package's own message is not enough, and overriding `__toString()` is not
+     * either — neither is the path that matters. Laravel's handler puts the throwable into
+     * `context['exception']` and **Monolog normalises `getPrevious()` recursively**, reading each
+     * exception's own message and never calling `__toString()` (Codex P1, PR #35). The SDK's
+     * `ApiException` inlines the entire raw response body into its message, so an echoed
+     * credential reaches ordinary application logs through a message this package does not write.
+     *
+     * So the chain itself is what has to be safe. The surrogate keeps what is diagnostically
+     * useful — the original class, the status, and the file and line it was thrown from — and drops
+     * only the message, which is the one part that quotes HubSpot verbatim. `body()` still holds
+     * the payload for anyone who wants it deliberately.
+     *
+     * **Only for responses.** A connection failure never received a body, so there is nothing
+     * echoed to leak, and its previous exception carries the one thing that distinguishes DNS
+     * failure from refusal from a TLS error from a timeout (Codex P2, PR #35). Replacing it there
+     * would trade a real diagnostic for no security at all, so `connectionFailure()` keeps the
+     * original untouched.
+     */
+    private static function sanitisedPrevious(Throwable $previous, int $status): RuntimeException
+    {
+        return new RuntimeException(
+            sprintf(
+                '%s (HTTP %d) thrown at %s:%d. Its message is withheld: the SDK inlines the raw '
+                .'response body, which can echo submitted values. Call ApiException::body() for the '
+                .'payload.',
+                $previous::class,
+                $status,
+                $previous->getFile(),
+                $previous->getLine(),
+            ),
+        );
     }
 
     /**
@@ -158,37 +194,6 @@ final class ApiException extends RuntimeException implements HubspotException
             null,
             null,
             null,
-        );
-    }
-
-    /**
-     * **Renders this exception alone, never the `previous` chain — and that is a secrecy
-     * requirement rather than a formatting preference.**
-     *
-     * `parent::__toString()` walks `getPrevious()` and prints each message. The SDK's own
-     * `ApiException` embeds the **raw response body verbatim** in its message, so anything HubSpot
-     * echoed back — including a credential a caller wrote into a property — reached the string
-     * representation through a message this package neither writes nor can scrub.
-     *
-     * That defeated T-02-01 ("a recognisable token value appears in neither the message nor the
-     * string representation") independently of anything on the message side, and it predates the
-     * 4xx reason work: verified against `main`, where a token echoed in the body appears in
-     * `(string) $exception` while `getMessage()` says only "failed with status 400".
-     *
-     * `getPrevious()` still returns the SDK exception, so nothing is lost programmatically — a
-     * debugger, a handler, or an explicit log of the chain can still reach it deliberately. What
-     * changes is that casting to string no longer does it accidentally, which is what logging
-     * frameworks do by default.
-     */
-    public function __toString(): string
-    {
-        return sprintf(
-            "%s: %s in %s:%d\nStack trace:\n%s",
-            self::class,
-            $this->getMessage(),
-            $this->getFile(),
-            $this->getLine(),
-            $this->getTraceAsString(),
         );
     }
 

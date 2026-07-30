@@ -221,19 +221,16 @@ final class ApiExceptionTest extends TestCase
     }
 
     /**
-     * **The pre-existing half of the leak, closed here because shipping the other half alone would
-     * be a fix that reads as complete and is not.**
+     * **The path that actually matters, and the one an override of `__toString()` does not touch.**
      *
-     * `parent::__toString()` walks the `previous` chain, and the SDK's own exception embeds the raw
-     * response body in its message. So a credential HubSpot echoed back reached
-     * `(string) $exception` through a message this package does not write and cannot scrub,
-     * defeating T-02-01 independently of anything on the message side.
+     * Laravel's handler puts the throwable into `context['exception']` and Monolog normalises
+     * `getPrevious()` recursively, reading each exception's own message. The SDK's exception inlines
+     * the entire raw response body, so an echoed credential reaches ordinary application logs
+     * through a message this package does not write (Codex P1 on PR #35).
      *
-     * Verified against `main` before changing it: with the old code, `getMessage()` said only
-     * "HubSpot API request failed with status 400" while the token was plainly present in the
-     * string cast.
+     * This walks the chain the way a normaliser does, rather than casting to string.
      */
-    public function test_the_string_cast_does_not_leak_the_previous_exceptions_raw_body(): void
+    public function test_no_link_in_the_retained_chain_carries_an_echoed_secret(): void
     {
         $secret = 'pat-na1-shh-do-not-log-me-99999';
 
@@ -244,26 +241,51 @@ final class ApiExceptionTest extends TestCase
 
         $exception = ApiException::httpError(400, '{"message":"rejected '.$secret.'"}', null, $sdk, [$secret]);
 
-        self::assertStringNotContainsString($secret, (string) $exception);
-        self::assertStringNotContainsString($secret, $exception->getMessage());
+        $link = $exception;
+        $seen = 0;
 
-        // The chain is intact for anyone who asks for it deliberately.
-        self::assertSame($sdk, $exception->getPrevious());
-        self::assertStringContainsString($secret, (string) $exception->getPrevious());
+        while ($link !== null) {
+            self::assertStringNotContainsString($secret, $link->getMessage());
+            $seen++;
+            $link = $link->getPrevious();
+        }
+
+        self::assertSame(2, $seen, 'The chain should be this exception plus one sanitised surrogate.');
+        self::assertStringNotContainsString($secret, (string) $exception);
     }
 
     /**
-     * The string cast still has to be useful: class, message, file, line and a trace.
+     * The surrogate is not a black hole: it keeps the original class, the status and the throw site,
+     * which is everything except the one part that quotes HubSpot verbatim.
      */
-    public function test_the_string_cast_still_identifies_the_exception(): void
+    public function test_the_surrogate_keeps_what_is_diagnostically_useful(): void
     {
-        $exception = ApiException::httpError(404, self::body('deal not found'), null, new RuntimeException('sdk'));
-        $rendered = (string) $exception;
+        $sdk = new RuntimeException('raw body here');
+        $exception = ApiException::httpError(409, self::body('conflict'), null, $sdk);
 
-        self::assertStringContainsString(ApiException::class, $rendered);
-        self::assertStringContainsString('HubSpot rejected the request with status 404: deal not found', $rendered);
-        self::assertStringContainsString('Stack trace:', $rendered);
-        self::assertStringContainsString(__FILE__, $rendered);
+        $previous = $exception->getPrevious();
+
+        self::assertNotNull($previous);
+        self::assertStringContainsString(RuntimeException::class, $previous->getMessage());
+        self::assertStringContainsString('HTTP 409', $previous->getMessage());
+        self::assertStringContainsString(__FILE__, $previous->getMessage());
+        self::assertStringNotContainsString('raw body here', $previous->getMessage());
+    }
+
+    /**
+     * **A connection failure keeps its original chain, and that is deliberate.**
+     *
+     * Nothing was received, so there is no echoed body to leak — and the previous exception carries
+     * the only thing that distinguishes DNS failure from refusal from a TLS error from a timeout
+     * (Codex P2 on PR #35). Replacing it there would trade a real diagnostic for no security.
+     */
+    public function test_a_connection_failure_keeps_its_original_previous_exception(): void
+    {
+        $guzzle = new RuntimeException('cURL error 6: Could not resolve host: api.hubapi.com');
+        $exception = ApiException::connectionFailure($guzzle);
+
+        self::assertSame($guzzle, $exception->getPrevious());
+        self::assertStringContainsString('Could not resolve host', (string) $exception);
     }
 
     /**

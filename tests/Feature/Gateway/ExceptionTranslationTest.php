@@ -206,7 +206,24 @@ final class ExceptionTranslationTest extends TestCase
         self::assertStringNotContainsString('No response was received', $result->getMessage());
     }
 
-    public function test_the_previous_sdk_exception_never_carries_the_authorization_header_or_the_token(): void
+    /**
+     * **What reaches userland through the chain, now that the SDK exception is not it.**
+     *
+     * The SDK's own `ApiException` carries only response-side data — no constructor parameter and
+     * no property for the outgoing request, where the `Authorization` header lives. That was
+     * verified by reading `vendor/hubspot/api-client/codegen/Crm/Objects/ApiException.php` and
+     * asserted here against a real translated exception.
+     *
+     * It is no longer retained: its message inlines the raw response body, which Monolog reads when
+     * it normalises `getPrevious()` recursively. So the assertion moves to what IS retained — a
+     * surrogate naming the original class and throw site — plus the response-side data the package
+     * exposes deliberately through `body()`, `status()` and `correlationId()`.
+     *
+     * **This is a behavioural change to `getPrevious()`** on a released package: a consumer reaching
+     * for `getResponseHeaders()` on the previous exception no longer finds it. Recorded in the pull
+     * request rather than discovered.
+     */
+    public function test_nothing_reaching_userland_carries_the_authorization_header_or_the_token(): void
     {
         config(['hubspot.token' => 'shh-do-not-log-me-99999']);
 
@@ -220,27 +237,29 @@ final class ExceptionTranslationTest extends TestCase
         } catch (ApiException $exception) {
             $previous = $exception->getPrevious();
 
-            // The SDK's own ApiException class only ever carries RESPONSE-side data (status,
-            // response headers, response body) -- confirmed reading
-            // vendor/hubspot/api-client/codegen/Crm/Objects/ApiException.php, which has no
-            // constructor parameter and no property for the outgoing REQUEST (where the
-            // Authorization header actually lives). This asserts that confirmed absence
-            // concretely against a real translated exception, rather than trusting the source
-            // read alone.
-            self::assertInstanceOf(SdkObjectsApiException::class, $previous);
+            self::assertNotNull($previous);
+            self::assertNotInstanceOf(SdkObjectsApiException::class, $previous);
 
-            self::assertStringNotContainsString('shh-do-not-log-me-99999', $previous->getMessage());
-            self::assertStringNotContainsString('Authorization', $previous->getMessage());
+            // It still says which SDK exception it stood in for, and where.
+            self::assertStringContainsString(SdkObjectsApiException::class, $previous->getMessage());
+            self::assertStringContainsString('HTTP 404', $previous->getMessage());
 
-            $body = $previous->getResponseBody();
+            // Walk the whole chain the way a log normaliser does.
+            $link = $exception;
+
+            while ($link !== null) {
+                self::assertStringNotContainsString('shh-do-not-log-me-99999', $link->getMessage());
+                self::assertStringNotContainsString('Authorization', $link->getMessage());
+                $link = $link->getPrevious();
+            }
+
+            // The response-side data is still reachable, deliberately, and still clean.
+            $body = $exception->body();
             self::assertIsString($body);
             self::assertStringNotContainsString('shh-do-not-log-me-99999', $body);
             self::assertStringNotContainsString('Authorization', $body);
-
-            $headers = $previous->getResponseHeaders();
-            $flattenedHeaders = json_encode($headers, JSON_THROW_ON_ERROR);
-            self::assertStringNotContainsString('shh-do-not-log-me-99999', $flattenedHeaders);
-            self::assertStringNotContainsString('Authorization', $flattenedHeaders);
+            self::assertSame(404, $exception->status());
+            self::assertSame('corr-404', $exception->correlationId());
         }
     }
 
