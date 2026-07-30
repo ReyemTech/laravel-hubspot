@@ -106,6 +106,13 @@ function composerManifestEnumeratedExceptions(): array
  * `illuminate/collections` and is invisible to an import scan -- which is exactly why that
  * package is declared on evidence this test cannot produce.
  *
+ * Names are read via `PhpToken::tokenize()`, NOT a regex over raw file contents. A regex cannot
+ * tell a real `use Illuminate\Console\Command;` from a docblock mentioning a qualified name in
+ * prose, or from a regex string literal -- and the shell gate this test is supposed to agree with
+ * already learned that the hard way against the real tree. A regex here would make the two
+ * "equivalent" gates disagree in exactly the direction that produces a false demand for a package
+ * `src/` never references. Codex raised this on PR #37; it was right.
+ *
  * @return list<string>
  */
 function composerManifestIlluminateRootsUsedInSrc(): array
@@ -125,10 +132,21 @@ function composerManifestIlluminateRootsUsedInSrc(): array
 
         $contents = (string) file_get_contents($file->getPathname());
 
-        if (preg_match_all('/\\\\?Illuminate\\\\([A-Za-z0-9]+)\\\\/', $contents, $matches)) {
-            foreach ($matches[1] as $segment) {
-                $roots[] = 'illuminate/'.strtolower($segment);
+        foreach (PhpToken::tokenize($contents) as $token) {
+            // T_NAME_RELATIVE (`namespace\Foo`) is excluded for the same reason the shell gate
+            // excludes it: it always resolves against the current file's own namespace, so it can
+            // never name a vendor root.
+            if (! in_array($token->id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+                continue;
             }
+
+            $segments = explode('\\', ltrim($token->text, '\\'));
+
+            if (count($segments) < 2 || $segments[0] !== 'Illuminate') {
+                continue;
+            }
+
+            $roots[] = 'illuminate/'.strtolower($segments[1]);
         }
     }
 
@@ -154,6 +172,29 @@ it('rejects any production require outside the vendor allow-list', function (): 
 it('constrains every illuminate package to ^12.0|^13.0, since Laravel 11 was dropped', function (): void {
     $require = composerManifestRequires();
 
+    // Iterate what is DECLARED, not a hand-maintained list. D-03's allow-list admits any
+    // `illuminate/*`, so a fixed array checks only the packages someone remembered to add to it --
+    // a future `illuminate/cache: "*"` or `^14.0` would sail through the gate that is supposed to
+    // be authoritative about the support matrix. Codex raised this on PR #37; it was right.
+    $illuminate = array_filter(
+        $require,
+        static fn (string $package): bool => str_starts_with($package, 'illuminate/'),
+        ARRAY_FILTER_USE_KEY,
+    );
+
+    expect($illuminate)->not->toBeEmpty();
+
+    foreach ($illuminate as $package => $constraint) {
+        expect($constraint)->toBe('^12.0|^13.0', sprintf(
+            'Expected "%s" to be constrained to ^12.0|^13.0 (D-01: Laravel 11 was dropped, and the '
+            .'matrix runs 12 and 13 only). Every declared illuminate/* package is checked, not a '
+            .'fixed list -- adding one does not require editing this test.',
+            $package,
+        ));
+    }
+
+    // The allow-list cannot notice a package that DISAPPEARS, so the eight this phase relies on are
+    // asserted present by name as well. This is the removal guard, not the constraint check.
     foreach ([
         'illuminate/contracts',
         'illuminate/support',
@@ -165,7 +206,6 @@ it('constrains every illuminate package to ^12.0|^13.0, since Laravel 11 was dro
         'illuminate/console',
     ] as $package) {
         expect($require)->toHaveKey($package);
-        expect($require[$package])->toBe('^12.0|^13.0');
     }
 });
 
