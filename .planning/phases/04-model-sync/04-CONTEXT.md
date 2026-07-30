@@ -139,11 +139,68 @@ syncs to HubSpot — mapped, queued, batched, delete-safe, and suppressible when
 
 ### Claude's Discretion
 
-- The exact column set and index strategy for `hubspot_object_links`.
+- The exact column set and index strategy for `hubspot_object_links` — **narrowed by D-18 below**,
+  which fixes the `model_id` type; the rest of the column set stays discretionary.
 - Whether the R3 amendment reuses the existing `Fixtures/R3/SyncDependsOnWebhooks.php` fixture
   unchanged (it should — the widening does not touch the `Sync → Webhooks` boundary the fixture
   violates).
 - Naming of the new source-hygiene script and its violation fixture.
+
+### Added 2026-07-30 after research — decided by the owner
+
+`04-RESEARCH.md` closed its three Open Questions and the audit behind them found a sixth stale
+document. All five below were put to the owner and answered; they are locked on the same footing as
+D-01…D-15.
+
+- **D-16: the collection entry point is a static on the trait —
+  `Model::syncManyToHubspot(iterable $models): void`.** It mirrors the trait's existing static
+  convention (`whereHubspotId`, `syncedToHubspot`, `pendingHubspotSync`) and, because the bound
+  object type follows from the model class, needs no grouping guard — which the facade form would
+  have, since it cannot assume one object type for a mixed collection. Typed `iterable` so an
+  Eloquent Collection passes without `->all()`. One queued job → one `ObjectGateway::upsertMany()`
+  → one HTTP request; this is what SYNC-03's request-count assertion measures.
+  — **Reversibility:** costly — public API on a trait consumers have applied (same class as D-06).
+
+- **D-17: the `updated` auto-sync is suppressed during a restore.** `SoftDeletes::restore()` calls
+  `save()` internally, so `updated` fires *before* `restored` — verified against
+  `vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php`. Untreated, every
+  restore costs two API calls. The `updated` handler returns early when
+  `$model->getOriginal('deleted_at') !== null`, and the `restored` handler owns the entire response
+  to a restore (log, flag the stored `hubspot_id` stale, never null it).
+  — **Reversibility:** reversible.
+
+- **D-18: `hubspot_object_links.model_id` is a `string`, not `morphs()`'s `unsignedBigInteger`**,
+  with a composite `['model_type', 'model_id']` index. It accepts autoincrement, UUID and ULID
+  primary keys uniformly. The index is slightly wider; the alternative is a breaking migration the
+  first time a consumer binds a UUID-keyed model.
+  — **Reversibility:** one-way — it is the storage column for real CRM ids.
+
+- **D-19: `illuminate/console` is an undeclared production dependency shipped in 0.3.0, and Phase 4
+  fixes it.** `src/Registry/Console/SyncAssociationsCommand.php:7`, `DoctorCommand.php:8` and
+  `AssociationsDoctorCommand.php:7` all import `Illuminate\Console\Command`; `illuminate/console`
+  is in `laravel/framework`'s `replace` list (so it is a real split package) and is **not** among
+  the seven declared requires. It resolves under Testbench and in every real consumer, which is
+  exactly why it survived CI — the `manifest shape` gate counts entries and never looked at what
+  `src/` names. The fix lands in 04-01 alongside the gate rewrite, so manifest and gate become
+  correct in one reviewable change.
+
+  **This is also the argument for keeping D-04's check in BOTH directions.** D-02 inverted it to
+  "block non-Illuminate vendor namespaces in `src/`"; the check that would have caught this defect
+  is the original one — *every Illuminate root named in `src/` is backed by a declared require*.
+  Phase 4 ships both directions, each with its own violation fixture.
+  — **Reversibility:** reversible.
+
+- **D-20: the five stale documents are amended in one housekeeping plan (04-01) before any feature
+  plan**, not folded into the plans that trip over them. See `<amendments>` below.
+  — **Reversibility:** reversible.
+
+**Requires added by this phase (D-02 makes each free; the count stops being the assertion):**
+`illuminate/queue`, `illuminate/bus` (D-07), `illuminate/collections` (D-16's `iterable` surface and
+`$hubspotMap`'s dot-notation `data_get()`, which lives there — not in `illuminate/support`), and
+`illuminate/console` (D-19, a fix not an addition). Constraint string `^12.0|^13.0` on every one, to
+match the four already declared. **`illuminate/foundation` has no split package** — confirmed absent
+from the `replace` list — which is why D-08's `Dispatchable` ban is a fact about the ecosystem
+rather than a preference.
 
 </decisions>
 
@@ -250,6 +307,23 @@ syncs to HubSpot — mapped, queued, batched, delete-safe, and suppressible when
   rather than decided — SYNC-04 governs it.
 - **`composer.lock` staleness** and **search sort direction** — still owed their own PRs; do not
   fold into a feature branch.
+
+- **Gateway list accessors should return `Collection`, not `list<>`** — raised by the owner
+  2026-07-30 while D-16 was being settled. `BatchResult::records()` / `recordsDespitePartialFailure()`
+  / `errors()` and `HubspotObjectPage`'s records are plain `list<>` arrays; returning
+  `Collection<int, HubspotObject>` would give consumers `->keyBy()`, `->map()`, `->filter()` at no
+  cost to type safety (generics resolve at PHPStan max) now that `illuminate/collections` is a
+  declared require under D-02.
+
+  **The result objects themselves stay as they are.** `BatchResult` is a result, not a list — it
+  carries `isPartialFailure()` and deliberately separates `records()` from
+  `recordsDespitePartialFailure()`, which forces a caller to state that they accept a partial batch.
+  A bare Collection erases that. `HubspotObjectPage` likewise carries paging state. Typed result
+  object outside, Collection inside.
+
+  **Its own PR, not Phase 4.** It is a breaking change to signatures shipped in 0.3.0 — cheap
+  pre-1.0 and never cheap again — and it edits Phase 2 and Phase 3 tests, which would contaminate
+  this phase's request-count and coverage evidence. **Do before 1.0.**
 - **`BaselineAssociationTypes` typeId 1 / `Primary`** — shipped wrong in 0.3.0, deliberately
   unfixed, filed in `03-registry-and-stores/deferred-items.md`.
 
@@ -270,9 +344,9 @@ the stale text.**
 | `.planning/REQUIREMENTS.md` REG-01b | *"resolves the local id column for a bound model"* | D-06, D-13 |
 | `.planning/REQUIREMENTS.md` SYNC-01 | Acceptance names all three binding modes | D-15 (needs an a/b split) |
 
-**Open question deliberately left to planning:** whether these land in one housekeeping PR before
-Phase 4's plans, or fold into the plans that depend on them. The user was offered this choice and
-elected to proceed to context first.
+**RESOLVED 2026-07-30 (D-20):** they land in **one housekeeping plan (04-01) before any feature
+plan**, so no feature PR ever contains code its own repo rules forbid, and the manifest gate is
+already an allow-list when the first `illuminate/*` require lands.
 
 </amendments>
 
