@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
@@ -63,7 +64,22 @@ final class ServiceProvider extends BaseServiceProvider
             return HubspotClientFactory::fromConfig($token, $timeout, $connectTimeout, $retriesEnabled);
         });
 
-        $this->app->singleton(ExceptionTranslator::class);
+        // Bound with the package's own secrets rather than auto-resolved, so that a HubSpot 4xx
+        // explanation -- which echoes the submitted value back -- cannot carry one of them into an
+        // exception message, which is the field applications log by default (T-02-01). Auto-
+        // resolution would hand the translator an empty list and the scrubbing would be theatre.
+        $this->app->singleton(ExceptionTranslator::class, static function (Application $app): ExceptionTranslator {
+            /** @var ConfigRepository $config */
+            $config = $app->make('config');
+
+            $token = $config->get('hubspot.token');
+            $clientSecret = $config->get('hubspot.webhooks.secret');
+
+            return new ExceptionTranslator(array_values(array_filter(
+                [is_string($token) ? $token : null, is_string($clientSecret) ? $clientSecret : null],
+                static fn (?string $secret): bool => $secret !== null && $secret !== '',
+            )));
+        });
 
         // The association-type registry, and the store it reads.
         //

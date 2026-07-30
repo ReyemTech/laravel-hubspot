@@ -147,6 +147,126 @@ final class ApiExceptionTest extends TestCase
     }
 
     /**
+     * **The reason is remote text, and a 4xx echoes the submitted value back.**
+     *
+     * That is what makes it useful and also why it cannot be trusted verbatim: a caller who ever
+     * writes a credential into a property gets it quoted back by HubSpot, and the message is the
+     * field applications log by default. T-02-01 says a recognisable token appears in neither the
+     * message nor the string representation, and lifting remote text into the message is exactly
+     * how that guarantee would have been lost (Codex P2 on PR #35).
+     */
+    public function test_a_secret_echoed_back_by_hubspot_is_scrubbed_from_the_message(): void
+    {
+        $exception = ApiException::httpError(
+            400,
+            self::body('Property values were not valid: pat-na1-shh-do-not-log-me is not a valid email'),
+            'corr-400',
+            new RuntimeException('sdk'),
+            ['pat-na1-shh-do-not-log-me'],
+        );
+
+        self::assertSame(
+            'HubSpot rejected the request with status 400: Property values were not valid: '
+            .'[redacted] is not a valid email (correlation id corr-400)',
+            $exception->getMessage(),
+        );
+        self::assertStringNotContainsString('pat-na1-shh-do-not-log-me', $exception->getMessage());
+        self::assertStringNotContainsString('pat-na1-shh-do-not-log-me', (string) $exception);
+    }
+
+    /**
+     * Every secret, not merely the first -- the token AND the webhook client secret are both wired.
+     */
+    public function test_every_supplied_secret_is_scrubbed(): void
+    {
+        $exception = ApiException::httpError(
+            400,
+            self::body('rejected aaa-token and bbb-secret'),
+            null,
+            new RuntimeException('sdk'),
+            ['aaa-token', 'bbb-secret'],
+        );
+
+        self::assertSame(
+            'HubSpot rejected the request with status 400: rejected [redacted] and [redacted]',
+            $exception->getMessage(),
+        );
+    }
+
+    /**
+     * `body()` keeps the raw payload. It always did, it is an accessor a developer opts into rather
+     * than something a logger reaches for, and scrubbing it would destroy the only faithful record
+     * of what HubSpot actually said.
+     */
+    public function test_scrubbing_does_not_touch_the_retained_body(): void
+    {
+        $body = self::body('rejected pat-na1-shh-do-not-log-me');
+        $exception = ApiException::httpError(400, $body, null, new RuntimeException('sdk'), ['pat-na1-shh-do-not-log-me']);
+
+        self::assertSame($body, $exception->body());
+    }
+
+    /**
+     * An empty secret must not turn every message into a wall of [redacted]. An unset
+     * HUBSPOT_TOKEN reaching here as '' is the realistic way that happens.
+     */
+    public function test_an_empty_secret_scrubs_nothing(): void
+    {
+        $exception = ApiException::httpError(400, self::body('deal not found'), null, new RuntimeException('sdk'), ['']);
+
+        self::assertSame(
+            'HubSpot rejected the request with status 400: deal not found',
+            $exception->getMessage(),
+        );
+    }
+
+    /**
+     * **The pre-existing half of the leak, closed here because shipping the other half alone would
+     * be a fix that reads as complete and is not.**
+     *
+     * `parent::__toString()` walks the `previous` chain, and the SDK's own exception embeds the raw
+     * response body in its message. So a credential HubSpot echoed back reached
+     * `(string) $exception` through a message this package does not write and cannot scrub,
+     * defeating T-02-01 independently of anything on the message side.
+     *
+     * Verified against `main` before changing it: with the old code, `getMessage()` said only
+     * "HubSpot API request failed with status 400" while the token was plainly present in the
+     * string cast.
+     */
+    public function test_the_string_cast_does_not_leak_the_previous_exceptions_raw_body(): void
+    {
+        $secret = 'pat-na1-shh-do-not-log-me-99999';
+
+        // Shaped exactly like the SDK's: the whole response body inlined into the message.
+        $sdk = new RuntimeException(
+            '[400] Client error: resulted in a 400 response: {"message":"rejected '.$secret.'"}',
+        );
+
+        $exception = ApiException::httpError(400, '{"message":"rejected '.$secret.'"}', null, $sdk, [$secret]);
+
+        self::assertStringNotContainsString($secret, (string) $exception);
+        self::assertStringNotContainsString($secret, $exception->getMessage());
+
+        // The chain is intact for anyone who asks for it deliberately.
+        self::assertSame($sdk, $exception->getPrevious());
+        self::assertStringContainsString($secret, (string) $exception->getPrevious());
+    }
+
+    /**
+     * The string cast still has to be useful: class, message, file, line and a trace.
+     */
+    public function test_the_string_cast_still_identifies_the_exception(): void
+    {
+        $exception = ApiException::httpError(404, self::body('deal not found'), null, new RuntimeException('sdk'));
+        $rendered = (string) $exception;
+
+        self::assertStringContainsString(ApiException::class, $rendered);
+        self::assertStringContainsString('HubSpot rejected the request with status 404: deal not found', $rendered);
+        self::assertStringContainsString('Stack trace:', $rendered);
+        self::assertStringContainsString(__FILE__, $rendered);
+    }
+
+    /**
      * The body is retained whatever the message says — it always was, and the fix must not trade
      * one for the other.
      */

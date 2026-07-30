@@ -127,6 +127,46 @@ final class ExceptionTranslationTest extends TestCase
         }
     }
 
+    /**
+     * **The wiring, not just the capability.**
+     *
+     * `ApiException` can scrub secrets, but only if something hands it some. `ServiceProvider`
+     * binds `ExceptionTranslator` with the configured token and webhook client secret precisely so
+     * that a 4xx explanation -- which echoes the submitted value back -- cannot carry one into the
+     * message. Auto-resolving the translator would pass an empty list and the scrubbing would be
+     * theatre, so this goes through the container rather than constructing one by hand.
+     */
+    public function test_a_token_echoed_back_by_hubspot_is_scrubbed_before_it_reaches_the_message(): void
+    {
+        config(['hubspot.token' => 'pat-na1-shh-do-not-log-me-67890']);
+
+        Hubspot::fake([
+            'deals' => Hubspot::response([
+                'message' => 'Property values were not valid: pat-na1-shh-do-not-log-me-67890 is not a valid dealname',
+                'correlationId' => 'corr-400',
+            ], 400),
+        ]);
+
+        try {
+            Hubspot::objects()->create('deals', ['dealname' => 'Test Deal']);
+            self::fail('Expected a canned 400 to throw.');
+        } catch (ApiException $exception) {
+            self::assertSame(
+                'HubSpot rejected the request with status 400: Property values were not valid: '
+                .'[redacted] is not a valid dealname (correlation id corr-400)',
+                $exception->getMessage(),
+            );
+            self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-67890', $exception->getMessage());
+
+            // Not through the previous chain either: the SDK's own message inlines the raw body,
+            // and `__toString()` no longer renders it. See ApiExceptionTest.
+            self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-67890', (string) $exception);
+
+            // The body keeps what HubSpot actually said -- an accessor a developer opts into.
+            self::assertStringContainsString('pat-na1-shh-do-not-log-me-67890', (string) $exception->body());
+        }
+    }
+
     public function test_a_canned_error_with_no_correlation_id_still_carries_status_and_body_honestly(): void
     {
         Hubspot::fake([

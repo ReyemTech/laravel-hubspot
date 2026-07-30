@@ -35,6 +35,17 @@ use Throwable;
 final class ExceptionTranslator
 {
     /**
+     * @param  list<string>  $redact  secrets this package holds -- the access token and the webhook
+     *                                client secret -- scrubbed from any HubSpot explanation before
+     *                                it reaches an exception message. Defaults to none so a
+     *                                hand-wired translator (the smoke probe, a test) still works;
+     *                                `ServiceProvider` supplies the real values, and
+     *                                `tests/Feature/Gateway/ExceptionTranslationTest.php` asserts
+     *                                that wiring rather than trusting it.
+     */
+    public function __construct(private readonly array $redact = []) {}
+
+    /**
      * The SDK API-namespace `ApiException` FQCNs this translator recognises. `public static` so
      * `tests/Arch/SdkSurfaceTest.php`'s coverage guard reads the real list rather than a
      * hand-maintained copy — a duplicate list hardcoded into the test would pass forever and
@@ -98,7 +109,7 @@ final class ExceptionTranslator
         }
 
         // Not one of the recognised SDK namespaces — still never let it escape untranslated.
-        return ApiException::httpError((int) $exception->getCode(), null, null, $exception);
+        return ApiException::httpError((int) $exception->getCode(), null, null, $exception, $this->redact);
     }
 
     /**
@@ -128,6 +139,7 @@ final class ExceptionTranslator
             is_string($body) ? $body : null,
             $correlationId,
             $exception,
+            $this->redact,
         );
     }
 }

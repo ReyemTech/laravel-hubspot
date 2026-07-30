@@ -32,13 +32,21 @@ final class ApiException extends RuntimeException implements HubspotException
 
     /**
      * A genuine HTTP error response reached the process — status, body and (when HubSpot's own
-     * error payload deserialized cleanly) correlation id are all real. The message names the
-     * fix, not just the fault (D-18): it quotes both so a reader can hand them to HubSpot
-     * support without digging through logs.
+     * error payload deserialized cleanly) correlation id are all real.
+     *
+     * The message names the fix, not just the fault (D-18), and what the fix *is* depends on who
+     * can perform it. A **4xx** is the caller's, and HubSpot has just said how, so its own words
+     * lead. A **5xx** is not, so quoting a correlation id to support is the fix rather than a
+     * deflection — and that wording is unchanged from before this split existed.
+     *
+     * @param  list<string>  $redact  secrets this package holds, scrubbed from the reason before it
+     *                                reaches the message. Supplied by `Gateway\ExceptionTranslator`,
+     *                                which `ServiceProvider` binds with the configured token and
+     *                                webhook client secret.
      */
-    public static function httpError(int $status, ?string $body, ?string $correlationId, Throwable $previous): self
+    public static function httpError(int $status, ?string $body, ?string $correlationId, Throwable $previous, array $redact = []): self
     {
-        $reason = $status >= 400 && $status < 500 ? self::reasonFrom($body) : null;
+        $reason = $status >= 400 && $status < 500 ? self::reasonFrom($body, $redact) : null;
 
         if ($reason !== null) {
             // A 4xx is the CALLER's to fix and HubSpot has just said how, so its words lead. The
@@ -67,8 +75,22 @@ final class ApiException extends RuntimeException implements HubspotException
      * Everything unusable returns null so the caller falls back to the support wording rather than
      * emitting `status 400: ` with nothing after the colon — a body may be HTML from a proxy, JSON
      * without a `message`, a bare scalar, or a `message` that is not a string at all.
+     *
+     * ## And it is scrubbed before it is returned
+     *
+     * A 4xx validation response **echoes the submitted value back** — that is what makes it useful,
+     * and it is also why remote text cannot be trusted into a message. If a caller ever writes a
+     * credential into a property, HubSpot rejects it and quotes it, and the message is the one
+     * field applications log by default (Codex P2, PR #35). T-02-01 states the guarantee this
+     * protects: a recognisable token appears in neither the message nor the string representation.
+     *
+     * `body()` is deliberately left untouched. It always carried the raw payload, it is an accessor
+     * a developer opts into rather than something a logger reaches for, and scrubbing it would
+     * destroy the one faithful record of what HubSpot actually said.
+     *
+     * @param  list<string>  $redact
      */
-    private static function reasonFrom(?string $body): ?string
+    private static function reasonFrom(?string $body, array $redact = []): ?string
     {
         if ($body === null) {
             return null;
@@ -81,6 +103,14 @@ final class ApiException extends RuntimeException implements HubspotException
         }
 
         $reason = trim($decoded['message']);
+
+        foreach ($redact as $secret) {
+            // Guarded: `str_replace` with an empty needle is a no-op, but an unset `HUBSPOT_TOKEN`
+            // arriving here as '' and silently matching nothing is worth being explicit about.
+            if ($secret !== '') {
+                $reason = str_replace($secret, '[redacted]', $reason);
+            }
+        }
 
         return $reason === '' ? null : $reason;
     }
@@ -128,6 +158,37 @@ final class ApiException extends RuntimeException implements HubspotException
             null,
             null,
             null,
+        );
+    }
+
+    /**
+     * **Renders this exception alone, never the `previous` chain — and that is a secrecy
+     * requirement rather than a formatting preference.**
+     *
+     * `parent::__toString()` walks `getPrevious()` and prints each message. The SDK's own
+     * `ApiException` embeds the **raw response body verbatim** in its message, so anything HubSpot
+     * echoed back — including a credential a caller wrote into a property — reached the string
+     * representation through a message this package neither writes nor can scrub.
+     *
+     * That defeated T-02-01 ("a recognisable token value appears in neither the message nor the
+     * string representation") independently of anything on the message side, and it predates the
+     * 4xx reason work: verified against `main`, where a token echoed in the body appears in
+     * `(string) $exception` while `getMessage()` says only "failed with status 400".
+     *
+     * `getPrevious()` still returns the SDK exception, so nothing is lost programmatically — a
+     * debugger, a handler, or an explicit log of the chain can still reach it deliberately. What
+     * changes is that casting to string no longer does it accidentally, which is what logging
+     * frameworks do by default.
+     */
+    public function __toString(): string
+    {
+        return sprintf(
+            "%s: %s in %s:%d\nStack trace:\n%s",
+            self::class,
+            $this->getMessage(),
+            $this->getFile(),
+            $this->getLine(),
+            $this->getTraceAsString(),
         );
     }
 
