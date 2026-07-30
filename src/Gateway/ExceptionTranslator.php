@@ -35,6 +35,33 @@ use Throwable;
 final class ExceptionTranslator
 {
     /**
+     * **A resolver, not the secrets.**
+     *
+     * Holding the token and client secret as a promoted array leaves them retained on a container
+     * singleton, where any debug dumper prints both in full. STANDARDS §12 forbids that outright:
+     * credentials are never logged, never in exception messages, and never left in a state a
+     * dumper can reveal (Codex P2, PR #35).
+     *
+     * The closure `ServiceProvider` supplies is `static` and captures nothing, so dumping this
+     * object reveals a closure and no credentials; config is read only at the moment an exception
+     * is being built.
+     *
+     * `null` means no caller said what to scrub, and no remote text is lifted into a message at
+     * all — see {@see ApiException::httpError()}.
+     *
+     * @param  (\Closure(): list<string>)|null  $redact
+     */
+    public function __construct(private readonly ?\Closure $redact = null) {}
+
+    /**
+     * @return list<string>|null
+     */
+    private function redactions(): ?array
+    {
+        return $this->redact === null ? null : ($this->redact)();
+    }
+
+    /**
      * The SDK API-namespace `ApiException` FQCNs this translator recognises. `public static` so
      * `tests/Arch/SdkSurfaceTest.php`'s coverage guard reads the real list rather than a
      * hand-maintained copy — a duplicate list hardcoded into the test would pass forever and
@@ -98,7 +125,63 @@ final class ExceptionTranslator
         }
 
         // Not one of the recognised SDK namespaces — still never let it escape untranslated.
-        return ApiException::httpError((int) $exception->getCode(), null, null, $exception);
+        return ApiException::httpError((int) $exception->getCode(), null, null, $exception, $this->redactions());
+    }
+
+    /**
+     * **The same SDK exception, carrying the same response data, without the body in its message.**
+     *
+     * Scrubbing this package's own message is not enough. Laravel's handler puts the throwable into
+     * `context['exception']` and **Monolog normalises `getPrevious()` recursively**, reading each
+     * exception's own message and never calling `__toString()` (Codex P1, PR #35). The SDK's
+     * `ApiException` inlines the entire raw response body into its message, so a credential a caller
+     * wrote into a property — quoted back by HubSpot in a 4xx — reached ordinary application logs
+     * through a message this package neither writes nor can scrub.
+     *
+     * **The replacement is the same class, not a plain exception** (Codex P2, PR #35). `getPrevious()`
+     * is public API on a released package; handing back a `RuntimeException` would break every
+     * consumer calling `getResponseHeaders()` or `getResponseBody()` on it. Rebuilding the same type
+     * with the original status, headers and body keeps `instanceof` and every accessor working, and
+     * changes only the message.
+     *
+     * `getResponseBody()` still returns the raw payload, exactly as `ApiException::body()` does. That
+     * is deliberate and consistent: a body is something a developer reaches for, not something a log
+     * normaliser walks into.
+     *
+     * The rebuilt exception's stack trace begins here rather than inside the SDK, so the original
+     * throw site is named in the message instead.
+     */
+    private static function withoutTheInlinedBody(
+        SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException $exception,
+        int $status,
+    ): SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException {
+        $message = sprintf(
+            '%s (HTTP %d) thrown at %s:%d. Its message is withheld here: the SDK inlines the raw '
+            .'response body, which can echo submitted values into logs. Call getResponseBody(), or '
+            .'ReyemTech\Hubspot\Exceptions\ApiException::body(), for the payload.',
+            $exception::class,
+            $status,
+            $exception->getFile(),
+            $exception->getLine(),
+        );
+
+        $headers = $exception->getResponseHeaders() ?? [];
+        $body = $exception->getResponseBody();
+
+        $rebuilt = match (true) {
+            $exception instanceof SdkObjectsApiException => new SdkObjectsApiException($message, $status, $headers, $body),
+            $exception instanceof SdkAssociationsV4ApiException => new SdkAssociationsV4ApiException($message, $status, $headers, $body),
+            default => new SdkAssociationsV4SchemaApiException($message, $status, $headers, $body),
+        };
+
+        // The deserialised error object travels too. It is not a constructor argument -- the SDK
+        // sets it afterwards -- so rebuilding without this line would leave `getResponseObject()`
+        // returning null on a type whose whole purpose here is that consumers can still call it,
+        // losing HubSpot's structured error and its fields silently (Codex P2, PR #35). This
+        // translator reads that same object for the correlation id, so it is plainly load-bearing.
+        $rebuilt->setResponseObject($exception->getResponseObject());
+
+        return $rebuilt;
     }
 
     /**
@@ -127,7 +210,8 @@ final class ExceptionTranslator
             $status,
             is_string($body) ? $body : null,
             $correlationId,
-            $exception,
+            self::withoutTheInlinedBody($exception, $status),
+            $this->redactions(),
         );
     }
 }

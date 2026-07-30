@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Gateway;
 
 use HubSpot\Client\Crm\Objects\ApiException as SdkObjectsApiException;
+use HubSpot\Client\Crm\Objects\Model\Error as SdkObjectsError;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Facades\Hubspot;
@@ -127,6 +128,46 @@ final class ExceptionTranslationTest extends TestCase
         }
     }
 
+    /**
+     * **The wiring, not just the capability.**
+     *
+     * `ApiException` can scrub secrets, but only if something hands it some. `ServiceProvider`
+     * binds `ExceptionTranslator` with the configured token and webhook client secret precisely so
+     * that a 4xx explanation -- which echoes the submitted value back -- cannot carry one into the
+     * message. Auto-resolving the translator would pass an empty list and the scrubbing would be
+     * theatre, so this goes through the container rather than constructing one by hand.
+     */
+    public function test_a_token_echoed_back_by_hubspot_is_scrubbed_before_it_reaches_the_message(): void
+    {
+        config(['hubspot.token' => 'pat-na1-shh-do-not-log-me-67890']);
+
+        Hubspot::fake([
+            'deals' => Hubspot::response([
+                'message' => 'Property values were not valid: pat-na1-shh-do-not-log-me-67890 is not a valid dealname',
+                'correlationId' => 'corr-400',
+            ], 400),
+        ]);
+
+        try {
+            Hubspot::objects()->create('deals', ['dealname' => 'Test Deal']);
+            self::fail('Expected a canned 400 to throw.');
+        } catch (ApiException $exception) {
+            self::assertSame(
+                'HubSpot rejected the request with status 400: Property values were not valid: '
+                .'[redacted] is not a valid dealname (correlation id corr-400)',
+                $exception->getMessage(),
+            );
+            self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-67890', $exception->getMessage());
+
+            // Not through the previous chain either: the SDK's own message inlines the raw body,
+            // and `__toString()` no longer renders it. See ApiExceptionTest.
+            self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-67890', (string) $exception);
+
+            // The body keeps what HubSpot actually said -- an accessor a developer opts into.
+            self::assertStringContainsString('pat-na1-shh-do-not-log-me-67890', (string) $exception->body());
+        }
+    }
+
     public function test_a_canned_error_with_no_correlation_id_still_carries_status_and_body_honestly(): void
     {
         Hubspot::fake([
@@ -166,7 +207,77 @@ final class ExceptionTranslationTest extends TestCase
         self::assertStringNotContainsString('No response was received', $result->getMessage());
     }
 
-    public function test_the_previous_sdk_exception_never_carries_the_authorization_header_or_the_token(): void
+    /**
+     * **What reaches userland through the chain, now that the SDK exception is not it.**
+     *
+     * The SDK's own `ApiException` carries only response-side data — no constructor parameter and
+     * no property for the outgoing request, where the `Authorization` header lives. That was
+     * verified by reading `vendor/hubspot/api-client/codegen/Crm/Objects/ApiException.php` and
+     * asserted here against a real translated exception.
+     *
+     * It is no longer retained: its message inlines the raw response body, which Monolog reads when
+     * it normalises `getPrevious()` recursively. So the assertion moves to what IS retained — a
+     * surrogate naming the original class and throw site — plus the response-side data the package
+     * exposes deliberately through `body()`, `status()` and `correlationId()`.
+     *
+     * **`getPrevious()` keeps its type.** It is public API on a released package, so the SDK
+     * exception is rebuilt rather than replaced: same class, same status, same headers, same body,
+     * and only the message changed. `instanceof` and every accessor a consumer already calls still
+     * work.
+     */
+    /**
+     * **STANDARDS §12: credentials are never in `dd()`-able state.**
+     *
+     * The translator is a container singleton, so holding the token as a promoted property would
+     * print it in full from `dd(app(ExceptionTranslator::class))` or a plain `var_dump()`. It holds
+     * a capture-free resolver instead, and reads config only while building an exception.
+     */
+    public function test_the_translator_does_not_hold_the_credentials_it_scrubs(): void
+    {
+        config([
+            'hubspot.token' => 'pat-na1-shh-do-not-log-me-11111',
+            'hubspot.webhooks.secret' => 'client-secret-do-not-log-me-22222',
+        ]);
+
+        $translator = app(ExceptionTranslator::class);
+
+        ob_start();
+        var_dump($translator);
+        $dumped = (string) ob_get_clean();
+
+        self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-11111', $dumped);
+        self::assertStringNotContainsString('client-secret-do-not-log-me-22222', $dumped);
+
+        // Reflection over every property value, which is what a dumper walks.
+        $retained = [];
+
+        foreach ((new \ReflectionObject($translator))->getProperties() as $property) {
+            $value = $property->getValue($translator);
+            $retained[] = is_array($value) ? implode('|', array_filter($value, 'is_string')) : (is_string($value) ? $value : '');
+        }
+
+        $retainedText = implode('|', $retained);
+        self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-11111', $retainedText);
+        self::assertStringNotContainsString('client-secret-do-not-log-me-22222', $retainedText);
+
+        // And it still scrubs, so this is not passing by having lost the capability.
+        Hubspot::fake([
+            'deals' => Hubspot::response([
+                'message' => 'rejected pat-na1-shh-do-not-log-me-11111',
+                'correlationId' => 'corr-400',
+            ], 400),
+        ]);
+
+        try {
+            Hubspot::objects()->create('deals', ['dealname' => 'Test Deal']);
+            self::fail('Expected a canned 400 to throw.');
+        } catch (ApiException $exception) {
+            self::assertStringNotContainsString('pat-na1-shh-do-not-log-me-11111', $exception->getMessage());
+            self::assertStringContainsString('[redacted]', $exception->getMessage());
+        }
+    }
+
+    public function test_nothing_reaching_userland_carries_the_authorization_header_or_the_token(): void
     {
         config(['hubspot.token' => 'shh-do-not-log-me-99999']);
 
@@ -180,27 +291,40 @@ final class ExceptionTranslationTest extends TestCase
         } catch (ApiException $exception) {
             $previous = $exception->getPrevious();
 
-            // The SDK's own ApiException class only ever carries RESPONSE-side data (status,
-            // response headers, response body) -- confirmed reading
-            // vendor/hubspot/api-client/codegen/Crm/Objects/ApiException.php, which has no
-            // constructor parameter and no property for the outgoing REQUEST (where the
-            // Authorization header actually lives). This asserts that confirmed absence
-            // concretely against a real translated exception, rather than trusting the source
-            // read alone.
+            // STILL the SDK exception type: getPrevious() is public API on a released package, so
+            // every accessor a consumer already calls keeps working. Only the message changed.
             self::assertInstanceOf(SdkObjectsApiException::class, $previous);
+            self::assertStringContainsString(SdkObjectsApiException::class, $previous->getMessage());
+            self::assertStringContainsString('HTTP 404', $previous->getMessage());
+            self::assertIsArray($previous->getResponseHeaders());
+            self::assertIsString($previous->getResponseBody());
 
-            self::assertStringNotContainsString('shh-do-not-log-me-99999', $previous->getMessage());
-            self::assertStringNotContainsString('Authorization', $previous->getMessage());
+            // And the deserialised error object, which the SDK sets after construction rather than
+            // passing in -- so rebuilding without copying it would return null here on a type whose
+            // whole point is that consumers can still call it.
+            // Narrowed before it is called: the SDK types getResponseObject() as `mixed`, so
+            // PHPStan at level max rejects a method call straight off it -- and a `mixed` that
+            // happens to work is exactly what an assertion should not rest on.
+            $responseObject = $previous->getResponseObject();
+            self::assertInstanceOf(SdkObjectsError::class, $responseObject);
+            self::assertSame('corr-404', $responseObject->getCorrelationId());
 
-            $body = $previous->getResponseBody();
+            // Walk the whole chain the way a log normaliser does.
+            $link = $exception;
+
+            while ($link !== null) {
+                self::assertStringNotContainsString('shh-do-not-log-me-99999', $link->getMessage());
+                self::assertStringNotContainsString('Authorization', $link->getMessage());
+                $link = $link->getPrevious();
+            }
+
+            // The response-side data is still reachable, deliberately, and still clean.
+            $body = $exception->body();
             self::assertIsString($body);
             self::assertStringNotContainsString('shh-do-not-log-me-99999', $body);
             self::assertStringNotContainsString('Authorization', $body);
-
-            $headers = $previous->getResponseHeaders();
-            $flattenedHeaders = json_encode($headers, JSON_THROW_ON_ERROR);
-            self::assertStringNotContainsString('shh-do-not-log-me-99999', $flattenedHeaders);
-            self::assertStringNotContainsString('Authorization', $flattenedHeaders);
+            self::assertSame(404, $exception->status());
+            self::assertSame('corr-404', $exception->correlationId());
         }
     }
 

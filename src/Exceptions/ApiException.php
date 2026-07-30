@@ -20,6 +20,14 @@ use Throwable;
  */
 final class ApiException extends RuntimeException implements HubspotException
 {
+    /**
+     * How much of HubSpot's explanation reaches the message. Enough for every real HubSpot error
+     * string measured against a live portal -- an invalid-email validation error is ~120 characters
+     * and a missing-scope error ~95 -- with headroom, and short of the point where a rejected
+     * property value dominates a log line.
+     */
+    private const MAX_REASON_LENGTH = 400;
+
     private function __construct(
         string $message,
         private readonly ?int $status,
@@ -32,17 +40,125 @@ final class ApiException extends RuntimeException implements HubspotException
 
     /**
      * A genuine HTTP error response reached the process — status, body and (when HubSpot's own
-     * error payload deserialized cleanly) correlation id are all real. The message names the
-     * fix, not just the fault (D-18): it quotes both so a reader can hand them to HubSpot
-     * support without digging through logs.
+     * error payload deserialized cleanly) correlation id are all real.
+     *
+     * The message names the fix, not just the fault (D-18), and what the fix *is* depends on who
+     * can perform it. A **4xx** is the caller's, and HubSpot has just said how, so its own words
+     * lead. A **5xx** is not, so quoting a correlation id to support is the fix rather than a
+     * deflection — and that wording is unchanged from before this split existed.
+     *
+     * **`$redact` defaults to `null`, and that is a safety default rather than an omission.** A
+     * 4xx reason is remote text; lifting it is only safe once the caller has said what to scrub.
+     * `null` means "nobody told me", so no remote text is lifted at all and the message degrades to
+     * the wording that existed before this split. An explicit `[]` means "there is nothing to
+     * scrub" and does lift it. Four-argument calls that predate this parameter therefore keep
+     * exactly the behaviour they had, rather than silently gaining an unscrubbed one
+     * (Codex P2, PR #35).
+     *
+     * @param  list<string>|null  $redact  secrets this package holds, scrubbed from the reason before
+     *                                     it reaches the message. Supplied by
+     *                                     `Gateway\ExceptionTranslator`, which `ServiceProvider`
+     *                                     binds with the configured token and webhook client secret.
      */
-    public static function httpError(int $status, ?string $body, ?string $correlationId, Throwable $previous): self
+    public static function httpError(int $status, ?string $body, ?string $correlationId, Throwable $previous, ?array $redact = null): self
     {
-        $message = $correlationId !== null
-            ? sprintf('HubSpot API request failed with status %d. Quote correlation id %s to HubSpot support.', $status, $correlationId)
-            : sprintf('HubSpot API request failed with status %d.', $status);
+        $reason = $redact !== null && $status >= 400 && $status < 500 ? self::reasonFrom($body, $redact) : null;
+
+        if ($reason !== null) {
+            // A 4xx is the CALLER's to fix and HubSpot has just said how, so its words lead. The
+            // correlation id still follows for the rare case where the explanation looks wrong.
+            $message = sprintf('HubSpot rejected the request with status %d: %s', $status, $reason)
+                .($correlationId !== null ? sprintf(' (correlation id %s)', $correlationId) : '');
+        } elseif ($correlationId !== null) {
+            // A 5xx, or a 4xx whose body said nothing usable. Nothing here is the caller's to fix,
+            // so quoting a correlation id to support IS the fix rather than a deflection.
+            $message = sprintf('HubSpot API request failed with status %d. Quote correlation id %s to HubSpot support.', $status, $correlationId);
+        } else {
+            $message = sprintf('HubSpot API request failed with status %d.', $status);
+        }
 
         return new self($message, $status, $body, $correlationId, $previous);
+    }
+
+    /**
+     * HubSpot's own explanation, when it gave one that can be read.
+     *
+     * **Only the `message` field, never the whole body.** A body is arbitrary remote text of
+     * unbounded shape, and this package holds that an access token must never reach an exception
+     * message; lifting one named string keeps that promise cheap to verify, where echoing the body
+     * would make it a matter of hoping HubSpot never reflects one back.
+     *
+     * Everything unusable returns null so the caller falls back to the support wording rather than
+     * emitting `status 400: ` with nothing after the colon — a body may be HTML from a proxy, JSON
+     * without a `message`, a bare scalar, or a `message` that is not a string at all.
+     *
+     * ## And it is scrubbed before it is returned
+     *
+     * A 4xx validation response **echoes the submitted value back** — that is what makes it useful,
+     * and it is also why remote text cannot be trusted into a message. If a caller ever writes a
+     * credential into a property, HubSpot rejects it and quotes it, and the message is the one
+     * field applications log by default (Codex P2, PR #35). T-02-01 states the guarantee this
+     * protects: a recognisable token appears in neither the message nor the string representation.
+     *
+     * `body()` is deliberately left untouched. It always carried the raw payload, it is an accessor
+     * a developer opts into rather than something a logger reaches for, and scrubbing it would
+     * destroy the one faithful record of what HubSpot actually said.
+     *
+     * @param  list<string>  $redact
+     */
+    private static function reasonFrom(?string $body, array $redact = []): ?string
+    {
+        if ($body === null) {
+            return null;
+        }
+
+        $decoded = json_decode($body, true);
+
+        if (! is_array($decoded) || ! isset($decoded['message']) || ! is_string($decoded['message'])) {
+            return null;
+        }
+
+        $reason = trim($decoded['message']);
+
+        // Longest first. If one secret is a prefix of another -- `abc` and `abcdef123` -- replacing
+        // the short one first rewrites the text to `[redacted]def123`, the long one can no longer
+        // match, and most of the longer credential survives into the log (Codex P2, PR #35).
+        $secrets = array_filter($redact, static fn (string $secret): bool => $secret !== '');
+        usort($secrets, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+
+        foreach ($secrets as $secret) {
+            $reason = str_replace($secret, '[redacted]', $reason);
+        }
+
+        // Control characters last, so a secret spanning one is scrubbed before this could split it.
+        // `json_decode` turns `\n` escapes into real newlines, so an attacker-controlled property
+        // value echoed back by HubSpot could forge extra log lines or emit terminal escapes into
+        // whatever reads them (Codex P2, PR #35). Collapsed to single spaces rather than stripped,
+        // so words either side do not run together and the text stays readable.
+        //
+        // Unicode classes, not an ASCII range. Stripping only C0 and DEL leaves U+0085 NEL,
+        // U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR intact, and log viewers render all
+        // three as line breaks — so the injection survives in a different alphabet (Codex P2,
+        // PR #35). `Cc` covers C0 and C1, `Cf` the invisible formatting characters including
+        // bidirectional overrides, `Zl`/`Zp` the separators.
+        $reason = (string) preg_replace('/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/u', ' ', $reason);
+        $reason = trim((string) preg_replace('/ {2,}/', ' ', $reason));
+
+        // Bounded. HubSpot echoes the rejected value back, so a large attacker-controlled property
+        // turns a small API failure into a large log record -- and repeated submissions amplify
+        // that into real storage and memory cost on the consumer's side (Codex P2, PR #35). The
+        // full payload is still on `body()`, so nothing is lost, only moved off the path that gets
+        // written to disk by default.
+        // Encoding pinned explicitly. Both functions otherwise use `mb_internal_encoding()`, a
+        // process-global an application is free to set to something else -- and slicing this
+        // decoded UTF-8 string as though it were ISO-8859-1 can cut through a multibyte sequence,
+        // producing an invalid message that breaks JSON log serialisation (Codex P2, PR #35).
+        if (mb_strlen($reason, 'UTF-8') > self::MAX_REASON_LENGTH) {
+            $reason = rtrim(mb_substr($reason, 0, self::MAX_REASON_LENGTH, 'UTF-8'))
+                .'… (truncated; call body() for the full payload)';
+        }
+
+        return $reason === '' ? null : $reason;
     }
 
     /**
