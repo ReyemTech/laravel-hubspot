@@ -230,18 +230,25 @@ final class Probe
             }
 
             /** @var array<string, object> $found */
-            /** @var array<string, object> $found */
             $found = [];
             $failure = null;
             $lastAttemptCount = 0;
             $missingTracked = $expectedIds;
 
-            // A MINIMUM number of passes regardless of `$expected`, then more while the index is
-            // demonstrably behind. Stopping as soon as `count($found) >= $expected` looked right and
-            // was worst exactly where it matters: a create that commits and throws before `track()`
-            // leaves `$expected` at zero for that type, so the first empty result satisfied the
-            // condition immediately and the record the sweep exists to catch was never waited for
-            // (Codex P2, PR #34). Reaching the tracked count is not proof that nothing else exists.
+            // The FULL bounded window, every time. There is no early exit, deliberately: every
+            // stopping rule tried here read some property of the tracked records as evidence about
+            // the UNTRACKED one, and the untracked one is the entire point of the sweep.
+            // `count($found) >= $expected` stopped at the first empty result when nothing was
+            // tracked. Waiting for the tracked ids to become visible is no better -- retry
+            // middleware can commit a duplicate alongside the request whose response was returned,
+            // and the tracked record can index on attempt 3 while the duplicate is not searchable
+            // until attempt 4 or later; stopping on tracked visibility never puts that duplicate in
+            // `$found`, `archiveTracked()` removes only the known record, and the probe exits 0
+            // with the duplicate stranded in the portal (Codex P2, PR #34). Nothing we know about
+            // the records we tracked bounds when a record we never tracked will appear, so the only
+            // honest lower bound is the whole window. The cost is ~15s of sleeps per touched type
+            // on every run -- accepted: this is a probe, and a fast sweep that can miss the record
+            // it exists to find is worth less than a slow one that cannot.
             for ($attempt = 1; $attempt <= 6; $attempt++) {
                 if ($attempt > 1) {
                     sleep(3);
@@ -297,16 +304,6 @@ final class Probe
                     $expectedIds,
                     static fn (string $id): bool => ! isset($thisAttemptIds[$id]),
                 ));
-
-                // With NOTHING tracked for this type, `$missingTracked` is empty on the first
-                // successful search and there is no lower bound to wait on -- yet that is exactly
-                // the case the sweep exists for, a create that committed and threw before
-                // `track()`. Early-exiting there would stop after three empty results while the
-                // record was still indexing (Codex P2, PR #34). No tracked ids means poll the full
-                // window before concluding nothing is there.
-                if ($expectedIds !== [] && $attempt >= 3 && $missingTracked === []) {
-                    break;
-                }
             }
 
             if ($failure !== null) {
