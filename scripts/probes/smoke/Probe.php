@@ -225,6 +225,7 @@ final class Probe
                 continue;
             }
 
+            /** @var array<string, object> $found */
             $found = [];
             $failure = null;
 
@@ -253,9 +254,16 @@ final class Probe
                         $after = $page->after;
                     } while ($after !== null && $after !== '');
 
-                    // Only replace a previous attempt's results once this attempt completed every
-                    // page, so a mid-pagination failure cannot shrink what we already know about.
-                    $found = $pageResults;
+                    // UNION by id across every completed attempt, never replace. The index is
+                    // eventually consistent in both directions: an attempt can return two stamped
+                    // records and the next only one, and a later result that merely satisfies
+                    // `$expected` would end polling having dropped an untracked id already seen --
+                    // leaving that record in the portal (Codex P2, PR #34). Anything ever observed
+                    // stays observed; archiving something already archived is harmless, forgetting
+                    // it is not.
+                    foreach ($pageResults as $record) {
+                        $found[$record->id] = $record;
+                    }
                 } catch (Throwable $e) {
                     // `$found` deliberately keeps whatever an earlier attempt discovered. Resetting
                     // it meant a final attempt throwing would abandon a record already identified,
