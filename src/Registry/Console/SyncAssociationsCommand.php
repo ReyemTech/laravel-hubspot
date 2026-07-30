@@ -347,6 +347,23 @@ final class SyncAssociationsCommand extends Command
      * the same baseline read-through ambiguity that makes real pruning undecidable here, showing up
      * one layer earlier. It is the reason this is a mitigation and not the fix.
      *
+     * ## Why the message hedges, and why it cannot stop hedging yet
+     *
+     * `$reportedLabels` carries one page. `CollectionResponseAssociationSpecWithLabel` has a `paging`
+     * field, and `Gateway\AssociationDefinitionsGateway::listFor()` returns `getResults()` and drops
+     * it — so a label sitting on a later page is absent from `$reportedLabels` while remaining
+     * perfectly valid, and would be named here as though the portal had dropped it (Codex P2 on the
+     * re-review of PR #28). A false "this is gone" is worse than the silence this method replaced.
+     *
+     * The catalogue cannot currently be completed at all, which is the sharp part: `DefinitionsApi`
+     * exposes `getPage($from, $to)` with **no cursor parameter**, so there is no page to ask for
+     * next. Establishing completeness needs the gateway to surface `paging.next`, and that is a
+     * return-shape change on a contract already published in 0.3.0 — a break `roave` would rightly
+     * flag. So the message asserts only what this run observed, and names the limit that makes it
+     * provisional, exactly as `AssociationsDoctorCommand` does for its own first-page probe.
+     *
+     * Filed against Phase 4 with the `AssociationPage` work in `deferred-items.md`.
+     *
      * @param  list<string>  $reportedLabels  the labels this direction's read actually returned
      */
     private function reportRowsThePortalNoLongerReports(
@@ -387,7 +404,9 @@ final class SyncAssociationsCommand extends Command
         sort($stale);
 
         $this->line(sprintf(
-            '%s: the portal no longer reports %d reconciled %s this store still holds: %s. Nothing was removed.',
+            '%s: this run did not see %d reconciled %s this store still holds: %s. Nothing was removed, '
+            .'and a label absent here is not proof the portal dropped it — a definitions read returns '
+            .'only the first page the API returns.',
             $direction->describe(),
             count($stale),
             count($stale) === 1 ? 'label' : 'labels',

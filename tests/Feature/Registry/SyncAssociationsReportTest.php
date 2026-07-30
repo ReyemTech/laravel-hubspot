@@ -245,7 +245,7 @@ final class SyncAssociationsReportTest extends TestCase
      * report's clothes, and leaving it in place without naming it is the state this change exists to
      * end.
      */
-    public function test_a_label_the_portal_no_longer_reports_is_named_and_left_in_place(): void
+    public function test_a_label_this_run_did_not_see_is_named_and_left_in_place(): void
     {
         self::fakePortal(self::twoLabels());
         Artisan::call('hubspot:associations:sync');
@@ -254,8 +254,8 @@ final class SyncAssociationsReportTest extends TestCase
         $lines = self::runSync();
 
         self::assertContains(
-            'deals -> contacts: the portal no longer reports 1 reconciled label this store still '
-            .'holds: "Sponsor". Nothing was removed.',
+            'deals -> contacts: this run did not see 1 reconciled label this store still '
+            .'holds: "Sponsor". Nothing was removed, and a label absent here is not proof the portal dropped it — a definitions read returns only the first page the API returns.',
             $lines,
         );
 
@@ -285,8 +285,8 @@ final class SyncAssociationsReportTest extends TestCase
         self::fakePortal([['category' => 'USER_DEFINED', 'typeId' => 1, 'label' => 'Deals']]);
 
         self::assertContains(
-            'deals -> contacts: the portal no longer reports 2 reconciled labels this store still '
-            .'holds: "Advisor", "Sponsor". Nothing was removed.',
+            'deals -> contacts: this run did not see 2 reconciled labels this store still '
+            .'holds: "Advisor", "Sponsor". Nothing was removed, and a label absent here is not proof the portal dropped it — a definitions read returns only the first page the API returns.',
             self::runSync(),
         );
     }
@@ -303,8 +303,9 @@ final class SyncAssociationsReportTest extends TestCase
      *
      * Noise on every run is worse than no report at all — it trains an operator to ignore the one
      * line that will eventually matter. So seeded keys are excluded, and what is reported is a row
-     * that neither the portal returned nor the baseline seeds: precisely a row an earlier
-     * reconciliation wrote and this portal no longer reports.
+     * that neither this run's response returned nor the baseline seeds: a row an earlier
+     * reconciliation wrote and this run did not see. Not "the portal dropped it" — a definitions
+     * read returns one page, so absence here is an observation rather than a verdict.
      */
     public function test_the_seeded_baseline_is_never_reported_as_stale(): void
     {
@@ -316,7 +317,7 @@ final class SyncAssociationsReportTest extends TestCase
         ]);
 
         foreach (self::runSync() as $line) {
-            self::assertStringNotContainsString('no longer reports', $line);
+            self::assertStringNotContainsString('this run did not see', $line);
             self::assertStringNotContainsString('Contact to company', $line);
             self::assertStringNotContainsString('Company to contact', $line);
         }
@@ -346,15 +347,15 @@ final class SyncAssociationsReportTest extends TestCase
         $lines = self::runSync();
 
         self::assertContains(
-            'deals -> contacts: the portal no longer reports 1 reconciled label this store still '
-            .'holds: "Sponsor". Nothing was removed.',
+            'deals -> contacts: this run did not see 1 reconciled label this store still '
+            .'holds: "Sponsor". Nothing was removed, and a label absent here is not proof the portal dropped it — a definitions read returns only the first page the API returns.',
             $lines,
         );
 
         foreach ($lines as $line) {
-            self::assertStringNotContainsString('deals -> companies: the portal no longer reports', $line);
-            self::assertStringNotContainsString('companies -> deals: the portal no longer reports', $line);
-            self::assertStringNotContainsString('contacts -> deals: the portal no longer reports', $line);
+            self::assertStringNotContainsString('deals -> companies: this run did not see', $line);
+            self::assertStringNotContainsString('companies -> deals: this run did not see', $line);
+            self::assertStringNotContainsString('contacts -> deals: this run did not see', $line);
         }
     }
 
@@ -386,7 +387,7 @@ final class SyncAssociationsReportTest extends TestCase
         self::fakePortal(self::twoLabels());
 
         foreach (self::runSync() as $line) {
-            self::assertStringNotContainsString('no longer reports', $line);
+            self::assertStringNotContainsString('this run did not see', $line);
         }
     }
 
