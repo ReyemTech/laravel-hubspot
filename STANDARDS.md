@@ -331,11 +331,41 @@ somebody considered the feedback.
 - **Every automated review comment is read in full before its thread is resolved.** Codex, or
   whatever replaces it. There is no "these are just bot comments" exemption — they read the diff
   more carefully than a tired human does at 2am.
-- **A thread is closed by fixing the finding, or by a reply explaining with evidence why it is
-  wrong.** Never by silence. If the finding is correct but out of scope, say so and record where
-  the work went.
+- **Every resolved thread carries a written reply — including the ones that were fixed.** A fix
+  is not a reply. Resolving a thread silently because the code changed leaves no record of *what*
+  changed, whether the fix matches what was asked, or what was deliberately left undone; the
+  reviewer, and the next person reading the thread, sees only a closed conversation.
+
+  The reply states which of four dispositions applies, and carries what that disposition needs.
+  The requirements differ because two of them have no commit to point at:
+
+  | Disposition | The reply must carry |
+  |---|---|
+  | **Fixed** | the SHA of the commit that carries the fix |
+  | **Mitigated** | the SHA, **and** what remains unfixed |
+  | **Judged wrong** | evidence — what was checked and what it showed, not an assertion |
+  | **Correct but out of scope** | where the work went: the deferred-items file, requirement, or phase that owns it |
+
+  Demanding a commit SHA for a finding judged wrong, or for one deferred rather than changed,
+  makes the rule unsatisfiable in exactly the two cases where judgement matters most — and an
+  unsatisfiable rule is ignored rather than followed.
 - **Resolving to unblock a merge is forbidden.** This is the specific failure that produced this
   section, not a hypothetical.
+- **A pull request merges only when a completed review names the head commit it is merging.**
+  Codex reviews trigger on pull-request open, on a draft being marked ready, and on an explicit
+  `@codex review` comment — **not on a push.** So the commits that fix a finding are, by default,
+  never reviewed by the thing that found it. Absence of new comments after a fix push is absence
+  of review, not a clean result, and must never be reported as one.
+
+  Requesting the review is not enough, and "comment `@codex review` before merging" would be a
+  rule you could satisfy and merge thirty seconds later, before the review arrived — and one that
+  says nothing about a commit pushed *after* it arrives. Both paths reproduce the incident intact.
+  So the bar is a **completed** review whose reviewed SHA equals the current head, re-established
+  after **every** subsequent push.
+
+  This is checkable rather than a matter of trust: Codex states `**Reviewed commit:** <sha>` in
+  its own review body. Compare it against `gh pr view <n> --json headRefOid`. That comparison is
+  exactly how the Phase 3 gap was found, months of process discipline having failed to notice it.
 - **Verify before implementing.** A reviewer asserts; it does not prove. Several findings in the
   incident below were reproducible locally in minutes, and one recommendation would have been
   wrong to follow as written.
@@ -349,6 +379,16 @@ trigger it, so Pages would have silently never deployed — the exact failure th
 to prevent. A third finding was a defect in this repository's own release configuration, where
 `bump-patch-for-minor-pre-major` downgraded `feat:` commits to patch bumps below 1.0.0 while the
 commit message introducing it claimed the opposite.
+
+**The re-review rule has its own incident.** Phase 3 (2026-07-29) went the other way and handled
+every finding properly: eight findings across five pull requests, all eight real, all read, all
+answered, all resolved. But every one of those pull requests merged at a commit *later* than the
+one Codex had reviewed, and no re-review was requested — so the commits fixing the findings were
+never seen by the reviewer that raised them. PR #28 merged nine unreviewed commits, including a
+~120-line feature added in response to a finding. Worse, an executor reported "no new Codex
+findings" on those commits and that was relayed as a clean result, when Codex had simply never
+looked. Given the project's hit rate at that point — nineteen findings, nineteen real — the fixes
+were the last thing that should have gone unreviewed.
 
 None of them were found by CI. All of them were sitting in threads someone had already closed.
 
