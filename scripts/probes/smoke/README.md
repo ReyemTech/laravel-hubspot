@@ -168,21 +168,29 @@ reads it.
 return function (Probe $p): void {
     $p->section('Phase 4 — model sync (SYNC-01)');
 
+    $p->willCreate('contacts');            // BEFORE the create -- see rule 1 below
+
     $contact = $p->objects->create('contacts', ['email' => "p4-{$p->stamp}@example.com"]);
-    $p->track('contacts', $contact->id);   // ALWAYS immediately after the create
+    $p->track('contacts', $contact->id);   // immediately after the create
     $p->ok('created a contact', "id {$contact->id}");
 };
 ```
 
 The harness gives you `$p->objects`, `$p->associations`, `$p->definitions`,
 `$p->associationsResolvedBy($resolver)`, `$p->stamp`, and `section()` / `ok()` / `fail()` / `note()`
-/ `track()`.
+/ `willCreate()` / `track()`.
+
+Every created record must carry `$p->stamp` in a searchable property — `email` for contacts, `name`
+for companies, `dealname` for deals — because that is what the cleanup sweep searches by.
 
 Three rules the harness depends on:
 
-1. **`track()` immediately after each create.** Not at the end of a block. The failure that strands
-   a record is the one that happens in between — that is not hypothetical, it is what happened when
-   the 403 landed between creating a contact and creating a company.
+1. **`willCreate()` before the first create of a type, and `track()` immediately after each
+   create.** Not at the end of a block. The failure that strands a record is the one that happens in
+   between — that is not hypothetical, it is what happened when the 403 landed between creating a
+   contact and creating a company. `willCreate()` covers the harder case: if the create itself
+   commits and then loses its response, `track()` is never reached, and without the declaration the
+   sweep would not even know to look at that object type.
 2. **Use `fail()` rather than throwing** for an expectation that did not hold. It records, prints,
    continues, and makes the process exit non-zero. A throw aborts the phase — the runner catches it
    per phase so later phases still run, but everything after it in *that* phase is lost.

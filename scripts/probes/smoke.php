@@ -71,7 +71,11 @@ if ($token === null || $token === '') {
 $probe = new Probe(
     HubspotClientFactory::fromConfig($token),
     new ExceptionTranslator,
-    (string) time(),
+    // Random, not `time()`. The stamp is what the cleanup sweep searches by, so two runs starting
+    // within the same second against one portal would share it -- and each would discover the
+    // other's records as "untracked" and archive them mid-test, breaking both runs and deleting
+    // live records out from under whichever was still using them (Codex P2, PR #34).
+    bin2hex(random_bytes(6)),
 );
 
 $phases = glob(__DIR__.'/smoke/phase-*.php');

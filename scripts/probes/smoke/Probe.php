@@ -194,7 +194,14 @@ final class Probe
             };
 
             $found = [];
+            $failure = null;
 
+            // A MINIMUM number of passes regardless of `$expected`, then more while the index is
+            // demonstrably behind. Stopping as soon as `count($found) >= $expected` looked right and
+            // was worst exactly where it matters: a create that commits and throws before `track()`
+            // leaves `$expected` at zero for that type, so the first empty result satisfied the
+            // condition immediately and the record the sweep exists to catch was never waited for
+            // (Codex P2, PR #34). Reaching the tracked count is not proof that nothing else exists.
             for ($attempt = 1; $attempt <= 6; $attempt++) {
                 if ($attempt > 1) {
                     sleep(3);
@@ -206,16 +213,27 @@ final class Probe
                         SearchQuery::make()->where($property, 'CONTAINS_TOKEN', $this->stamp),
                     );
                 } catch (Throwable $e) {
-                    echo "  !! could not sweep {$type} for stamp {$this->stamp}: ".$e->getMessage()."\n";
+                    $failure = $e->getMessage();
 
-                    continue 2;
+                    continue;
                 }
 
+                $failure = null;
                 $found = $page->results;
 
-                if (count($found) >= $expected) {
+                if ($attempt >= 3 && count($found) >= $expected) {
                     break;
                 }
+            }
+
+            if ($failure !== null) {
+                // Printed AND recorded. A sweep that could not run is inconclusive, and an
+                // inconclusive cleanup reported as success is the failure this whole pass is about:
+                // retry middleware may have left a duplicate that was never inspected.
+                echo "  !! could not sweep {$type} for stamp {$this->stamp}: {$failure}\n";
+                $this->failures[] = ["sweep of {$type} could not run", $failure];
+
+                continue;
             }
 
             if (count($found) < $expected) {
