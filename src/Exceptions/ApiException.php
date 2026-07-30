@@ -61,43 +61,7 @@ final class ApiException extends RuntimeException implements HubspotException
             $message = sprintf('HubSpot API request failed with status %d.', $status);
         }
 
-        return new self($message, $status, $body, $correlationId, self::sanitisedPrevious($previous, $status));
-    }
-
-    /**
-     * **The SDK exception, replaced by one that says the same thing without quoting the body.**
-     *
-     * Scrubbing this package's own message is not enough, and overriding `__toString()` is not
-     * either — neither is the path that matters. Laravel's handler puts the throwable into
-     * `context['exception']` and **Monolog normalises `getPrevious()` recursively**, reading each
-     * exception's own message and never calling `__toString()` (Codex P1, PR #35). The SDK's
-     * `ApiException` inlines the entire raw response body into its message, so an echoed
-     * credential reaches ordinary application logs through a message this package does not write.
-     *
-     * So the chain itself is what has to be safe. The surrogate keeps what is diagnostically
-     * useful — the original class, the status, and the file and line it was thrown from — and drops
-     * only the message, which is the one part that quotes HubSpot verbatim. `body()` still holds
-     * the payload for anyone who wants it deliberately.
-     *
-     * **Only for responses.** A connection failure never received a body, so there is nothing
-     * echoed to leak, and its previous exception carries the one thing that distinguishes DNS
-     * failure from refusal from a TLS error from a timeout (Codex P2, PR #35). Replacing it there
-     * would trade a real diagnostic for no security at all, so `connectionFailure()` keeps the
-     * original untouched.
-     */
-    private static function sanitisedPrevious(Throwable $previous, int $status): RuntimeException
-    {
-        return new RuntimeException(
-            sprintf(
-                '%s (HTTP %d) thrown at %s:%d. Its message is withheld: the SDK inlines the raw '
-                .'response body, which can echo submitted values. Call ApiException::body() for the '
-                .'payload.',
-                $previous::class,
-                $status,
-                $previous->getFile(),
-                $previous->getLine(),
-            ),
-        );
+        return new self($message, $status, $body, $correlationId, $previous);
     }
 
     /**

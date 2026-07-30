@@ -219,9 +219,10 @@ final class ExceptionTranslationTest extends TestCase
      * surrogate naming the original class and throw site — plus the response-side data the package
      * exposes deliberately through `body()`, `status()` and `correlationId()`.
      *
-     * **This is a behavioural change to `getPrevious()`** on a released package: a consumer reaching
-     * for `getResponseHeaders()` on the previous exception no longer finds it. Recorded in the pull
-     * request rather than discovered.
+     * **`getPrevious()` keeps its type.** It is public API on a released package, so the SDK
+     * exception is rebuilt rather than replaced: same class, same status, same headers, same body,
+     * and only the message changed. `instanceof` and every accessor a consumer already calls still
+     * work.
      */
     public function test_nothing_reaching_userland_carries_the_authorization_header_or_the_token(): void
     {
@@ -237,12 +238,13 @@ final class ExceptionTranslationTest extends TestCase
         } catch (ApiException $exception) {
             $previous = $exception->getPrevious();
 
-            self::assertNotNull($previous);
-            self::assertNotInstanceOf(SdkObjectsApiException::class, $previous);
-
-            // It still says which SDK exception it stood in for, and where.
+            // STILL the SDK exception type: getPrevious() is public API on a released package, so
+            // every accessor a consumer already calls keeps working. Only the message changed.
+            self::assertInstanceOf(SdkObjectsApiException::class, $previous);
             self::assertStringContainsString(SdkObjectsApiException::class, $previous->getMessage());
             self::assertStringContainsString('HTTP 404', $previous->getMessage());
+            self::assertIsArray($previous->getResponseHeaders());
+            self::assertIsString($previous->getResponseBody());
 
             // Walk the whole chain the way a log normaliser does.
             $link = $exception;

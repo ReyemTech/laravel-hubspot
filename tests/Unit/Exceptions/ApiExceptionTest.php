@@ -241,35 +241,11 @@ final class ApiExceptionTest extends TestCase
 
         $exception = ApiException::httpError(400, '{"message":"rejected '.$secret.'"}', null, $sdk, [$secret]);
 
-        $link = $exception;
-        $seen = 0;
-
-        while ($link !== null) {
-            self::assertStringNotContainsString($secret, $link->getMessage());
-            $seen++;
-            $link = $link->getPrevious();
-        }
-
-        self::assertSame(2, $seen, 'The chain should be this exception plus one sanitised surrogate.');
-        self::assertStringNotContainsString($secret, (string) $exception);
-    }
-
-    /**
-     * The surrogate is not a black hole: it keeps the original class, the status and the throw site,
-     * which is everything except the one part that quotes HubSpot verbatim.
-     */
-    public function test_the_surrogate_keeps_what_is_diagnostically_useful(): void
-    {
-        $sdk = new RuntimeException('raw body here');
-        $exception = ApiException::httpError(409, self::body('conflict'), null, $sdk);
-
-        $previous = $exception->getPrevious();
-
-        self::assertNotNull($previous);
-        self::assertStringContainsString(RuntimeException::class, $previous->getMessage());
-        self::assertStringContainsString('HTTP 409', $previous->getMessage());
-        self::assertStringContainsString(__FILE__, $previous->getMessage());
-        self::assertStringNotContainsString('raw body here', $previous->getMessage());
+        // ApiException itself carries whatever previous it is given -- sanitising the SDK exception
+        // is `Gateway\ExceptionTranslator`'s job, since R1 forbids this namespace naming a
+        // `HubSpot\*` class. What is asserted here is this exception's OWN message.
+        self::assertStringNotContainsString($secret, $exception->getMessage());
+        self::assertSame($sdk, $exception->getPrevious());
     }
 
     /**

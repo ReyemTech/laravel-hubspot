@@ -427,10 +427,11 @@ final class ExceptionHierarchyTest extends TestCase
         // normaliser walking getPrevious() would record verbatim. The retained surrogate names the
         // class it stood in for, and body() still holds the payload.
         $previous = $result->getPrevious();
-        self::assertNotNull($previous);
+        self::assertInstanceOf(\HubSpot\Client\Crm\Associations\V4\ApiException::class, $previous);
         self::assertNotSame($sdkException, $previous);
         self::assertStringContainsString(\HubSpot\Client\Crm\Associations\V4\ApiException::class, $previous->getMessage());
         self::assertStringNotContainsString('raw associations body', $previous->getMessage());
+        self::assertSame('raw associations body', $previous->getResponseBody());
     }
 
     public function test_a_canned_associations_v4_error_with_a_deserialised_response_object_preserves_its_correlation_id(): void

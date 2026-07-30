@@ -113,6 +113,53 @@ final class ExceptionTranslator
     }
 
     /**
+     * **The same SDK exception, carrying the same response data, without the body in its message.**
+     *
+     * Scrubbing this package's own message is not enough. Laravel's handler puts the throwable into
+     * `context['exception']` and **Monolog normalises `getPrevious()` recursively**, reading each
+     * exception's own message and never calling `__toString()` (Codex P1, PR #35). The SDK's
+     * `ApiException` inlines the entire raw response body into its message, so a credential a caller
+     * wrote into a property — quoted back by HubSpot in a 4xx — reached ordinary application logs
+     * through a message this package neither writes nor can scrub.
+     *
+     * **The replacement is the same class, not a plain exception** (Codex P2, PR #35). `getPrevious()`
+     * is public API on a released package; handing back a `RuntimeException` would break every
+     * consumer calling `getResponseHeaders()` or `getResponseBody()` on it. Rebuilding the same type
+     * with the original status, headers and body keeps `instanceof` and every accessor working, and
+     * changes only the message.
+     *
+     * `getResponseBody()` still returns the raw payload, exactly as `ApiException::body()` does. That
+     * is deliberate and consistent: a body is something a developer reaches for, not something a log
+     * normaliser walks into.
+     *
+     * The rebuilt exception's stack trace begins here rather than inside the SDK, so the original
+     * throw site is named in the message instead.
+     */
+    private static function withoutTheInlinedBody(
+        SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException $exception,
+        int $status,
+    ): SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException {
+        $message = sprintf(
+            '%s (HTTP %d) thrown at %s:%d. Its message is withheld here: the SDK inlines the raw '
+            .'response body, which can echo submitted values into logs. Call getResponseBody(), or '
+            .'ReyemTech\Hubspot\Exceptions\ApiException::body(), for the payload.',
+            $exception::class,
+            $status,
+            $exception->getFile(),
+            $exception->getLine(),
+        );
+
+        $headers = $exception->getResponseHeaders() ?? [];
+        $body = $exception->getResponseBody();
+
+        return match (true) {
+            $exception instanceof SdkObjectsApiException => new SdkObjectsApiException($message, $status, $headers, $body),
+            $exception instanceof SdkAssociationsV4ApiException => new SdkAssociationsV4ApiException($message, $status, $headers, $body),
+            default => new SdkAssociationsV4SchemaApiException($message, $status, $headers, $body),
+        };
+    }
+
+    /**
      * All three recognised namespaces expose the identical method shape (`getCode()`,
      * `getResponseBody()`, `getResponseObject()`) since they come from the same code generator —
      * one routine handles them once the caller has already resolved the namespace-specific
@@ -138,7 +185,7 @@ final class ExceptionTranslator
             $status,
             is_string($body) ? $body : null,
             $correlationId,
-            $exception,
+            self::withoutTheInlinedBody($exception, $status),
             $this->redact,
         );
     }
