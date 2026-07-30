@@ -107,9 +107,21 @@ return function (Probe $p): void {
     );
     $ids = array_values(array_map(static fn ($r): int => $r->typeId, $rows));
 
-    in_array(279, $ids, true)
-        ? $p->ok('read it back and FOUND typeId 279', sprintf('among %d row(s): %s', count($rows), implode(', ', $ids)))
-        : $p->fail('read it back and found typeId 279', sprintf('got %s instead', implode(', ', $ids) ?: 'nothing'));
+    // Membership is not enough. If a regression wrote BOTH 279 and the forbidden inverse 280,
+    // HubSpot would accept both, `in_array(279, ...)` would still be true, and the inverse check
+    // below would also pass because 280 is what it expects there -- so the probe would exit 0
+    // having performed the exact inverse-direction write it exists to catch (Codex P2 on PR #34).
+    // The forward direction must therefore also assert 280's ABSENCE.
+    if (! in_array(279, $ids, true)) {
+        $p->fail('read it back and found typeId 279', sprintf('got %s instead', implode(', ', $ids) ?: 'nothing'));
+    } elseif (in_array(280, $ids, true)) {
+        $p->fail(
+            'read it back and found typeId 279 ALONE',
+            sprintf('the inverse id 280 was written on the forward direction too: %s', implode(', ', $ids)),
+        );
+    } else {
+        $p->ok('read it back and FOUND typeId 279', sprintf('among %d row(s): %s', count($rows), implode(', ', $ids)));
+    }
 
     $inverseRows = array_filter(
         $p->associations->read($pair->reversed()),
@@ -121,15 +133,23 @@ return function (Probe $p): void {
     // `fail()`, not `note()`. This is the claim the section exists to make, and a note leaves the
     // process exiting 0 while the baseline's inverse is wrong or absent (Codex P2 on PR #34) -- a
     // probe that reports success having disproved its own premise is worse than no probe.
-    in_array(280, $inverseIds, true)
-        ? $p->ok('the inverse is 280, as the baseline claims', 'both directions confirmed live')
-        : $p->fail(
+    if (in_array(280, $inverseIds, true) && in_array(279, $inverseIds, true)) {
+        // The mirror of the check above: 279 has no business on the inverse direction.
+        $p->fail(
+            'the inverse is 280, as the baseline claims',
+            sprintf('the forward id 279 was written on the inverse direction too: %s', implode(', ', $inverseIds)),
+        );
+    } elseif (in_array(280, $inverseIds, true)) {
+        $p->ok('the inverse is 280, and 279 is absent', 'both directions confirmed live');
+    } else {
+        $p->fail(
             'the inverse is 280, as the baseline claims',
             'this portal reported '.(implode(', ', $inverseIds) ?: 'nothing')
             .' -- the seeded inverse_type_id is wrong or the association was not written. It is '
             .'recorded for traversal and never read on a write path, so nothing is mis-writing '
             .'today, but the baseline row is not what it says it is.',
         );
+    }
 
     $p->section('Phase 3 — the definitions read, through the Schema-namespaced DefinitionsApi');
 
