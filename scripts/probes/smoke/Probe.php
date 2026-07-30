@@ -226,8 +226,10 @@ final class Probe
             }
 
             /** @var array<string, object> $found */
+            /** @var array<string, object> $found */
             $found = [];
             $failure = null;
+            $lastAttemptCount = 0;
 
             // A MINIMUM number of passes regardless of `$expected`, then more while the index is
             // demonstrably behind. Stopping as soon as `count($found) >= $expected` looked right and
@@ -244,26 +246,27 @@ final class Probe
                     // Every page, not the first. Retry middleware can produce more stamped records
                     // than fit one page, and a sweep that reads only page one archives some of them
                     // and reports nothing about the rest (Codex P2, PR #34).
-                    $pageResults = [];
+                    $thisAttempt = 0;
                     $after = null;
 
                     do {
                         $query = SearchQuery::make()->where($property, 'CONTAINS_TOKEN', $this->stamp);
                         $page = $this->objects->search($type, $after === null ? $query : $query->after($after));
-                        $pageResults = array_merge($pageResults, $page->results);
+                        // Merged as each page arrives, not after the cursor loop. A later page
+                        // request throwing would otherwise jump past the merge and discard records
+                        // from pages already fetched -- ids the sweep had genuinely observed
+                        // (Codex P2, PR #34).
+                        //
+                        // UNION by id, never replace: the index is eventually consistent in both
+                        // directions, so a later attempt returning fewer records must not drop an
+                        // untracked id already seen. Anything ever observed stays observed.
+                        foreach ($page->results as $record) {
+                            $found[$record->id] = $record;
+                            $thisAttempt++;
+                        }
+
                         $after = $page->after;
                     } while ($after !== null && $after !== '');
-
-                    // UNION by id across every completed attempt, never replace. The index is
-                    // eventually consistent in both directions: an attempt can return two stamped
-                    // records and the next only one, and a later result that merely satisfies
-                    // `$expected` would end polling having dropped an untracked id already seen --
-                    // leaving that record in the portal (Codex P2, PR #34). Anything ever observed
-                    // stays observed; archiving something already archived is harmless, forgetting
-                    // it is not.
-                    foreach ($pageResults as $record) {
-                        $found[$record->id] = $record;
-                    }
                 } catch (Throwable $e) {
                     // `$found` deliberately keeps whatever an earlier attempt discovered. Resetting
                     // it meant a final attempt throwing would abandon a record already identified,
@@ -277,7 +280,13 @@ final class Probe
 
                 $failure = null;
 
-                if ($attempt >= 3 && count($found) >= $expected) {
+                // THIS attempt's count, not the union's. The union retains ids from earlier
+                // attempts, so a current attempt returning fewer than `$expected` -- the very
+                // signal that the index is behind -- would still satisfy a union-based check and
+                // stop polling early (Codex P2, PR #34).
+                $lastAttemptCount = $thisAttempt;
+
+                if ($attempt >= 3 && $thisAttempt >= $expected) {
                     break;
                 }
             }
@@ -294,7 +303,7 @@ final class Probe
                 // records whose ids are already known.
             }
 
-            if (count($found) < $expected) {
+            if ($lastAttemptCount < $expected) {
                 echo "  !! sweep of {$type} saw only ".count($found)." of {$expected} known record(s); "
                     ."the search index is behind and an untracked record could be invisible.\n";
                 $this->failures[] = [

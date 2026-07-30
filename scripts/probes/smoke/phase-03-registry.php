@@ -28,6 +28,7 @@ declare(strict_types=1);
  */
 
 use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
+use ReyemTech\Hubspot\Gateway\AssociationCategory;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\ObjectRef;
 use ReyemTech\Hubspot\Probes\Probe;
@@ -159,7 +160,12 @@ return function (Probe $p): void {
     $definitions = $p->definitions->listFor('contacts', 'companies');
     $p->ok('read this portal\'s definitions', sprintf('%d definition(s)', count($definitions)));
 
-    $unlabelled = array_filter($definitions, static fn ($d): bool => $d->label === null);
+    // BOTH conditions. A null-labelled row of some other category would otherwise be read as
+    // evidence for a claim that is only about HUBSPOT_DEFINED rows (Codex P2 on PR #34).
+    $unlabelled = array_filter(
+        $definitions,
+        static fn ($d): bool => $d->label === null && $d->type->category === AssociationCategory::HubspotDefined,
+    );
     $labelled = array_filter($definitions, static fn ($d): bool => $d->label !== null);
 
     $p->ok(
@@ -177,7 +183,7 @@ return function (Probe $p): void {
             'the definitions read returned nothing at all, so the invariant was not observed',
         );
     } elseif (count($unlabelled) > 0) {
-        $p->ok('HubSpot really does return label: null', 'the baseline naming decision holds');
+        $p->ok('HubSpot returns label: null for a HUBSPOT_DEFINED type', 'the baseline naming decision holds');
     } else {
         $p->fail(
             'HubSpot really does return label: null',
