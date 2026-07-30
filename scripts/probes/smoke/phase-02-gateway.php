@@ -166,6 +166,23 @@ return function (Probe $p): void {
         $p->note($e->getMessage());
     }
 
+    // Read back. `dissociate()` returns void, and HubSpot accepts a delete for an association that
+    // is not there as an idempotent no-op -- so an unconditional ok() would pass whether or not
+    // anything was removed, and nothing later reads this pair again (Codex P2, PR #34).
     $p->associations->dissociate($dealToContact);
-    $p->ok('dissociated that one direction', '');
+
+    $remaining = array_values(array_filter(
+        $p->associations->read($dealToContact),
+        static fn ($r): bool => $r->toObjectId === $contact->id,
+    ));
+
+    $remaining === []
+        ? $p->ok('dissociated that one direction', 'confirmed by reading the pair back')
+        : $p->fail(
+            'dissociated that one direction',
+            sprintf('the association is still present: typeId %s', implode(', ', array_map(
+                static fn ($r): int => $r->typeId,
+                $remaining,
+            ))),
+        );
 };

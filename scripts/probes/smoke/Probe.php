@@ -298,7 +298,13 @@ final class Probe
                     static fn (string $id): bool => ! isset($thisAttemptIds[$id]),
                 ));
 
-                if ($attempt >= 3 && $missingTracked === []) {
+                // With NOTHING tracked for this type, `$missingTracked` is empty on the first
+                // successful search and there is no lower bound to wait on -- yet that is exactly
+                // the case the sweep exists for, a create that committed and threw before
+                // `track()`. Early-exiting there would stop after three empty results while the
+                // record was still indexing (Codex P2, PR #34). No tracked ids means poll the full
+                // window before concluding nothing is there.
+                if ($expectedIds !== [] && $attempt >= 3 && $missingTracked === []) {
                     break;
                 }
             }

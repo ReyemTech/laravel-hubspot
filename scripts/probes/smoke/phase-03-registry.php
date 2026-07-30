@@ -177,23 +177,44 @@ return function (Probe $p): void {
     // solely because HubSpot returns no label for them; if that stops being true, the naming
     // decision needs revisiting and a green run would hide exactly that (Codex P2 on PR #34).
     // An empty response fails here too -- nothing read is not the same as the invariant holding.
-    if ($definitions === []) {
-        $p->fail(
-            'HubSpot really does return label: null',
-            'the definitions read returned nothing at all, so the invariant was not observed',
-        );
-    } elseif (count($unlabelled) > 0) {
-        $p->ok('HubSpot returns label: null for a HUBSPOT_DEFINED type', 'the baseline naming decision holds');
-    } else {
-        $p->fail(
-            'HubSpot really does return label: null',
-            sprintf(
-                'all %d definition(s) carried a label. The baseline names HUBSPOT_DEFINED rows '
-                .'itself precisely because FOUND-03 measured null labels twice; that premise no '
-                .'longer holds and the decision needs revisiting.',
-                count($definitions),
-            ),
-        );
+    // **Per SEEDED type, against what the baseline actually claims** — not an existential check
+    // over the category. The baseline seeds two HUBSPOT_DEFINED types for this direction, 279 and
+    // 1, and gives each its own canonical name on the stated grounds that HubSpot returns no label
+    // for them. An "at least one is null" test would pass while either was wrong (Codex P2 on
+    // PR #34), and comparing against the category as a whole answers a question the baseline never
+    // asked. So compare type by type.
+    $byTypeId = [];
+
+    foreach ($definitions as $definition) {
+        $byTypeId[$definition->type->typeId] = $definition;
+    }
+
+    foreach ([279, 1] as $seededTypeId) {
+        $definition = $byTypeId[$seededTypeId] ?? null;
+
+        if ($definition === null) {
+            $p->fail(
+                sprintf('the baseline\'s seeded type %d exists on this portal', $seededTypeId),
+                'this portal did not return it at all, so the seeded row cannot be verified',
+            );
+
+            continue;
+        }
+
+        $definition->label === null
+            ? $p->ok(
+                sprintf('seeded type %d has no label of its own', $seededTypeId),
+                'so this package naming it is justified',
+            )
+            : $p->fail(
+                sprintf('seeded type %d has no label of its own', $seededTypeId),
+                sprintf(
+                    'HubSpot calls it "%s", while the baseline invents its own name for it. A portal '
+                    .'label is the one a sync will write, so the seeded name is unreachable for '
+                    .'anyone who syncs — the naming decision rests on this being null and it is not.',
+                    $definition->label,
+                ),
+            );
     }
 
     $p->associationsResolvedBy($registry)->dissociate($pair);

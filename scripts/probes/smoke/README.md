@@ -146,6 +146,14 @@ Both confirmed live rather than assumed:
 - **`contacts → companies` is 279 and its inverse is 280**, exactly as the seeded baseline claims. A
   wrong baseline id is accepted silently by HubSpot, so no test against a fake could catch it.
 
+## Known failing step
+
+**`seeded type 1 has no label of its own` fails on a real portal, and that failure is correct.**
+HubSpot calls typeId 1 `Primary`; the baseline invents `Contact to primary company` for it on the
+stated grounds that HubSpot-defined types carry no label. For typeId 279 that holds; for 1 it does
+not. Filed in `.planning/phases/03-registry-and-stores/deferred-items.md`. The probe is doing its
+job — do not "fix" it by weakening the assertion.
+
 ## What this has already caught
 
 - A **400 on an invalid email**: `.test` is reserved by RFC 2606, and HubSpot's validator rejects it

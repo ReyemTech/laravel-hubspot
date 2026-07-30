@@ -98,3 +98,32 @@ diff harder to read than it needed to be.
 - **STANDARDS §7's "every `HUBSPOT_*` env var listed in the README with its default" is still unmet.**
   Recorded by 03-01 and 03-02 and still true. 03-03 added no new env var — `associations.sync` is a
   config array with no `env()` call.
+
+
+## The baseline's label for typeId 1 is wrong — measured, not theorised (2026-07-30)
+
+`scripts/probes/smoke.php` fails on a real portal at `seeded type 1 has no label of its own`.
+
+```
+typeId=1     HUBSPOT_DEFINED   label='Primary'
+typeId=279   HUBSPOT_DEFINED   label=NULL
+typeId=931   HUBSPOT_DEFINED   label='Billing Contact'
+```
+
+`Registry\BaselineAssociationTypes` seeds typeId 1 as `Contact to primary company`, a name this
+package invented on the stated grounds that **HubSpot returns no label for HUBSPOT_DEFINED types**.
+For 279 that holds. For **1 it does not** — HubSpot calls it `Primary`.
+
+Why it matters rather than being cosmetic: the portal's own label is what
+`hubspot:associations:sync` writes, so after a sync the row for typeId 1 is keyed on `Primary` and
+the seeded name resolves nothing. A consumer following the baseline's naming gets a miss on a
+direction the package claims to cover offline.
+
+**Not fixed here, and deliberately.** `Primary` was measured on ONE portal, and design spec §6.4's
+standing rule is that probe results are not extended by reasoning about cases that were not run — so
+whether that label is universal for typeId 1 or portal-specific is an open question, and seeding a
+second uncited name would repeat the mistake in the other direction. It needs its own decision, and
+possibly its own probe across a second portal.
+
+The 931 `Billing Contact` row is a further reminder that a portal carries HubSpot-defined types the
+baseline knows nothing about.
