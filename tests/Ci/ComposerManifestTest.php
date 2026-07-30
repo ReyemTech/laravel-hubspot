@@ -119,7 +119,7 @@ function composerManifestIlluminateRootsUsedInSrc(): array
     );
 
     foreach ($iterator as $file) {
-        if (! $file->isFile() || $file->getExtension() !== 'php') {
+        if (! $file instanceof SplFileInfo || ! $file->isFile() || $file->getExtension() !== 'php') {
             continue;
         }
 

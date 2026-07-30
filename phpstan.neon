@@ -29,8 +29,12 @@ parameters:
     # the "drop tests/ to quiet the analyser" anti-pattern this file's `paths`
     # comment warns against -- every other real file under tests/ is still
     # analysed; only the known-and-labelled-broken fixtures are skipped.
+    # tests/Ci/Fixtures/VendorNamespaces/ (plan 04-01, D-04) holds two deliberately
+    # rule-violating classes for scripts/ci/check-vendor-namespaces.sh's --self-test --
+    # never production code, for the same reason tests/Arch/Fixtures/* below is excluded.
     excludePaths:
         - tests/Arch/Fixtures/*
+        - tests/Ci/Fixtures/*
 
 # Larastan is registered via phpstan/extension-installer (composer.json
 # allow-plugins), not included here by hand -- including its extension.neon

@@ -81,6 +81,27 @@ jobs:
       - name: Prove the scan rejects both markers
         run: bash scripts/ci/check-source-hygiene.sh --self-test
 
+  vendor-namespaces:
+    name: vendor namespaces (Illuminate backed, no unapproved third party)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Run the vendor-namespace scan
+        run: bash scripts/ci/check-vendor-namespaces.sh
+
+      - name: Prove both directions reject their own fixture, and a clean file is accepted
+        run: bash scripts/ci/check-vendor-namespaces.sh --self-test
+
   quality-gates-fire:
     name: quality gates fire (violation-fixture proof)
     runs-on: ubuntu-latest

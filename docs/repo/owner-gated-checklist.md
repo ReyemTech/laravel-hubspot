@@ -58,6 +58,9 @@ and the manifest-shape lock:
 - `pint` — the laravel preset, `pint --test`
 - `code-shape` — 500 lines/file, 150 lines/function, cyclomatic complexity 10 (PHPCS + Slevomat)
 - `source-hygiene` — rejects deferred-work markers anywhere in the tracked tree
+- `vendor-namespaces` — D-04: every `Illuminate\*` root referenced under `src/` is backed by a
+  declared require, and no third-party vendor root outside the enumerated grandfather list
+  (three roots, named in scripts/ci/check-vendor-namespaces.sh) appears there
 - `quality-gates-fire` — proves PHPStan and the code-shape gate each reject a real violation
 - `mutation` — `pest --mutate --min=80`
 
