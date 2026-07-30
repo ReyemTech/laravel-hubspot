@@ -5,12 +5,12 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Registry & Stores
 status: complete
-stopped_at: "Phase 3 complete and 0.3.0 released. Post-phase PR batch fully merged (#30, #31, #33, #34, #35, #36); only #32 (release-please, 0.3.1) is open and is the owner's. Next action is planning Phase 4 (Model Sync), which owns REG-01b and REG-04b"
-last_updated: "2026-07-30T14:40:00.000Z"
-last_activity: 2026-07-30
-last_activity_desc: "executed 03-03-PLAN.md (definitions read, sync and the two doctors): Gateway\AssociationDefinitionsGateway wraps the Schema-namespaced DefinitionsApi (the phase's only new HubSpot\* reference), hubspot:associations:sync reconciles both directions of each configured pair and leaves inverse_type_id null because the two responses share no join key, hubspot:doctor reports stores/resolver/reconciliation state and NAMES the absent bound-model section, hubspot:associations:doctor searches every reported association type for the expected directional id and records a pairing only when both directions were observed. Codex raised three P2s on #28: verified inverse ids are now carried across an unchanged re-read, the doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is deferred to Phase 4. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%. REG-02 and REG-03 tick; REG-01 and REG-04 stay OPEN with only their Phase 3 halves done."
+stopped_at: Phase 4 context gathered
+last_updated: "2026-07-30T16:48:52.241Z"
+last_activity: 2026-07-29
+last_activity_desc: "executed 03-03-PLAN.md. `Gateway\\\\AssociationDefinitionsGateway` wraps `Schema\\\\Api\\\\DefinitionsApi` (the phase's only new `HubSpot\\\\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%."
 progress:
-  total_phases: 3
+  total_phases: 4
   completed_phases: 3
   total_plans: 16
   completed_plans: 16
@@ -233,9 +233,9 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-30
-Stopped at: Phase 3 complete, **0.3.0 released**, and the post-phase PR batch fully merged — #30, #31, #33, #34, #35, #36. Only #32 (release-please, 0.3.1) remains open and is the owner's to merge. Next action is planning Phase 4 (Model Sync), which owns REG-01b and REG-04b
-Resume file: None
+Last session: 2026-07-30T16:48:52.189Z
+Stopped at: Phase 4 context gathered
+Resume file: .planning/phases/04-model-sync/04-CONTEXT.md
 
 **Landed after Phase 3 closed (2026-07-30):**
 
@@ -245,10 +245,12 @@ Resume file: None
   `deals → contacts` = typeId 3 and `contacts → deals` = 4; `contacts → companies` = 279 with inverse
   280, resolved offline from the seeded baseline. `/scripts` is `export-ignore`d, so probe files are
   outside the coverage, PHPStan and 500-line gates — but Pint does apply.
+
 - **`ApiException` now carries HubSpot's own explanation** on a 4xx instead of "contact support" (#35),
   with secrets scrubbed longest-first, Unicode control/separator normalisation, a 400-char UTF-8-pinned
   cap, the SDK exception rebuilt without its inlined body, and the translator holding a resolver
   closure rather than the credentials.
+
 - ~30 Codex findings across the batch, every one real; several security-relevant.
 
 **Known-failing by design:** the probe exits 1 on a healthy portal at the seeded-typeId-1 step.
