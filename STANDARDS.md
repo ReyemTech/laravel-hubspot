@@ -336,6 +336,14 @@ somebody considered the feedback.
   changed, whether the fix matches what was asked, or what was deliberately left undone; the
   reviewer, and the next person reading the thread, sees only a closed conversation.
 
+  **Only the bot-authored half of this is gate-enforced, and the gap is stated rather than
+  papered over.** `scripts/ci/check-review-threads.sh` asks whether a resolved thread contains any
+  comment authored by a `User`. On a Codex thread that is exactly right: the only way a `User`
+  comment appears is if somebody replied. On a thread a *human* opened, their own opening comment
+  satisfies the check, so a human thread can still be resolved in silence and the gate will pass
+  it. The rule above binds either way — it is a standard, not a CI feature — but nobody should
+  read a green `review-threads` check as evidence that a human-started thread was answered.
+
   The reply states which of four dispositions applies, and carries what that disposition needs.
   The requirements differ because two of them have no commit to point at:
 
