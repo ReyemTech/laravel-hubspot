@@ -152,11 +152,20 @@ final class ExceptionTranslator
         $headers = $exception->getResponseHeaders() ?? [];
         $body = $exception->getResponseBody();
 
-        return match (true) {
+        $rebuilt = match (true) {
             $exception instanceof SdkObjectsApiException => new SdkObjectsApiException($message, $status, $headers, $body),
             $exception instanceof SdkAssociationsV4ApiException => new SdkAssociationsV4ApiException($message, $status, $headers, $body),
             default => new SdkAssociationsV4SchemaApiException($message, $status, $headers, $body),
         };
+
+        // The deserialised error object travels too. It is not a constructor argument -- the SDK
+        // sets it afterwards -- so rebuilding without this line would leave `getResponseObject()`
+        // returning null on a type whose whole purpose here is that consumers can still call it,
+        // losing HubSpot's structured error and its fields silently (Codex P2, PR #35). This
+        // translator reads that same object for the correlation id, so it is plainly load-bearing.
+        $rebuilt->setResponseObject($exception->getResponseObject());
+
+        return $rebuilt;
     }
 
     /**

@@ -246,6 +246,12 @@ final class ExceptionTranslationTest extends TestCase
             self::assertIsArray($previous->getResponseHeaders());
             self::assertIsString($previous->getResponseBody());
 
+            // And the deserialised error object, which the SDK sets after construction rather than
+            // passing in -- so rebuilding without copying it would return null here on a type whose
+            // whole point is that consumers can still call it.
+            self::assertNotNull($previous->getResponseObject());
+            self::assertSame('corr-404', $previous->getResponseObject()->getCorrelationId());
+
             // Walk the whole chain the way a log normaliser does.
             $link = $exception;
 
