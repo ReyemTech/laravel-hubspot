@@ -35,15 +35,15 @@ use Throwable;
 final class ExceptionTranslator
 {
     /**
-     * @param  list<string>  $redact  secrets this package holds -- the access token and the webhook
-     *                                client secret -- scrubbed from any HubSpot explanation before
-     *                                it reaches an exception message. Defaults to none so a
-     *                                hand-wired translator (the smoke probe, a test) still works;
-     *                                `ServiceProvider` supplies the real values, and
-     *                                `tests/Feature/Gateway/ExceptionTranslationTest.php` asserts
-     *                                that wiring rather than trusting it.
+     * @param  list<string>|null  $redact  secrets this package holds -- the access token and the webhook
+     *                                     client secret -- scrubbed from any HubSpot explanation before
+     *                                     it reaches an exception message. Defaults to none so a
+     *                                     hand-wired translator (the smoke probe, a test) still works;
+     *                                     `ServiceProvider` supplies the real values, and
+     *                                     `tests/Feature/Gateway/ExceptionTranslationTest.php` asserts
+     *                                     that wiring rather than trusting it.
      */
-    public function __construct(private readonly array $redact = []) {}
+    public function __construct(private readonly ?array $redact = null) {}
 
     /**
      * The SDK API-namespace `ApiException` FQCNs this translator recognises. `public static` so

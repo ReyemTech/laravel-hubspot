@@ -48,9 +48,13 @@ final class ApiExceptionTest extends TestCase
         return (string) json_encode(['message' => $message, 'category' => 'VALIDATION_ERROR']);
     }
 
+    /**
+     * Passes an explicit empty redaction list: "there is nothing to scrub", which is what lifts the
+     * reason. A four-argument call means "nobody told me", and deliberately lifts nothing.
+     */
     private static function raise(int $status, ?string $body, ?string $correlationId): ApiException
     {
-        return ApiException::httpError($status, $body, $correlationId, new RuntimeException('sdk'));
+        return ApiException::httpError($status, $body, $correlationId, new RuntimeException('sdk'), []);
     }
 
     public function test_a_client_error_names_hubspots_own_reason(): void
@@ -262,6 +266,65 @@ final class ApiExceptionTest extends TestCase
 
         self::assertSame($guzzle, $exception->getPrevious());
         self::assertStringContainsString('Could not resolve host', (string) $exception);
+    }
+
+    /**
+     * **A four-argument call keeps the behaviour it had before this parameter existed.**
+     *
+     * The reason is remote text. Lifting it is only safe once the caller has said what to scrub, so
+     * `null` -- "nobody told me" -- lifts nothing and degrades to the previous wording. A consumer
+     * calling this factory directly, or hand-wiring an `ExceptionTranslator`, therefore cannot
+     * silently gain an unscrubbed message (Codex P2 on PR #35).
+     */
+    public function test_omitting_the_redaction_list_lifts_no_remote_text(): void
+    {
+        $exception = ApiException::httpError(400, self::body('deal not found'), 'corr-400', new RuntimeException('sdk'));
+
+        self::assertSame(
+            'HubSpot API request failed with status 400. Quote correlation id corr-400 to HubSpot support.',
+            $exception->getMessage(),
+        );
+    }
+
+    /**
+     * **Longest first**, or a secret that is a prefix of another leaks most of the longer one:
+     * replacing `abc` first turns `abcdef123` into `[redacted]def123`, which the second pass can no
+     * longer match.
+     */
+    public function test_a_secret_that_prefixes_another_does_not_leak_the_longer_one(): void
+    {
+        $exception = ApiException::httpError(
+            400,
+            self::body('rejected abcdef123'),
+            null,
+            new RuntimeException('sdk'),
+            ['abc', 'abcdef123'],
+        );
+
+        self::assertSame('HubSpot rejected the request with status 400: rejected [redacted]', $exception->getMessage());
+        self::assertStringNotContainsString('def123', $exception->getMessage());
+    }
+
+    /**
+     * `json_decode` turns `\n` escapes into real newlines, so an attacker-controlled property value
+     * echoed back by HubSpot could forge extra log lines or emit terminal escapes.
+     */
+    public function test_control_characters_in_the_reason_are_normalised(): void
+    {
+        $exception = ApiException::httpError(
+            400,
+            (string) json_encode(['message' => "Invalid value:\nfake log line\r\n\x07 and\ttabs"]),
+            null,
+            new RuntimeException('sdk'),
+            [],
+        );
+
+        self::assertSame(
+            'HubSpot rejected the request with status 400: Invalid value: fake log line and tabs',
+            $exception->getMessage(),
+        );
+        self::assertStringNotContainsString("\n", $exception->getMessage());
+        self::assertStringNotContainsString("\r", $exception->getMessage());
     }
 
     /**

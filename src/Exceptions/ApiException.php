@@ -39,14 +39,22 @@ final class ApiException extends RuntimeException implements HubspotException
      * lead. A **5xx** is not, so quoting a correlation id to support is the fix rather than a
      * deflection — and that wording is unchanged from before this split existed.
      *
-     * @param  list<string>  $redact  secrets this package holds, scrubbed from the reason before it
-     *                                reaches the message. Supplied by `Gateway\ExceptionTranslator`,
-     *                                which `ServiceProvider` binds with the configured token and
-     *                                webhook client secret.
+     * **`$redact` defaults to `null`, and that is a safety default rather than an omission.** A
+     * 4xx reason is remote text; lifting it is only safe once the caller has said what to scrub.
+     * `null` means "nobody told me", so no remote text is lifted at all and the message degrades to
+     * the wording that existed before this split. An explicit `[]` means "there is nothing to
+     * scrub" and does lift it. Four-argument calls that predate this parameter therefore keep
+     * exactly the behaviour they had, rather than silently gaining an unscrubbed one
+     * (Codex P2, PR #35).
+     *
+     * @param  list<string>|null  $redact  secrets this package holds, scrubbed from the reason before
+     *                                     it reaches the message. Supplied by
+     *                                     `Gateway\ExceptionTranslator`, which `ServiceProvider`
+     *                                     binds with the configured token and webhook client secret.
      */
-    public static function httpError(int $status, ?string $body, ?string $correlationId, Throwable $previous, array $redact = []): self
+    public static function httpError(int $status, ?string $body, ?string $correlationId, Throwable $previous, ?array $redact = null): self
     {
-        $reason = $status >= 400 && $status < 500 ? self::reasonFrom($body, $redact) : null;
+        $reason = $redact !== null && $status >= 400 && $status < 500 ? self::reasonFrom($body, $redact) : null;
 
         if ($reason !== null) {
             // A 4xx is the CALLER's to fix and HubSpot has just said how, so its words lead. The
@@ -104,13 +112,23 @@ final class ApiException extends RuntimeException implements HubspotException
 
         $reason = trim($decoded['message']);
 
-        foreach ($redact as $secret) {
-            // Guarded: `str_replace` with an empty needle is a no-op, but an unset `HUBSPOT_TOKEN`
-            // arriving here as '' and silently matching nothing is worth being explicit about.
-            if ($secret !== '') {
-                $reason = str_replace($secret, '[redacted]', $reason);
-            }
+        // Longest first. If one secret is a prefix of another -- `abc` and `abcdef123` -- replacing
+        // the short one first rewrites the text to `[redacted]def123`, the long one can no longer
+        // match, and most of the longer credential survives into the log (Codex P2, PR #35).
+        $secrets = array_filter($redact, static fn (string $secret): bool => $secret !== '');
+        usort($secrets, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+
+        foreach ($secrets as $secret) {
+            $reason = str_replace($secret, '[redacted]', $reason);
         }
+
+        // Control characters last, so a secret spanning one is scrubbed before this could split it.
+        // `json_decode` turns `\n` escapes into real newlines, so an attacker-controlled property
+        // value echoed back by HubSpot could forge extra log lines or emit terminal escapes into
+        // whatever reads them (Codex P2, PR #35). Collapsed to single spaces rather than stripped,
+        // so words either side do not run together and the text stays readable.
+        $reason = (string) preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $reason);
+        $reason = trim((string) preg_replace('/ {2,}/', ' ', $reason));
 
         return $reason === '' ? null : $reason;
     }
