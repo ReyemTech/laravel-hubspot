@@ -77,13 +77,41 @@ return function (Probe $p): void {
     $inverseIds = array_map(static fn ($r): int => $r->typeId, $inverse);
     $p->ok('read the INVERSE direction', sprintf('%d row(s): typeId %s', count($inverse), implode(', ', $inverseIds)));
 
-    // The assertion, not just the display: if these ever overlap, the package's whole premise is
-    // wrong and every directional guarantee built on it is decoration.
-    array_intersect($forwardIds, $inverseIds) === []
-        ? $p->ok('the two directions carry DIFFERENT type ids', 'asymmetry confirmed live')
+    // The assertion, not just the display. Emptiness is checked FIRST and separately, because
+    // `array_intersect([], []) === []` is true -- so a pair of empty reads would have reported
+    // "asymmetry confirmed" while proving nothing at all, and the probe would still have exited 0
+    // (Codex P2 on PR #34). A disjointness test over sets that may be empty is vacuous, which is
+    // exactly the defect this file elsewhere accuses "take the first row" of being.
+    if ($forwardIds === [] || $inverseIds === []) {
+        $p->fail(
+            'the two directions carry DIFFERENT type ids',
+            sprintf(
+                'nothing to compare: forward returned %d row(s), inverse %d',
+                count($forwardIds),
+                count($inverseIds),
+            ),
+        );
+    } elseif (array_intersect($forwardIds, $inverseIds) !== []) {
+        $p->fail(
+            'the two directions carry DIFFERENT type ids',
+            sprintf('forward %s and inverse %s OVERLAP', implode(',', $forwardIds), implode(',', $inverseIds)),
+        );
+    } else {
+        $p->ok('the two directions carry DIFFERENT type ids', 'asymmetry confirmed live');
+    }
+
+    // And the specific documented pair, not merely "some two different numbers". FOUND-03 measured
+    // 3 forward and 4 inverse for this pair, and the design documents say so; a portal disagreeing
+    // means those documents are wrong, which is worth a red rather than a shrug.
+    in_array(3, $forwardIds, true) && in_array(4, $inverseIds, true)
+        ? $p->ok('and they are the documented 3 and 4', 'FOUND-03 confirmed')
         : $p->fail(
-            'the two directions carry different type ids',
-            sprintf('forward %s and inverse %s overlap', implode(',', $forwardIds), implode(',', $inverseIds)),
+            'and they are the documented 3 and 4',
+            sprintf(
+                'FOUND-03 measured 3 forward and 4 inverse; this portal reported %s and %s',
+                implode(',', $forwardIds) ?: 'nothing',
+                implode(',', $inverseIds) ?: 'nothing',
+            ),
         );
 
     $p->note(

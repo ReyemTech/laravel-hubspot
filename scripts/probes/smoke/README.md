@@ -50,20 +50,25 @@ crm.objects.contacts.read       crm.objects.contacts.write
 crm.objects.companies.read      crm.objects.companies.write
 crm.objects.deals.read          crm.objects.deals.write
 crm.objects.line_items.read     crm.objects.line_items.write
+crm.schemas.contacts.read       crm.schemas.companies.read
 ```
+
+The two `crm.schemas.*` entries are **required by the current probe**, not aspirational: phase 3
+calls `listFor('contacts', 'companies')`, which reads the association-definitions schema for that
+pair. Granting only the `crm.objects.*` block above leaves phase 3 failing on a 403 whose body does
+not say which scope is missing — see below.
 
 Worth granting at the same time, for phases not yet probed:
 
 ```
-crm.schemas.contacts.read       crm.schemas.companies.read
 crm.schemas.deals.read          crm.schemas.line_items.read
 crm.objects.custom.read         crm.objects.custom.write
 crm.schemas.custom.read
 ```
 
-The `crm.schemas.*` scopes are for property definitions, which model sync needs for mapping. The
-`custom` ones matter because `Registry\HubspotObjectType` supports `p_*` custom objects and
-deliberately has no allow-list — behaviour never yet exercised against a real portal.
+The remaining `crm.schemas.*` scopes are for property definitions, which model sync needs for
+mapping. The `custom` ones matter because `Registry\HubspotObjectType` supports `p_*` custom objects
+and deliberately has no allow-list — behaviour never yet exercised against a real portal.
 
 **Not needed:** `tickets` and `products`. The package touches neither, and a STANDARD portal reports
 the tickets scope "isn't available for public use" anyway.

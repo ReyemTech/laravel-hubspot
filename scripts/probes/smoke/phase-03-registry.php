@@ -108,12 +108,17 @@ return function (Probe $p): void {
     $inverseIds = array_map(static fn ($r): int => $r->typeId, $inverseRows);
     $p->ok('read the INVERSE direction', sprintf('typeId %s', implode(', ', $inverseIds) ?: 'none'));
 
+    // `fail()`, not `note()`. This is the claim the section exists to make, and a note leaves the
+    // process exiting 0 while the baseline's inverse is wrong or absent (Codex P2 on PR #34) -- a
+    // probe that reports success having disproved its own premise is worse than no probe.
     in_array(280, $inverseIds, true)
         ? $p->ok('the inverse is 280, as the baseline claims', 'both directions confirmed live')
-        : $p->note(
-            'The baseline names 280 as the inverse of 279. This portal reported '
-            .(implode(', ', $inverseIds) ?: 'nothing')
-            .'. Worth investigating before trusting that row -- it is recorded for traversal, never read on a write path.'
+        : $p->fail(
+            'the inverse is 280, as the baseline claims',
+            'this portal reported '.(implode(', ', $inverseIds) ?: 'nothing')
+            .' -- the seeded inverse_type_id is wrong or the association was not written. It is '
+            .'recorded for traversal and never read on a write path, so nothing is mis-writing '
+            .'today, but the baseline row is not what it says it is.',
         );
 
     $p->section('Phase 3 — the definitions read, through the Schema-namespaced DefinitionsApi');
@@ -129,13 +134,28 @@ return function (Probe $p): void {
         sprintf('%d with a label, %d with label: null', count($labelled), count($unlabelled)),
     );
 
-    count($unlabelled) > 0
-        ? $p->ok('HubSpot really does return label: null', 'the baseline naming decision holds')
-        : $p->note(
-            'This portal returned a label for every definition. The baseline gives HUBSPOT_DEFINED '
-            .'rows this package\'s own canonical names precisely because FOUND-03 measured null '
-            .'labels; if that is no longer true, revisit that decision.'
+    // Also `fail()`. The baseline gives HUBSPOT_DEFINED rows this package's OWN canonical names
+    // solely because HubSpot returns no label for them; if that stops being true, the naming
+    // decision needs revisiting and a green run would hide exactly that (Codex P2 on PR #34).
+    // An empty response fails here too -- nothing read is not the same as the invariant holding.
+    if ($definitions === []) {
+        $p->fail(
+            'HubSpot really does return label: null',
+            'the definitions read returned nothing at all, so the invariant was not observed',
         );
+    } elseif (count($unlabelled) > 0) {
+        $p->ok('HubSpot really does return label: null', 'the baseline naming decision holds');
+    } else {
+        $p->fail(
+            'HubSpot really does return label: null',
+            sprintf(
+                'all %d definition(s) carried a label. The baseline names HUBSPOT_DEFINED rows '
+                .'itself precisely because FOUND-03 measured null labels twice; that premise no '
+                .'longer holds and the decision needs revisiting.',
+                count($definitions),
+            ),
+        );
+    }
 
     $p->associationsResolvedBy($registry)->dissociate($pair);
     $p->ok('dissociated', '');
