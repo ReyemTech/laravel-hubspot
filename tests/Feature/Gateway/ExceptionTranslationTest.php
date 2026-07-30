@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Gateway;
 
 use HubSpot\Client\Crm\Objects\ApiException as SdkObjectsApiException;
+use HubSpot\Client\Crm\Objects\Model\Error as SdkObjectsError;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Facades\Hubspot;
@@ -249,8 +250,12 @@ final class ExceptionTranslationTest extends TestCase
             // And the deserialised error object, which the SDK sets after construction rather than
             // passing in -- so rebuilding without copying it would return null here on a type whose
             // whole point is that consumers can still call it.
-            self::assertNotNull($previous->getResponseObject());
-            self::assertSame('corr-404', $previous->getResponseObject()->getCorrelationId());
+            // Narrowed before it is called: the SDK types getResponseObject() as `mixed`, so
+            // PHPStan at level max rejects a method call straight off it -- and a `mixed` that
+            // happens to work is exactly what an assertion should not rest on.
+            $responseObject = $previous->getResponseObject();
+            self::assertInstanceOf(SdkObjectsError::class, $responseObject);
+            self::assertSame('corr-404', $responseObject->getCorrelationId());
 
             // Walk the whole chain the way a log normaliser does.
             $link = $exception;
