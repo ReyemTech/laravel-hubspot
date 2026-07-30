@@ -5,6 +5,16 @@
 composer.lock
 .DS_Store
 
+# Environment files. This package ships no application and loads no dotenv itself, so nothing
+# here ever needs one -- which is exactly why their absence hid the fact they were not ignored.
+# A `.env` gets created the moment somebody runs the real-portal smoke script or wires a scratch
+# app against this checkout, and `HUBSPOT_TOKEN` is a HubSpot private-app access token in a
+# PUBLIC repository. `.claude/` already reached `main` here through one careless `git add -A`;
+# the cost of a repeat is a rotated key rather than a tidy-up commit.
+.env
+.env.*
+!.env.example
+
 # Agent tooling scratch. `.claude/` reached `main` once via a careless `git add -A`; ignoring it
 # means a repeat is not possible rather than merely unlikely. Nothing in here is part of the
 # package, and `.planning/` is deliberately NOT ignored -- the planning corpus is committed.
