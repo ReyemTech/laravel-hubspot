@@ -20,6 +20,14 @@ use Throwable;
  */
 final class ApiException extends RuntimeException implements HubspotException
 {
+    /**
+     * How much of HubSpot's explanation reaches the message. Enough for every real HubSpot error
+     * string measured against a live portal -- an invalid-email validation error is ~120 characters
+     * and a missing-scope error ~95 -- with headroom, and short of the point where a rejected
+     * property value dominates a log line.
+     */
+    private const MAX_REASON_LENGTH = 400;
+
     private function __construct(
         string $message,
         private readonly ?int $status,
@@ -135,6 +143,15 @@ final class ApiException extends RuntimeException implements HubspotException
         // bidirectional overrides, `Zl`/`Zp` the separators.
         $reason = (string) preg_replace('/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/u', ' ', $reason);
         $reason = trim((string) preg_replace('/ {2,}/', ' ', $reason));
+
+        // Bounded. HubSpot echoes the rejected value back, so a large attacker-controlled property
+        // turns a small API failure into a large log record -- and repeated submissions amplify
+        // that into real storage and memory cost on the consumer's side (Codex P2, PR #35). The
+        // full payload is still on `body()`, so nothing is lost, only moved off the path that gets
+        // written to disk by default.
+        if (mb_strlen($reason) > self::MAX_REASON_LENGTH) {
+            $reason = rtrim(mb_substr($reason, 0, self::MAX_REASON_LENGTH)).'… (truncated; call body() for the full payload)';
+        }
 
         return $reason === '' ? null : $reason;
     }

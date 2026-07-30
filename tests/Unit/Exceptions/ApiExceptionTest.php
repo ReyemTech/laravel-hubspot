@@ -349,6 +349,27 @@ final class ApiExceptionTest extends TestCase
     }
 
     /**
+     * HubSpot echoes the rejected value back, so a large attacker-controlled property would turn a
+     * small API failure into a large log record — and repeated submissions amplify that into real
+     * storage cost. The full payload stays on `body()`.
+     */
+    public function test_a_very_long_reason_is_truncated_but_the_body_is_not(): void
+    {
+        $long = str_repeat('A', 5000);
+        $body = self::body('Property values were not valid: '.$long);
+
+        $exception = ApiException::httpError(400, $body, null, new RuntimeException('sdk'), []);
+
+        self::assertLessThan(500, mb_strlen($exception->getMessage()));
+        self::assertStringEndsWith('… (truncated; call body() for the full payload)', $exception->getMessage());
+        self::assertStringStartsWith('HubSpot rejected the request with status 400: Property values were not valid: AAA', $exception->getMessage());
+
+        // Nothing was lost -- it moved off the path that gets written to disk by default.
+        self::assertSame($body, $exception->body());
+        self::assertStringContainsString($long, (string) $exception->body());
+    }
+
+    /**
      * The body is retained whatever the message says — it always was, and the fix must not trade
      * one for the other.
      */
