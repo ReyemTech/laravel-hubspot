@@ -51,16 +51,18 @@ PHP `^8.3`; this package targets `^8.2` for reach.
 - **Never hand-roll HMAC.** Signature verification delegates to `HubSpot\Utils\Signature::isValid()`.
 - **Never use `$request->fullUrl()` for signature verification.** Symfony sorts query params;
   HubSpot signs the raw URI.
-- **Never add a runtime dependency** without justification in the PR description. Production
-  `require` is **seven** entries and stays that way — `php`, `hubspot/api-client`,
-  `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `illuminate/view` and
-  `laravel/prompts`. The `manifest shape (seven production requires)` CI gate is authoritative.
-  **Those seven are what is available without adding a dependency — no more.** Being first-party
-  Laravel does not make a component free: `illuminate/queue`, `illuminate/cache` and the rest are
-  not declared here, and naming one is an addition subject to `STANDARDS.md` §2, which is explicit
-  that relying on `laravel/framework` to supply a package transitively "would work in practice —
-  and would still be an undeclared dependency". It resolves under Testbench and in every real
-  consumer, which is exactly why the mistake survives CI.
+- **Never add a THIRD-PARTY runtime dependency** without justification in the PR description, and
+  the reviewer's default answer is still no. **Superseded 2026-07-30 (D-02, Phase 4):** any
+  `illuminate/*` component may be declared as a production require — being first-party Laravel does
+  make a component free, provided it is declared rather than relied on transitively. This document
+  previously claimed the opposite ("being first-party Laravel does not make a component free") and
+  fixed the production `require` count at seven forever; both claims are wrong now. Production
+  `require` currently stands at **eleven** entries, but that count is not the rule and will drift —
+  the vendor-allow-list CI gate (`manifest shape (vendor allow-list)`,
+  `tests/Ci/ComposerManifestTest.php`) is authoritative on what is admitted: `php`,
+  `hubspot/api-client`, any `illuminate/*` package, and `laravel/prompts` via its own enumerated
+  exception. A non-`illuminate/*` third-party package still needs `STANDARDS.md` §2 justification in
+  the PR description before it is added.
 - **Never add a PHPStan baseline.** Fix it or suppress it per-line with a written reason.
 - **Never let a raw SDK exception reach userland.** Wrap it in the package's hierarchy.
 - **Never run tests against a real HubSpot portal** in the default suite. Integration tests are a

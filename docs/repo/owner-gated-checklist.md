@@ -42,7 +42,10 @@ and the manifest-shape lock:
 - `tests` — the 12-job PHP × Laravel × stability matrix (STANDARDS §1, Laravel 11 dropped
   2026-07-27), coverage floor `--min=95`
 - `composer-validate` — `composer validate --strict`
-- `manifest` — locks the manifest to exactly seven production requires (`tests/Ci/ComposerManifestTest.php`)
+- `manifest` — locks the manifest to a vendor allow-list (the exact keys "php" and
+  "hubspot/api-client", every "illuminate/*" package by prefix, and "laravel/prompts" via its own
+  enumerated exception), not a fixed count (`tests/Ci/ComposerManifestTest.php`, superseded
+  2026-07-30 by D-03/D-19)
 
 **`.github/workflows/arch.yml`** — the six-layer architecture boundary, proven live:
 

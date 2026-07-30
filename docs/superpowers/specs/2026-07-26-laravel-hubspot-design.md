@@ -111,7 +111,7 @@ internal layer.
 |---|---|---|
 | `ObjectGateway` | Gateway | create / update / upsert / find / delete / search / batch, over `crm()->objects()` |
 | `AssociationGateway` | Gateway | associate / dissociate / read, over `associations()->v4()` |
-| `HubspotObjectType` | Registry | Normalises `deals` / `line_items` / `p_custom`; resolves the local id column |
+| `HubspotObjectType` | Registry | Normalises `deals` / `line_items` / `p_custom` (local id resolution moved to `Sync\SyncsToHubspot`'s `hubspotLink` relation, per D-13/D-06 below — never a column `HubspotObjectType` resolves) |
 | `AssociationTypeRegistry` | Registry | Directional `(from, to, label) → typeId`, cache or database store |
 | `PropertyMapper` | Sync | Resolves `$hubspotMap`: literals, dot-notation relations, closures |
 | `SyncsToHubspot` | Sync | The single model trait — replaces per-object traits entirely |
@@ -126,19 +126,33 @@ keyed by model, not by object type:
 
 ```php
 'models' => [
-    App\Models\Lead::class    => ['object' => 'contacts', 'id_column' => 'hubspot_id'],
-    App\Models\Contact::class => ['object' => 'contacts', 'id_column' => 'hubspot_contact_id'],
+    App\Models\Lead::class    => ['object' => 'contacts', 'id_property' => 'email'],
+    App\Models\Contact::class => ['object' => 'contacts', 'id_property' => 'email'],
     App\Models\Deal::class    => ['object' => 'deals'],
 ],
 ```
+
+**Superseded 2026-07-30 (D-13, Phase 4).** Each binding's local-id key is `id_property`, not
+`id_column` — it carries the HubSpot-side unique property the sync job upserts on (`email` for
+contacts, `domain` for companies), not a column on the consumer's own table. No consumer schema is
+ever altered by binding a model.
 
 Three modes, so no object type forces a fake model:
 
 | Mode | When | Installer behaviour |
 |---|---|---|
-| **Attached** (default) | The model already exists | Adds trait + binding; generates an id-column migration only if missing |
+| **Attached** (default) | The model already exists | Adds trait + binding; no consumer migration is ever generated |
 | **API-only** | Line items, products — real in HubSpot, no local mirror | No model, no table: `Hubspot::objects('line_items')->find($id)` |
 | **Generated** | You want a local mirror and have none | Scaffolds model + migration |
+
+**Superseded 2026-07-30 (D-13, Phase 4).** The locally-stored HubSpot id for a bound model no
+longer lives in an `id_column` on the consumer's own table — the "Attached" row above no longer
+generates one. It lives in a package-owned `hubspot_object_links` table (columns: `model_type`,
+`model_id`, `object_type`, `hubspot_id`, `synced_at`, and a stale flag), read through
+`$model->hubspotLink` (a `MorphOne` relation the `SyncsToHubspot` trait exposes). This works with
+zero setup — no consumer schema is ever altered — and lets three distinct local models bind to
+`contacts` simultaneously, each resolving its own link row, which a single `id_column` per model
+could not express for a shared object type.
 
 ## 5. Property mapping
 
