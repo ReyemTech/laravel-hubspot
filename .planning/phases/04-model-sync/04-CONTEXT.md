@@ -205,6 +205,26 @@ D-01…D-15.
   plan**, not folded into the plans that trip over them. See `<amendments>` below.
   — **Reversibility:** reversible.
 
+- **D-21: `hard_delete => 'warn'` SKIPS, exactly as `guard` does, and logs at warning level.**
+  Decided by the owner 2026-07-30, pre-answering `04-06`'s task-1 checkpoint. Design spec §7 offers
+  `'guard' | 'warn' | 'allow'` and defines only `guard` (*"skips and logs"*); `allow` reads
+  unambiguously as archive. The three values are therefore two actions and a log level:
+
+  | value | action | log level |
+  |---|---|---|
+  | `guard` (default) | skip | info |
+  | `warn` | **skip** | **warning** |
+  | `allow` | archive in HubSpot | — |
+
+  The alternative — `warn` archives loudly — buys a third distinct behaviour at the cost that an
+  operator who reads `warn` as *"warn me instead of doing it"* gets an irreversible archive, since
+  HubSpot has no unarchive endpoint. A config value whose plain-English reading is the opposite of
+  its behaviour is a trap, and the failure is silent until somebody reads the CRM. **`04-06` must
+  amend design spec §7 and `REQUIREMENTS.md` SYNC-04 to state what all three values do**, since
+  neither document currently defines `warn` or `allow`.
+  — **Reversibility:** one-way in the direction that matters — a consumer who set `warn` expecting a
+  skip and later gets an archive cannot undo it. The reverse loosening is safe.
+
 **Requires added by this phase (D-02 makes each free; the count stops being the assertion):**
 `illuminate/queue`, `illuminate/bus` (D-07), `illuminate/collections` (D-16's `iterable` surface and
 `$hubspotMap`'s dot-notation `data_get()`, which lives there — not in `illuminate/support`), and
