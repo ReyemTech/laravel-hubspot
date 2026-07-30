@@ -183,9 +183,20 @@ return function (Probe $p): void {
     // for them. An "at least one is null" test would pass while either was wrong (Codex P2 on
     // PR #34), and comparing against the category as a whole answers a question the baseline never
     // asked. So compare type by type.
+    //
+    // Keyed within HUBSPOT_DEFINED, never by typeId alone. A typeId is unique inside a category,
+    // not across them, so a portal carrying a USER_DEFINED type that happens to be numbered 1 or
+    // 279 would overwrite the seeded row in an id-only map -- and then these checks would read a
+    // label off a row the baseline never made a claim about, failing a healthy portal or passing a
+    // broken one depending only on which came back last (Codex P2, PR #34). The baseline's claim is
+    // about a category AND an id, so the lookup has to be too.
     $byTypeId = [];
 
     foreach ($definitions as $definition) {
+        if ($definition->type->category !== AssociationCategory::HubspotDefined) {
+            continue;
+        }
+
         $byTypeId[$definition->type->typeId] = $definition;
     }
 
@@ -195,7 +206,8 @@ return function (Probe $p): void {
         if ($definition === null) {
             $p->fail(
                 sprintf('the baseline\'s seeded type %d exists on this portal', $seededTypeId),
-                'this portal did not return it at all, so the seeded row cannot be verified',
+                'this portal returned no HUBSPOT_DEFINED definition with that id, so the seeded '
+                .'row cannot be verified',
             );
 
             continue;
@@ -217,6 +229,29 @@ return function (Probe $p): void {
             );
     }
 
+    // Read back, exactly as phase 2 does. `dissociate()` returns void and HubSpot accepts a delete
+    // for an association that is not there as an idempotent no-op, so an unconditional ok() passes
+    // whether or not the labelled 279 was actually removed -- and this is the last thing that
+    // touches the pair before cleanup archives both records and destroys the evidence (Codex P2,
+    // PR #34). Filtered by `toObjectId` for the same reason as the write above: `read()` returns
+    // every company this contact is associated with, not only the one this pair names.
     $p->associationsResolvedBy($registry)->dissociate($pair);
-    $p->ok('dissociated', '');
+
+    $remaining = array_values(array_map(
+        static fn ($r): int => $r->typeId,
+        array_filter(
+            $p->associations->read($pair),
+            static fn ($r): bool => $r->toObjectId === $company->id,
+        ),
+    ));
+
+    $remaining === []
+        ? $p->ok('dissociated', 'confirmed by reading the pair back')
+        : $p->fail(
+            'dissociated',
+            sprintf(
+                'the delete was accepted but the pair still carries typeId %s',
+                implode(', ', $remaining),
+            ),
+        );
 };
