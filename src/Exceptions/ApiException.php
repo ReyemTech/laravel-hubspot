@@ -149,8 +149,13 @@ final class ApiException extends RuntimeException implements HubspotException
         // that into real storage and memory cost on the consumer's side (Codex P2, PR #35). The
         // full payload is still on `body()`, so nothing is lost, only moved off the path that gets
         // written to disk by default.
-        if (mb_strlen($reason) > self::MAX_REASON_LENGTH) {
-            $reason = rtrim(mb_substr($reason, 0, self::MAX_REASON_LENGTH)).'… (truncated; call body() for the full payload)';
+        // Encoding pinned explicitly. Both functions otherwise use `mb_internal_encoding()`, a
+        // process-global an application is free to set to something else -- and slicing this
+        // decoded UTF-8 string as though it were ISO-8859-1 can cut through a multibyte sequence,
+        // producing an invalid message that breaks JSON log serialisation (Codex P2, PR #35).
+        if (mb_strlen($reason, 'UTF-8') > self::MAX_REASON_LENGTH) {
+            $reason = rtrim(mb_substr($reason, 0, self::MAX_REASON_LENGTH, 'UTF-8'))
+                .'… (truncated; call body() for the full payload)';
         }
 
         return $reason === '' ? null : $reason;

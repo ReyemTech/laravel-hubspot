@@ -370,6 +370,32 @@ final class ApiExceptionTest extends TestCase
     }
 
     /**
+     * `mb_*` default to `mb_internal_encoding()`, which an application may have set to something
+     * other than UTF-8 — and slicing decoded UTF-8 under the wrong encoding cuts through multibyte
+     * sequences, producing a message that breaks JSON log serialisation.
+     */
+    public function test_truncation_survives_a_non_utf8_internal_encoding(): void
+    {
+        $previous = mb_internal_encoding();
+        mb_internal_encoding('ISO-8859-1');
+
+        try {
+            $exception = ApiException::httpError(
+                400,
+                self::body(str_repeat('é😀', 500)),
+                null,
+                new RuntimeException('sdk'),
+                [],
+            );
+
+            self::assertTrue(mb_check_encoding($exception->getMessage(), 'UTF-8'));
+            self::assertNotSame('', json_encode($exception->getMessage()));
+        } finally {
+            mb_internal_encoding($previous);
+        }
+    }
+
+    /**
      * The body is retained whatever the message says — it always was, and the fix must not trade
      * one for the other.
      */
