@@ -146,6 +146,17 @@ syncs to HubSpot — mapped, queued, batched, delete-safe, and suppressible when
   violates).
 - Naming of the new source-hygiene script and its violation fixture.
 
+- **How the package root namespace reaches `Sync\ModelBindings` — decided once, here, rather than
+  twice in wave 7.** `04-08` (`HubspotManager::assertSynced()` widening to `string|Model`) and `04-09`
+  (`DoctorCommand`'s bound-model section) both need to resolve a model's binding, and both sit outside
+  `Sync`. Running in parallel, they would discover the same R1/R2 layer-boundary question
+  independently and could answer it two different ways. **The answer is a container-bound contract**:
+  resolve the binding through an interface bound in `ServiceProvider`, exactly as
+  `AssociationTypeResolver` and `ObjectGatewayContract` already are, rather than widening an
+  architecture rule to permit a direct reference. Whichever plan lands first defines it; the second
+  consumes it. If the architecture suite turns out to permit the direct reference anyway, say so in
+  the summary and take it — but do not widen a rule to make it permit one.
+
 ### Added 2026-07-30 after research — decided by the owner
 
 `04-RESEARCH.md` closed its three Open Questions and the audit behind them found a sixth stale

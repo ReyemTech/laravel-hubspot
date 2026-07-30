@@ -596,7 +596,13 @@ packages. `[VERIFIED: github.com/illuminate/support, tag v12.0.0]`.
 **If this table is empty:** N/A — see rows above. Every other claim in this document carries a file
 path, vendor path, or command output as its evidence.
 
-## Open Questions
+## Open Questions (ALL RESOLVED 2026-07-30)
+
+> All three were put to the owner and answered before planning. They are locked in `04-CONTEXT.md`
+> as **D-16** (question 1 — a static on the trait), **D-17** (question 2 — suppress the update push
+> during a restore) and **D-18** (question 3 — `model_id` is a `string`). Implemented in `04-08`,
+> `04-05` and `04-02` respectively. The text below is kept as the reasoning that led to each.
+
 
 1. **What is the public entry point for "syncing a collection issues one batch request rather than
    N" (success criterion 4)?**
