@@ -334,18 +334,38 @@ somebody considered the feedback.
 - **Every resolved thread carries a written reply — including the ones that were fixed.** A fix
   is not a reply. Resolving a thread silently because the code changed leaves no record of *what*
   changed, whether the fix matches what was asked, or what was deliberately left undone; the
-  reviewer, and the next person reading the thread, sees only a closed conversation. The reply
-  names the commit that carries the fix, and states plainly whether the finding was fixed,
-  mitigated, or judged wrong with evidence.
-- **A finding that is correct but out of scope is answered, not deferred in silence.** Say so, say
-  why, and name where the work went — a deferred-items file, a requirement, a phase.
+  reviewer, and the next person reading the thread, sees only a closed conversation.
+
+  The reply states which of four dispositions applies, and carries what that disposition needs.
+  The requirements differ because two of them have no commit to point at:
+
+  | Disposition | The reply must carry |
+  |---|---|
+  | **Fixed** | the SHA of the commit that carries the fix |
+  | **Mitigated** | the SHA, **and** what remains unfixed |
+  | **Judged wrong** | evidence — what was checked and what it showed, not an assertion |
+  | **Correct but out of scope** | where the work went: the deferred-items file, requirement, or phase that owns it |
+
+  Demanding a commit SHA for a finding judged wrong, or for one deferred rather than changed,
+  makes the rule unsatisfiable in exactly the two cases where judgement matters most — and an
+  unsatisfiable rule is ignored rather than followed.
 - **Resolving to unblock a merge is forbidden.** This is the specific failure that produced this
   section, not a hypothetical.
-- **Re-request review after pushing fixes.** Codex reviews trigger on pull-request open, on a
-  draft being marked ready, and on an explicit `@codex review` comment — **not on a push.** So the
-  commits that fix a finding are, by default, never reviewed by the thing that found it. Absence
-  of new comments after a fix push is absence of review, not a clean result, and must never be
-  reported as one. Comment `@codex review` once the fixes are pushed and before merging.
+- **A pull request merges only when a completed review names the head commit it is merging.**
+  Codex reviews trigger on pull-request open, on a draft being marked ready, and on an explicit
+  `@codex review` comment — **not on a push.** So the commits that fix a finding are, by default,
+  never reviewed by the thing that found it. Absence of new comments after a fix push is absence
+  of review, not a clean result, and must never be reported as one.
+
+  Requesting the review is not enough, and "comment `@codex review` before merging" would be a
+  rule you could satisfy and merge thirty seconds later, before the review arrived — and one that
+  says nothing about a commit pushed *after* it arrives. Both paths reproduce the incident intact.
+  So the bar is a **completed** review whose reviewed SHA equals the current head, re-established
+  after **every** subsequent push.
+
+  This is checkable rather than a matter of trust: Codex states `**Reviewed commit:** <sha>` in
+  its own review body. Compare it against `gh pr view <n> --json headRefOid`. That comparison is
+  exactly how the Phase 3 gap was found, months of process discipline having failed to notice it.
 - **Verify before implementing.** A reviewer asserts; it does not prove. Several findings in the
   incident below were reproducible locally in minutes, and one recommendation would have been
   wrong to follow as written.

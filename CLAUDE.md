@@ -55,8 +55,12 @@ PHP `^8.3`; this package targets `^8.2` for reach.
   `require` is **seven** entries and stays that way — `php`, `hubspot/api-client`,
   `illuminate/contracts`, `illuminate/support`, `illuminate/database`, `illuminate/view` and
   `laravel/prompts`. The `manifest shape (seven production requires)` CI gate is authoritative.
-  Anything Laravel-standard is therefore already available and costs nothing to name; the rule is
-  about adding *new* packages, not about avoiding the framework.
+  **Those seven are what is available without adding a dependency — no more.** Being first-party
+  Laravel does not make a component free: `illuminate/queue`, `illuminate/cache` and the rest are
+  not declared here, and naming one is an addition subject to `STANDARDS.md` §2, which is explicit
+  that relying on `laravel/framework` to supply a package transitively "would work in practice —
+  and would still be an undeclared dependency". It resolves under Testbench and in every real
+  consumer, which is exactly why the mistake survives CI.
 - **Never add a PHPStan baseline.** Fix it or suppress it per-line with a written reason.
 - **Never let a raw SDK exception reach userland.** Wrap it in the package's hierarchy.
 - **Never run tests against a real HubSpot portal** in the default suite. Integration tests are a
@@ -78,13 +82,17 @@ PHP `^8.3`; this package targets `^8.2` for reach.
   it or reply saying with evidence why it is wrong. Closing a thread in silence is not allowed, and
   "it's only a bot" is not a reason.
 - **Every resolved thread gets a written reply, including the ones you fixed.** A fix is not a
-  reply. The reply names the commit carrying it and says whether the finding was fixed, mitigated,
-  or judged wrong — otherwise the thread records only that somebody clicked resolve, and nobody can
-  tell later whether the fix matched what was asked.
-- **Comment `@codex review` after pushing fixes, before merging.** Codex reviews trigger on pull
-  request open, on draft-ready, and on that comment — **never on a push**. So the commits that fix a
-  finding are by default never reviewed by the thing that found it, and "no new comments appeared"
-  means nobody looked. Never report that as a clean result. Every Phase 3 PR merged this way; see
+  reply — otherwise the thread records only that somebody clicked resolve. Say which of the four
+  dispositions applies and carry what it needs: **fixed** → the commit SHA; **mitigated** → the SHA
+  plus what remains unfixed; **judged wrong** → evidence, what you checked and what it showed;
+  **out of scope** → where the work went. Do not demand a SHA for the last two — there isn't one.
+- **Merge only when a completed review names the commit you are merging.** Codex reviews trigger on
+  pull request open, on draft-ready, and on an `@codex review` comment — **never on a push**. So the
+  commits that fix a finding are by default never reviewed by the thing that found it, and "no new
+  comments appeared" means nobody looked; never report that as a clean result. Requesting is not
+  enough either: `@codex review` is asynchronous, so posting it and merging immediately, or pushing
+  again afterwards, leaves the same hole. Check it — Codex prints `**Reviewed commit:** <sha>`;
+  compare with `gh pr view <n> --json headRefOid`. Every Phase 3 PR merged with a mismatch; see
   `STANDARDS.md` §12.
 - **Local green is not evidence.** Phase 1 shipped four gate failures that passed on the machine
   and failed in CI — no `composer.lock` on a matrix build, a missing workflow permission, a Node
