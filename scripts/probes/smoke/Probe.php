@@ -304,7 +304,10 @@ final class Probe
             }
 
             if ($lastAttemptCount < $expected) {
-                echo "  !! sweep of {$type} saw only ".count($found)." of {$expected} known record(s); "
+                // `$lastAttemptCount`, not the union: the union can exceed `$expected` after a
+                // fluctuating search, so printing it produces "saw only 2 of 1" and hides how far
+                // behind the final search actually was (Codex P3, PR #34).
+                echo "  !! sweep of {$type} saw only {$lastAttemptCount} of {$expected} known record(s) on its last attempt; "
                     ."the search index is behind and an untracked record could be invisible.\n";
                 $this->failures[] = [
                     "sweep of {$type} was inconclusive",
