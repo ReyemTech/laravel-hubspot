@@ -36,8 +36,10 @@ RED commit (failing test, before the implementation): <!-- SHA -->
 
 ## Runtime dependency justification
 
-<!-- Required only if "No new runtime dependency" above is unchecked. Production `require` is
-     exactly seven packages (STANDARDS §2); an eighth needs a written reason here. -->
+<!-- Required only if "No new runtime dependency" above is unchecked. Any `illuminate/*` package
+     may be declared freely (D-02, STANDARDS §2); a NON-`illuminate/*` third-party package needs a
+     written reason here -- the vendor allow-list gate (`manifest shape (vendor allow-list)`,
+     tests/Ci/ComposerManifestTest.php) is authoritative on what is admitted without one. -->
 
 ## Split rationale
 

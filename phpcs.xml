@@ -19,6 +19,11 @@
          excludes them (see phpstan.neon's own comment on this path). -->
     <exclude-pattern>tests/Arch/Fixtures/*</exclude-pattern>
 
+    <!-- Deliberately rule-violating vendor-namespace fixtures (plan 04-01, D-04,
+         scripts/ci/check-vendor-namespaces.sh's self-test mode): never production
+         code, excluded for the same reason as tests/Arch/Fixtures/* above. -->
+    <exclude-pattern>tests/Ci/Fixtures/*</exclude-pattern>
+
     <rule ref="Generic.Metrics.CyclomaticComplexity">
         <properties>
             <property name="complexity" value="10"/>

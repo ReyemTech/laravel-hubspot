@@ -6,9 +6,13 @@
     "require": {
         "php": "^8.3",
         "hubspot/api-client": "^14.1",
+        "illuminate/bus": "^12.0|^13.0",
+        "illuminate/collections": "^12.0|^13.0",
+        "illuminate/console": "^12.0|^13.0",
         "illuminate/contracts": "^12.0|^13.0",
-        "illuminate/support": "^12.0|^13.0",
         "illuminate/database": "^12.0|^13.0",
+        "illuminate/queue": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
         "illuminate/view": "^12.0|^13.0",
         "laravel/prompts": "^0.3.21"
     },

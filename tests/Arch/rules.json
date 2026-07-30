@@ -18,7 +18,7 @@
         },
         {
             "id": "R3",
-            "description": "Sync may depend only on Registry, Gateway and the package exceptions",
+            "description": "R3: Sync may depend only on Registry, Gateway, the package exceptions and the framework",
             "fixtures": [
                 "R3/SyncDependsOnWebhooks.php",
                 "R3/WebhooksTarget.php"

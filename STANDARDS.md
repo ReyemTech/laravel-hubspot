@@ -62,32 +62,48 @@ README says so.
 **Consequence for the code:** the Illuminate constraint is `^12.0|^13.0`, so no framework API
 introduced in 13 may be used without a compatibility shim. Review checks this.
 
-## 2. Runtime dependencies are near-frozen
+## 2. Runtime dependencies: any `illuminate/*`, no third party
 
-Production `require` is exactly:
+**Superseded 2026-07-30 (D-02, Phase 4).** This section previously fixed production `require` at
+exactly seven entries and stated that "being first-party Laravel does not make a component free."
+Both are wrong now, in the owner's own words: *"all of standard laravel packages should be
+allowed .. we just don't want to install new stuff unless absolutely needed."* The restraint this
+section encodes is about **third-party** additions, not first-party Laravel ones.
 
-- `php`
-- `hubspot/api-client`
+The rule as it now stands: **any `illuminate/*` component may be declared** as a production
+require, the moment `src/` needs it, with no ceremony beyond `composer require` and its own
+one-line purpose recorded below. **Any non-`illuminate/*` third-party package still needs written
+justification in the PR description**, and the reviewer's default answer is still no. Production
+`require` currently stands at eleven entries; that count is not the rule and will drift as the
+package grows — the **vendor-allow-list CI gate** (`manifest shape (vendor allow-list)`,
+`tests/Ci/ComposerManifestTest.php`) is authoritative on what is admitted:
+
+- `php` and `hubspot/api-client` by exact key — this package's own surface.
+- Any `illuminate/*` package, by prefix.
+- `laravel/prompts` via its own enumerated exception, carrying its own reason (below), never via a
+  `laravel/`-prefix rule that a third-party `laravel/*` package could slip through under.
+
+Current production requires and their one-line purpose:
+
 - `illuminate/contracts`
 - `illuminate/support` — `ServiceProvider`, facades, the `Route` macro
 - `illuminate/database` — the Eloquent `Model` the sync trait and observer are typed against
-- `laravel/prompts` — the optional installer (§7)
-- `illuminate/view` — the `Frontend` layer's Blade components
+- `illuminate/view` — the `Frontend` layer's Blade components (added 2026-07-26)
+- `illuminate/queue` — `InteractsWithQueue`, `SerializesModels` (added 2026-07-30, Phase 4, D-07)
+- `illuminate/bus` — `Queueable`, `Batchable`, and the `Dispatcher` contract the sync job dispatches
+  through, because `Illuminate\Foundation` has no split package (added 2026-07-30, Phase 4, D-07/D-08)
+- `illuminate/collections` — `data_get()`, which lives here and not in `illuminate/support`, and the
+  `iterable` collection surface `syncManyToHubspot()` accepts (added 2026-07-30, Phase 4, D-16)
+- `illuminate/console` — `Illuminate\Console\Command`, which three shipped console commands already
+  imported without declaring it. **This is a defect being closed, not a capability being added**
+  (D-19): the package shipped an undeclared production dependency in 0.3.0, resolving only because
+  every consumer and Testbench both happen to supply `laravel/framework` transitively.
+- `laravel/prompts` — the optional installer (§7); first-party Laravel, ships with the framework
+  (which is why the design spec calls it "no new dependency" — true of the vendor tree, not true of
+  this package's `composer.json`), and is this section's one enumerated exception because it is
+  admitted by name rather than by any `laravel/`-prefix rule.
 
-The first three are this package's own surface. The last four are Illuminate code the package
-calls directly, and are **declared rather than assumed**: every consumer has `laravel/framework`
-installed, so relying on it to supply them transitively would work in practice — and would still
-be an undeclared dependency. `laravel/prompts` in particular ships with the framework, which is
-why the design spec calls it "no new dependency"; that is true of the vendor tree and not true of
-this package's `composer.json`.
-
-`illuminate/view` was added 2026-07-26 with the `Frontend` layer. It is first-party Laravel and
-used directly by a component the package ships and renders itself, so it is in-policy under the
-rule this section actually encodes.
-
-**Adding an eighth requires written justification in the PR description**, and the reviewer's
-default answer is no. The rule being encoded is *no third-party runtime dependencies*, and that is
-unchanged. Notably excluded:
+Notably excluded — still third-party, still needs the justification above:
 
 - `spatie/laravel-package-tools` — convenient, but it is a dependency to save perhaps 80 lines
   of service provider. tapp takes it; we hand-roll.

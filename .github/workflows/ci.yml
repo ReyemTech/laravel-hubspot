@@ -48,6 +48,10 @@ jobs:
           --with illuminate/support:${{ matrix.laravel }}
           --with illuminate/database:${{ matrix.laravel }}
           --with illuminate/view:${{ matrix.laravel }}
+          --with illuminate/queue:${{ matrix.laravel }}
+          --with illuminate/bus:${{ matrix.laravel }}
+          --with illuminate/collections:${{ matrix.laravel }}
+          --with illuminate/console:${{ matrix.laravel }}
           --with orchestra/testbench:${{ matrix.testbench }}
           --${{ matrix.stability }}
           --prefer-dist
@@ -72,7 +76,7 @@ jobs:
         run: composer validate --strict
 
   manifest:
-    name: manifest shape (seven production requires)
+    name: manifest shape (vendor allow-list)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
