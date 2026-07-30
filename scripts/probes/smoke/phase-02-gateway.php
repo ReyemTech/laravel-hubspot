@@ -53,11 +53,26 @@ return function (Probe $p): void {
     $p->objects->update('contacts', $contact->id, ['lastname' => 'Smoked']);
     $p->ok('updated it', 'lastname => Smoked');
 
-    $page = $p->objects->search('contacts', SearchQuery::make()->where('email', 'EQ', $email));
+    // Retried, because HubSpot's search index is eventually consistent: a contact created seconds
+    // ago can legitimately return zero results while create, find and update have all succeeded
+    // (Codex P2 on PR #34). Asserting on the first attempt would fail a perfectly healthy gateway
+    // on any portal whose indexing lags -- a flaky probe that cries wolf is one nobody re-runs.
+    $attempts = 0;
+    $results = 0;
 
-    count($page->results) === 1
-        ? $p->ok('searched for it', '1 result')
-        : $p->fail('searched for it', sprintf('expected 1 result, got %d', count($page->results)));
+    do {
+        $attempts++;
+
+        if ($attempts > 1) {
+            sleep(2);
+        }
+
+        $results = count($p->objects->search('contacts', SearchQuery::make()->where('email', 'EQ', $email))->results);
+    } while ($results !== 1 && $attempts < 5);
+
+    $results === 1
+        ? $p->ok('searched for it', sprintf('1 result after %d attempt(s)', $attempts))
+        : $p->fail('searched for it', sprintf('expected 1 result, got %d after %d attempts', $results, $attempts));
 
     $p->section('Phase 2 — directional associations (GW-02): the reason this package exists');
 
@@ -69,12 +84,21 @@ return function (Probe $p): void {
     $p->associations->associate($dealToContact);
     $p->ok('associated deal -> contact (unlabelled)', 'no typeId sent at all');
 
-    $forward = $p->associations->read($dealToContact);
-    $forwardIds = array_map(static fn ($r): int => $r->typeId, $forward);
+    // Filtered to the records this probe created. `read()` returns every contact associated with
+    // the deal, so an unrelated association -- portal automation, a workflow -- could otherwise
+    // contribute type ids that make the assertions below pass for the wrong reason.
+    $forward = array_filter(
+        $p->associations->read($dealToContact),
+        static fn ($r): bool => $r->toObjectId === $contact->id,
+    );
+    $forwardIds = array_values(array_map(static fn ($r): int => $r->typeId, $forward));
     $p->ok('read it back', sprintf('%d row(s): typeId %s', count($forward), implode(', ', $forwardIds)));
 
-    $inverse = $p->associations->read($dealToContact->reversed());
-    $inverseIds = array_map(static fn ($r): int => $r->typeId, $inverse);
+    $inverse = array_filter(
+        $p->associations->read($dealToContact->reversed()),
+        static fn ($r): bool => $r->toObjectId === $deal->id,
+    );
+    $inverseIds = array_values(array_map(static fn ($r): int => $r->typeId, $inverse));
     $p->ok('read the INVERSE direction', sprintf('%d row(s): typeId %s', count($inverse), implode(', ', $inverseIds)));
 
     // The assertion, not just the display. Emptiness is checked FIRST and separately, because

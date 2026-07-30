@@ -25,7 +25,9 @@ declare(strict_types=1);
  *   set -a; . ~/.hubspot-uat.env; set +a; php scripts/probes/smoke.php
  *
  * Scopes: `crm.objects.contacts.read/write`, `crm.objects.companies.read/write`,
- * `crm.objects.deals.read/write`, `crm.schemas.contacts.read`.
+ * `crm.objects.deals.read/write`, `crm.schemas.contacts.read`, `crm.schemas.companies.read`.
+ * Both schema scopes are needed by phase 3's `listFor('contacts', 'companies')` -- see
+ * `smoke/README.md`, which this list must stay in step with.
  *
  * ## Adding a phase
  *

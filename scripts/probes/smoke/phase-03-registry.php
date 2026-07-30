@@ -96,16 +96,26 @@ return function (Probe $p): void {
     $p->associationsResolvedBy($registry)->associateWithLabel($pair, $label);
     $p->ok('labelled write accepted', 'resolved offline, sent typeId 279');
 
-    // SEARCH the list. Taking the first would pass whatever was written.
-    $rows = $p->associations->read($pair);
-    $ids = array_map(static fn ($r): int => $r->typeId, $rows);
+    // SEARCH the list, and FILTER IT TO THE RECORD WE CREATED FIRST. `read()` returns every
+    // company associated with this contact, not just the one this pair names -- so portal
+    // automation quietly associating the new contact with some existing company could contribute a
+    // 279 of its own and make this pass while OUR association was never written (Codex P2 on
+    // PR #34). Filtering by `toObjectId` is what makes the assertion about this pair.
+    $rows = array_filter(
+        $p->associations->read($pair),
+        static fn ($r): bool => $r->toObjectId === $company->id,
+    );
+    $ids = array_values(array_map(static fn ($r): int => $r->typeId, $rows));
 
     in_array(279, $ids, true)
         ? $p->ok('read it back and FOUND typeId 279', sprintf('among %d row(s): %s', count($rows), implode(', ', $ids)))
         : $p->fail('read it back and found typeId 279', sprintf('got %s instead', implode(', ', $ids) ?: 'nothing'));
 
-    $inverseRows = $p->associations->read($pair->reversed());
-    $inverseIds = array_map(static fn ($r): int => $r->typeId, $inverseRows);
+    $inverseRows = array_filter(
+        $p->associations->read($pair->reversed()),
+        static fn ($r): bool => $r->toObjectId === $contact->id,
+    );
+    $inverseIds = array_values(array_map(static fn ($r): int => $r->typeId, $inverseRows));
     $p->ok('read the INVERSE direction', sprintf('typeId %s', implode(', ', $inverseIds) ?: 'none'));
 
     // `fail()`, not `note()`. This is the claim the section exists to make, and a note leaves the
