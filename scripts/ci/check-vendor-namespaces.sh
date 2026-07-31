@@ -59,9 +59,9 @@ FIXTURES_DIR="$ROOT/tests/Ci/Fixtures/VendorNamespaces"
 APPROVED_VENDOR_ROOTS=(
     # src/Gateway/HubspotClientFactory.php and four files under src/Testing/. `GuzzleHttp` is a
     # namespace root shared by three separate packages: `guzzlehttp/guzzle` (^7.3, matching
-    # hubspot/api-client's own requirement), `guzzlehttp/promises` (^2.5.1, matching what the
-    # installed guzzlehttp/guzzle itself requires -- src/Testing/HubspotFake.php names
-    # GuzzleHttp\Promise\Create and PromiseInterface) and `guzzlehttp/psr7` (^1.7 || ^2.0, matching
+    # hubspot/api-client's own requirement), `guzzlehttp/promises` (^1.4 || ^2.0 -- what the
+    # DECLARED guzzle ^7.3 range permits, not what the installed guzzle pins; 7.3 allows promises
+    # 1.x and src/Testing/HubspotFake.php names only Create and PromiseInterface) and `guzzlehttp/psr7` (^1.7 || ^2.0, matching
     # hubspot/api-client's own requirement -- src/Testing/DefaultResponses.php names
     # GuzzleHttp\Psr7\Response), all declared under STANDARDS.md Sec.2. Previously only a
     # transitive dependency of hubspot/api-client, which STANDARDS.md Sec.2 is explicit would

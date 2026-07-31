@@ -119,8 +119,12 @@ Current production requires and their one-line purpose:
   dependency of `hubspot/api-client`, which this section's own opening paragraph already forbids
   relying on. Added resolving one of the three vendor roots enumerated as deferred, not approved,
   on PR #37.
-- `guzzlehttp/promises` (`^2.5.1`, matching what the installed `guzzlehttp/guzzle` itself requires
-  — `vendor/guzzlehttp/guzzle/composer.json`, checked directly rather than assumed) —
+- `guzzlehttp/promises` (`^1.4 || ^2.0` — what the **declared** `guzzlehttp/guzzle:^7.3` range
+  permits across its whole span, NOT what the currently installed guzzle happens to pin. Guzzle 7.3
+  allows promises 1.x, so pinning to the installed guzzle's `^2.5.1` would make this package
+  unsatisfiable for a consumer legitimately on that combination and force an unrelated upgrade.
+  `src/` uses only `Create` (promises 1.4+) and `PromiseInterface`, so 1.4 is the real floor.
+  Codex raised this on PR #40) —
   `src/Testing/HubspotFake.php` names `GuzzleHttp\Promise\Create` and `PromiseInterface` from
   production code. Previously only a transitive dependency of `guzzlehttp/guzzle`; declaring
   `guzzlehttp/guzzle` does not declare this, because `GuzzleHttp` is a namespace root shared by
