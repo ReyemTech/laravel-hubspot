@@ -63,9 +63,19 @@ changed_classes() {
     local out=()
     local file
 
+    # FAIL CLOSED. `|| true` here was a silent bypass of a required check, found by Codex on
+    # PR #43: when origin/<base> is unavailable the diff exits non-zero, `|| true` turned that
+    # into empty output, the caller read empty as "no src changes", and the required mutation
+    # gate passed WITHOUT RUNNING ANY MUTATIONS. An unavailable base is a broken checkout, not a
+    # clean PR, and the two must never be indistinguishable.
+    #
     # --diff-filter excludes deletions: a class that no longer exists cannot be mutated, and
     # passing it to --class would make pest fail on a class it cannot load.
-    files="$(git -C "$ROOT" diff --name-only --diff-filter=d "${base}...HEAD" -- 'src/*.php' || true)"
+    if ! files="$(git -C "$ROOT" diff --name-only --diff-filter=d "${base}...HEAD" -- 'src/*.php')"; then
+        echo "mutation-scope: cannot diff against '${base}'. Refusing to report an empty scope," >&2
+        echo "because the caller cannot tell that apart from a pull request touching no src/ file." >&2
+        return 1
+    fi
 
     [ -z "$files" ] && return 0
 

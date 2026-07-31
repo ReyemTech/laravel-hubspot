@@ -173,7 +173,10 @@ jobs:
             exit 0
           fi
 
-          git fetch --no-tags --depth=0 origin "${{ github.base_ref }}" >/dev/null 2>&1 || true
+          # No `|| true` on either line. A fetch or diff that fails means the checkout is
+          # broken, and a broken checkout must fail this required check rather than resolve to
+          # an empty scope that reads as "nothing to mutate" (Codex, PR #43).
+          git fetch --no-tags --depth=0 origin "${{ github.base_ref }}"
           classes="$(bash scripts/ci/mutation-scope.sh "origin/${{ github.base_ref }}")"
 
           if [ -z "$classes" ]; then
