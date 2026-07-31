@@ -74,14 +74,15 @@ The rule as it now stands: **any `illuminate/*` component may be declared** as a
 require, the moment `src/` needs it, with no ceremony beyond `composer require` and its own
 one-line purpose recorded below. **Any non-`illuminate/*` third-party package still needs written
 justification in the PR description**, and the reviewer's default answer is still no. Production
-`require` currently stands at eleven entries; that count is not the rule and will drift as the
+`require` currently stands at thirteen entries; that count is not the rule and will drift as the
 package grows — the **vendor-allow-list CI gate** (`manifest shape (vendor allow-list)`,
 `tests/Ci/ComposerManifestTest.php`) is authoritative on what is admitted:
 
 - `php` and `hubspot/api-client` by exact key — this package's own surface.
 - Any `illuminate/*` package, by prefix.
-- `laravel/prompts` via its own enumerated exception, carrying its own reason (below), never via a
-  `laravel/`-prefix rule that a third-party `laravel/*` package could slip through under.
+- `laravel/prompts`, `guzzlehttp/guzzle` and `psr/http-message`, each via its own enumerated
+  exception, carrying its own reason (below), never via a vendor-prefix rule that an unrelated
+  package from the same vendor could slip through under.
 
 Current production requires and their one-line purpose:
 
@@ -102,6 +103,27 @@ Current production requires and their one-line purpose:
   (which is why the design spec calls it "no new dependency" — true of the vendor tree, not true of
   this package's `composer.json`), and is this section's one enumerated exception because it is
   admitted by name rather than by any `laravel/`-prefix rule.
+- `guzzlehttp/guzzle` (`^7.3`, matching `hubspot/api-client`'s own requirement) —
+  `src/Gateway/HubspotClientFactory.php` names `Client`, `ClientInterface` and `HandlerStack` from
+  production code; four files under `src/Testing/` name it too. Previously only a transitive
+  dependency of `hubspot/api-client`, which this section's own opening paragraph already forbids
+  relying on. Added resolving one of the three vendor roots enumerated as deferred, not approved,
+  on PR #37.
+- `psr/http-message` (`^1.1 || ^2.0`, deliberately wide) — PSR-7 `RequestInterface` /
+  `ResponseInterface`, used only as type hints across `src/Testing/`, never implemented. Arrives
+  transitively through the same SDK. The `^1.1` floor is proven, not assumed: the CI matrix runs
+  `--prefer-lowest`, and `psr/http-message:1.1` installs cleanly against every other declared
+  require. Added alongside `guzzlehttp/guzzle`, resolving a second of the three PR #37 roots.
+
+The third root PR #37 enumerated, `PHPUnit`, is deliberately **not** declared here.
+`src/Testing/RequestLog.php` names `PHPUnit\Framework\Assert` from production code, but declaring
+`phpunit/phpunit` in `require` would ship a test framework to every consumer's production vendor
+tree — a worse defect than the undeclared reference it would fix. `src/Testing/` is test-support
+code, loaded only from a consumer's own test suite, where PHPUnit is present by definition; this is
+the same shape Laravel's own `Illuminate\Support\Testing\Fakes` has. The fix lives in the
+vendor-namespace CI gate (`scripts/ci/check-vendor-namespaces.sh`) instead: `PHPUnit` is an
+approved exception scoped to `src/Testing/` only, and still fails the gate if named anywhere else
+in `src/`.
 
 Notably excluded — still third-party, still needs the justification above:
 
