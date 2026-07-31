@@ -434,9 +434,14 @@ predicates.
   offline path. A packagist wobble is therefore not one flaky job, it is all of them — and
   STANDARDS.md §12's merge rule is "green or it does not merge". "It is not our code" does not
   make the branch mergeable.
-- **Fix:** `scripts/ci/composer-retry.sh`, four attempts with doubling backoff, in front of all ten
-  `composer install`/`composer update` call sites across `ci.yml`, `quality.yml`, `arch.yml` and
-  `supply-chain.yml`. It cannot hide a real failure — an unsatisfiable constraint fails on the last
+- **Fix:** `scripts/ci/composer-retry.sh`, four attempts with doubling backoff, in front of all
+  ELEVEN dependency invocations — 2 in `ci.yml` (one `install`, one matrix `update`), 5 in
+  `quality.yml`, 2 in `arch.yml`, 2 in `supply-chain.yml` — plus the separate `--self-test` step,
+  which is not one of them. (Codex, PR #44, P3: `c0068a9`'s commit message and the first version of
+  this entry both said "ten", miscounting `ci.yml`'s matrix `composer update` as if the file held
+  only its one `composer install`. The commit message is left as written — rebasing to correct a
+  count would discard the Codex review that named the head, which STANDARDS.md §12 makes the more
+  expensive error.) It cannot hide a real failure — an unsatisfiable constraint fails on the last
   attempt exactly as on the first, only later. Deliberately NOT narrowed to network-shaped error
   text: that would have to track composer's wording, and being wrong in that direction means
   failing to retry an outage, which is the failure it exists to prevent.
