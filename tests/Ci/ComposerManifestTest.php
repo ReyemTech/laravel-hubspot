@@ -310,15 +310,27 @@ function composerManifestPsr4EntriesForPackage(array $package, array $paths): ar
     $entries = [];
 
     foreach ($psr4 as $prefix => $relativeSrc) {
-        if (! is_string($prefix) || ! is_string($relativeSrc)) {
+        if (! is_string($prefix)) {
             continue;
         }
 
-        $entries[] = [
-            'package' => $name,
-            'prefix' => $prefix,
-            'path' => rtrim($packagePath, '/').'/'.trim($relativeSrc, '/'),
-        ];
+        // Composer permits EITHER a string or a list of directories per prefix, and the installed
+        // tree already uses both -- laravel/framework maps Illuminate\Support\ across four paths.
+        // Discarding the array form would drop the prefix entirely, so a reference owned by such a
+        // package resolves to a broader prefix or to nothing at all. Codex, PR #40.
+        $paths = is_array($relativeSrc) ? array_values($relativeSrc) : [$relativeSrc];
+
+        foreach ($paths as $relative) {
+            if (! is_string($relative)) {
+                continue;
+            }
+
+            $entries[] = [
+                'package' => $name,
+                'prefix' => $prefix,
+                'path' => rtrim($packagePath, '/').'/'.trim($relative, '/'),
+            ];
+        }
     }
 
     return $entries;
@@ -355,10 +367,10 @@ function composerManifestOwningPackage(string $qualifiedName, array $psr4Entries
         static fn (array $candidate): bool => strlen($candidate['prefix']) === $longestPrefixLength,
     ));
 
-    if (count($tied) === 1) {
-        return $tied[0]['package'];
-    }
-
+    // No shortcut for a single candidate: it would return a package WITHOUT checking that the
+    // package actually ships the file, which is the whole point. guzzlehttp/guzzle is a single
+    // candidate for every unknown `GuzzleHttp\...` name, so the shortcut is exactly where the
+    // false-confident answer came from. Verification is unconditional.
     foreach ($tied as $entry) {
         $relative = substr($qualifiedName, strlen($entry['prefix']));
         $candidateFile = $entry['path'].'/'.str_replace('\\', '/', $relative).'.php';
@@ -368,10 +380,15 @@ function composerManifestOwningPackage(string $qualifiedName, array $psr4Entries
         }
     }
 
-    // No tied candidate's file exists on disk (an interface-only reference to a name none of the
-    // tied packages actually ships, for instance) -- fall back to the first, rather than silently
-    // returning no owner and letting the caller's "must be declared" assertion pass vacuously.
-    return $tied[0]['package'];
+    // No tied candidate SHIPS the file. Returning $tied[0] here was the bug Codex found on PR #40:
+    // guzzlehttp/guzzle contributes the broad `GuzzleHttp\` prefix, so a name whose real owner is
+    // not installed -- the undeclared-dependency case this gate exists for -- resolved to an
+    // already-declared package and the assertion passed while the dependency was missing.
+    //
+    // Null now means genuinely unresolved, and the caller FAILS on it rather than dropping it.
+    // An unresolvable GuzzleHttp/Psr name means either its owning package is not installed, or the
+    // resolver is wrong; both deserve a red build, and neither deserves a confident wrong answer.
+    return null;
 }
 
 /**
@@ -417,9 +434,11 @@ function composerManifestGuzzleAndPsrPackagesUsedInSrc(): array
 
             $owner = composerManifestOwningPackage($qualifiedName, $psr4Entries);
 
-            if ($owner !== null) {
-                $packages[] = $owner;
-            }
+            // An unresolved name is a FINDING, not a shrug. It means no installed package ships
+            // that class -- so either its owning package is undeclared and uninstalled (the exact
+            // defect this gate exists for) or the resolver is wrong. Dropping it silently is what
+            // let the previous version pass while a dependency was missing.
+            $packages[] = $owner ?? '<unresolved> '.$qualifiedName;
         }
     }
 
