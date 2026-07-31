@@ -550,6 +550,56 @@ PHP
         failed=1
     fi
 
+    # A NESTED directory that merely ENDS in src/Testing/ (e.g. src/Foo/src/Testing/) must not
+    # match the scoping check -- the prefix match has to be against the path from repo root (or
+    # the self-test's scratch source root), not a bare substring search. A substring search over
+    # ".../src/Testing/..." matches this file too, because the text "src/Testing/" does appear in
+    # it -- just not as the leading path component, which is what the exception is actually scoped
+    # to. Codex raised this on PR #40.
+    mkdir -p "${tmp_dir}/src/Foo/src/Testing"
+
+    local scratch_phpunit_nested_bad="${tmp_dir}/src/Foo/src/Testing/PhpUnitNestedOutsideTesting.php"
+    cat > "$scratch_phpunit_nested_bad" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Self-test-only fixture (scripts/ci/check-vendor-namespaces.sh) -- never production code.
+ * Named under src/Foo/src/Testing/, a NESTED directory that merely ends in "src/Testing/" -- not
+ * the top-level src/Testing/ the PHPUnit exception is scoped to. A substring match over the path
+ * would wrongly accept this; a true prefix match from the source root correctly rejects it.
+ */
+
+namespace ReyemTech\Hubspot\Sync;
+
+use PHPUnit\Framework\Assert as PHPUnitAssert;
+
+final class PhpUnitNestedOutsideTesting
+{
+    public function assertSomething(mixed $actual): void
+    {
+        PHPUnitAssert::assertNotNull($actual);
+    }
+}
+PHP
+
+    local phpunit_nested_bad_output
+    phpunit_nested_bad_output="$(detect_violations "$scratch_phpunit_nested_bad" "$scratch_composer")"
+    local phpunit_nested_bad_rejected=0
+    while IFS=$'\t' read -r direction package_or_root source_file; do
+        [ "$direction" = "DIRECTION_B" ] || continue
+        if ! is_approved_vendor_root "$package_or_root" "$source_file"; then
+            phpunit_nested_bad_rejected=1
+        fi
+    done <<< "$phpunit_nested_bad_output"
+    if [ "$phpunit_nested_bad_rejected" -ne 1 ]; then
+        echo "Self-test FAILED: PHPUnit named under a NESTED src/Foo/src/Testing/ was accepted;" >&2
+        echo "the scoping match must be a path prefix from the source root, not a substring search" >&2
+        echo "that a nested directory sharing the same suffix can satisfy by accident." >&2
+        failed=1
+    fi
+
     # Group use, all three ways. The accept half proves the gate does not reject a legal
     # `use Illuminate\{Console\Command, Support\Carbon};`; the reject halves prove it did not buy
     # that by going blind, which is the failure mode that matters -- before this was handled, a

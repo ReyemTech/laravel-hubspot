@@ -99,6 +99,22 @@ function composerManifestEnumeratedExceptions(): array
         // would still be an undeclared dependency." Constrained to ^7.3, matching the SDK's own
         // requirement exactly, so this declaration never narrows what the SDK already permits.
         'guzzlehttp/guzzle',
+        // GuzzleHttp\Promise\Create and GuzzleHttp\Promise\PromiseInterface
+        // (src/Testing/HubspotFake.php) are owned by THIS package, not guzzlehttp/guzzle --
+        // "GuzzleHttp" is a namespace root shared by three separate Composer packages, and
+        // approving the root (scripts/ci/check-vendor-namespaces.sh's Direction B) is not the
+        // same as declaring what actually gets required. Previously only a transitive dependency
+        // of guzzlehttp/guzzle. Constrained to ^2.5.1, matching what the installed guzzlehttp/guzzle
+        // itself requires (vendor/guzzlehttp/guzzle/composer.json) -- not a rounder ^2.0, which
+        // guzzle's own earlier 7.x releases permitted but the version this package actually
+        // resolves against does not.
+        'guzzlehttp/promises',
+        // GuzzleHttp\Psr7\Response (src/Testing/DefaultResponses.php) is owned by THIS package,
+        // not guzzlehttp/guzzle, for the same "root is not a package" reason as
+        // guzzlehttp/promises above. Constrained to ^1.7 || ^2.0, matching hubspot/api-client's
+        // own requirement of guzzlehttp/psr7 exactly, so this declaration never narrows what the
+        // SDK already permits.
+        'guzzlehttp/psr7',
         // PSR-7 message interfaces (RequestInterface, ResponseInterface), used only as type hints
         // across src/Testing/ -- never implemented -- and arrives transitively through the same
         // SDK. Constrained to ^1.1 || ^2.0, deliberately wide: guzzlehttp/psr7 2.x itself accepts
@@ -165,6 +181,197 @@ function composerManifestIlluminateRootsUsedInSrc(): array
     }
 
     return array_values(array_unique($roots));
+}
+
+/**
+ * @return array<string, string> package name => absolute install path, read from
+ *   vendor/composer/installed.json -- the same file Composer itself generates and consults, never
+ *   a hand-maintained map.
+ */
+function composerManifestInstalledPackagePaths(): array
+{
+    $installedJsonPath = dirname(__DIR__, 2).'/vendor/composer/installed.json';
+
+    expect(is_file($installedJsonPath))->toBeTrue('Expected vendor/composer/installed.json to exist -- run composer install.');
+
+    $installed = json_decode((string) file_get_contents($installedJsonPath), true, flags: JSON_THROW_ON_ERROR);
+    $packages = is_array($installed['packages'] ?? null) ? $installed['packages'] : $installed;
+
+    if (! is_array($packages)) {
+        throw new RuntimeException('Expected vendor/composer/installed.json to decode to an array of packages.');
+    }
+
+    $paths = [];
+    $vendorComposerDir = dirname($installedJsonPath);
+
+    foreach ($packages as $package) {
+        if (! is_array($package) || ! is_string($package['name'] ?? null) || ! is_string($package['install-path'] ?? null)) {
+            continue;
+        }
+
+        $resolved = $vendorComposerDir.'/'.$package['install-path'];
+        $paths[$package['name']] = realpath($resolved) ?: $resolved;
+    }
+
+    return $paths;
+}
+
+/**
+ * Every PSR-4 prefix declared by every installed package, each paired with the package that
+ * declares it and the absolute directory it autoloads from -- built from installed.json's own
+ * "autoload" key, never a hand-written {namespace => package} table. Two packages CAN legally
+ * declare the identical prefix (psr/http-message and psr/http-factory both autoload
+ * `Psr\Http\Message\`), which is exactly why composerManifestOwningPackage() disambiguates ties
+ * against the filesystem rather than assuming the first match.
+ *
+ * @return list<array{package: string, prefix: string, path: string}>
+ */
+function composerManifestInstalledPsr4Prefixes(): array
+{
+    $installedJsonPath = dirname(__DIR__, 2).'/vendor/composer/installed.json';
+    $installed = json_decode((string) file_get_contents($installedJsonPath), true, flags: JSON_THROW_ON_ERROR);
+    $packages = is_array($installed['packages'] ?? null) ? $installed['packages'] : $installed;
+
+    if (! is_array($packages)) {
+        throw new RuntimeException('Expected vendor/composer/installed.json to decode to an array of packages.');
+    }
+
+    $paths = composerManifestInstalledPackagePaths();
+    $entries = [];
+
+    foreach ($packages as $package) {
+        if (! is_array($package) || ! is_string($package['name'] ?? null)) {
+            continue;
+        }
+
+        $psr4 = $package['autoload']['psr-4'] ?? null;
+
+        if (! is_array($psr4)) {
+            continue;
+        }
+
+        $packagePath = $paths[$package['name']] ?? null;
+
+        if ($packagePath === null) {
+            continue;
+        }
+
+        foreach ($psr4 as $prefix => $relativeSrc) {
+            if (! is_string($prefix) || ! is_string($relativeSrc)) {
+                continue;
+            }
+
+            $entries[] = [
+                'package' => $package['name'],
+                'prefix' => $prefix,
+                'path' => rtrim($packagePath, '/').'/'.trim($relativeSrc, '/'),
+            ];
+        }
+    }
+
+    return $entries;
+}
+
+/**
+ * Resolves the Composer package that actually owns a fully-qualified class name -- by longest
+ * matching installed PSR-4 prefix, disambiguating a tie (identical prefix declared by two
+ * packages) against which package's own source tree actually contains the file on disk. This is
+ * the mechanism that closes the granularity gap scripts/ci/check-vendor-namespaces.sh's Direction
+ * B leaves open: that gate approves the shared namespace ROOT ("GuzzleHttp", "Psr"), not the
+ * package a real `composer require` would need to name. Every input here is read from the
+ * installed tree; nothing is hard-coded, so this cannot rot independently of what actually
+ * resolves.
+ *
+ * @param  list<array{package: string, prefix: string, path: string}>  $psr4Entries
+ */
+function composerManifestOwningPackage(string $qualifiedName, array $psr4Entries): ?string
+{
+    $candidates = array_values(array_filter(
+        $psr4Entries,
+        static fn (array $entry): bool => str_starts_with($qualifiedName, $entry['prefix']),
+    ));
+
+    if ($candidates === []) {
+        return null;
+    }
+
+    usort($candidates, static fn (array $a, array $b): int => strlen($b['prefix']) <=> strlen($a['prefix']));
+
+    $longestPrefixLength = strlen($candidates[0]['prefix']);
+    $tied = array_values(array_filter(
+        $candidates,
+        static fn (array $candidate): bool => strlen($candidate['prefix']) === $longestPrefixLength,
+    ));
+
+    if (count($tied) === 1) {
+        return $tied[0]['package'];
+    }
+
+    foreach ($tied as $entry) {
+        $relative = substr($qualifiedName, strlen($entry['prefix']));
+        $candidateFile = $entry['path'].'/'.str_replace('\\', '/', $relative).'.php';
+
+        if (is_file($candidateFile)) {
+            return $entry['package'];
+        }
+    }
+
+    // No tied candidate's file exists on disk (an interface-only reference to a name none of the
+    // tied packages actually ships, for instance) -- fall back to the first, rather than silently
+    // returning no owner and letting the caller's "must be declared" assertion pass vacuously.
+    return $tied[0]['package'];
+}
+
+/**
+ * Every GuzzleHttp\<Sub> and Psr\<Sub> namespace actually named under src/, resolved via
+ * composerManifestOwningPackage() to the Composer package that owns it. Finer-grained than
+ * composerManifestIlluminateRootsUsedInSrc(): "GuzzleHttp" and "Psr" are each a namespace ROOT
+ * shared by several packages, not a package themselves, and the shell gate this test sits beside
+ * (scripts/ci/check-vendor-namespaces.sh, Direction B) approves at that root granularity on
+ * purpose (see its own comments for why). This closes the hole one level down, at the package a
+ * real `composer require` would actually need to name.
+ *
+ * @return list<string>
+ */
+function composerManifestGuzzleAndPsrPackagesUsedInSrc(): array
+{
+    $srcDir = dirname(__DIR__, 2).'/src';
+    $psr4Entries = composerManifestInstalledPsr4Prefixes();
+
+    $packages = [];
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($srcDir, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($iterator as $file) {
+        if (! $file instanceof SplFileInfo || ! $file->isFile() || $file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $contents = (string) file_get_contents($file->getPathname());
+
+        foreach (PhpToken::tokenize($contents) as $token) {
+            if (! in_array($token->id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+                continue;
+            }
+
+            $qualifiedName = ltrim($token->text, '\\');
+            $segments = explode('\\', $qualifiedName);
+
+            if (count($segments) < 2 || ! in_array($segments[0], ['GuzzleHttp', 'Psr'], true)) {
+                continue;
+            }
+
+            $owner = composerManifestOwningPackage($qualifiedName, $psr4Entries);
+
+            if ($owner !== null) {
+                $packages[] = $owner;
+            }
+        }
+    }
+
+    return array_values(array_unique($packages));
 }
 
 it('rejects any production require outside the vendor allow-list', function (): void {
@@ -270,6 +477,64 @@ it('constrains psr/http-message to ^1.1 || ^2.0, deliberately wide', function ()
         .'onto 2.x for no reason this package has. The --prefer-lowest CI leg proves 1.1 installs '
         .'cleanly, rather than this constraint merely assuming it. Got "%s".',
         $require['psr/http-message'] ?? '(missing)',
+    ));
+});
+
+it('declares guzzlehttp/promises and guzzlehttp/psr7 as named enumerated exceptions', function (): void {
+    // src/Testing/HubspotFake.php names GuzzleHttp\Promise\Create and
+    // GuzzleHttp\Promise\PromiseInterface (owned by guzzlehttp/promises) and
+    // src/Testing/DefaultResponses.php names GuzzleHttp\Psr7\Response (owned by guzzlehttp/psr7)
+    // from PRODUCTION code. Neither is guzzlehttp/guzzle itself -- "GuzzleHttp" is a namespace
+    // root shared by three separate packages, and approving the root at Direction B granularity
+    // is not the same as declaring the two packages that actually get required. Both must be
+    // admitted by exact name, never by a `guzzlehttp/`-prefix rule that an unrelated package from
+    // the same vendor could slip through under.
+    $exceptions = composerManifestEnumeratedExceptions();
+
+    expect($exceptions)->toContain('guzzlehttp/promises');
+    expect($exceptions)->toContain('guzzlehttp/psr7');
+});
+
+it('constrains guzzlehttp/promises to ^2.5.1, matching what the installed guzzlehttp/guzzle itself requires', function (): void {
+    $require = composerManifestRequires();
+
+    expect($require)->toHaveKey('guzzlehttp/promises');
+    expect($require['guzzlehttp/promises'])->toBe('^2.5.1', sprintf(
+        'Expected "guzzlehttp/promises" to be constrained to ^2.5.1, matching what '
+        .'vendor/guzzlehttp/guzzle/composer.json itself requires -- not a rounder ^2.0 that only '
+        .'earlier guzzlehttp/guzzle 7.x releases permitted. Got "%s".',
+        $require['guzzlehttp/promises'] ?? '(missing)',
+    ));
+});
+
+it('constrains guzzlehttp/psr7 to ^1.7 || ^2.0, matching what hubspot/api-client itself requires', function (): void {
+    $require = composerManifestRequires();
+
+    expect($require)->toHaveKey('guzzlehttp/psr7');
+    expect($require['guzzlehttp/psr7'])->toBe('^1.7 || ^2.0', sprintf(
+        'Expected "guzzlehttp/psr7" to be constrained to ^1.7 || ^2.0, matching '
+        .'hubspot/api-client\'s own requirement exactly, so this declaration never narrows what '
+        .'the SDK already permits. Got "%s".',
+        $require['guzzlehttp/psr7'] ?? '(missing)',
+    ));
+});
+
+it('backs every GuzzleHttp/Psr namespace referenced under src/ with its owning package, not merely the shared root (D-04 granularity)', function (): void {
+    $require = composerManifestRequires();
+    $used = composerManifestGuzzleAndPsrPackagesUsedInSrc();
+
+    // Guards against the scan finding nothing and the assertion below passing vacuously --
+    // src/Gateway/HubspotClientFactory.php and src/Testing/*.php are known, committed users of
+    // both roots, so this must never be empty.
+    expect($used)->not->toBeEmpty();
+
+    $missing = array_values(array_diff($used, array_keys($require)));
+
+    expect($missing)->toBe([], sprintf(
+        'Expected every GuzzleHttp/Psr namespace referenced under src/ to be backed by the package '
+        .'that actually owns it (not merely the "GuzzleHttp"/"Psr" root '
+        .'scripts/ci/check-vendor-namespaces.sh\'s Direction B approves) in "require". Missing: %s.',
+        implode(', ', $missing),
     ));
 });
 
