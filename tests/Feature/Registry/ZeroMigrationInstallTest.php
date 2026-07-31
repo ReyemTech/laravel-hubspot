@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Feature\Registry;
 
+use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
@@ -32,6 +33,46 @@ use ReyemTech\Hubspot\Tests\TestCase;
  */
 final class ZeroMigrationInstallTest extends TestCase
 {
+    /**
+     * Points the application's database directory at one this process owns, BEFORE any provider
+     * boots -- the same reason and the same timing as `ServiceProviderTest::defineEnvironment()`.
+     *
+     * `ServiceProvider::boot()` computes each migration's publish target once, as
+     * `$this->app->databasePath('migrations/'.basename($file))`, and `publishes()` stores it
+     * statically, so the target has to be redirected before boot or not at all.
+     *
+     * Without this, `test_vendor_publish_writes_the_migration_into_the_application` writes into
+     * `vendor/orchestra/testbench-core/laravel/database/migrations` -- one directory shared by every
+     * parallel worker -- and deletes it again. `Migrator::run()` is
+     * `$this->requireFiles($files = $this->getMigrationFiles($paths))`: glob, then require. Any
+     * worker calling `migrate` inside that window either requires a file this test has since
+     * removed, or runs a migration it was never meant to see. Same shape as the config race that
+     * took the `mutation` job on `main` down at `8d9a247` and `8b3f64c`, and this is the other half
+     * of it -- found while fixing that one, not observed failing on its own.
+     *
+     * @param  Application  $app
+     */
+    protected function defineEnvironment($app): void
+    {
+        $app->useDatabasePath(self::isolatedDatabaseDirectory());
+    }
+
+    /**
+     * A database directory this process alone owns; keyed by PID because `pest --parallel` isolates
+     * workers as processes.
+     */
+    private static function isolatedDatabaseDirectory(): string
+    {
+        // The trailing `/database` segment is load-bearing: the publish-map assertion below checks
+        // the target sits under `database/migrations`, which states where a published migration
+        // belongs. Isolating the directory must not quietly weaken that into a different claim.
+        $directory = sys_get_temp_dir().'/laravel-hubspot-'.getmypid().'/database';
+
+        File::ensureDirectoryExists($directory.'/migrations');
+
+        return $directory;
+    }
+
     /**
      * The default install touches no database at all: the default store is `cache`, so the migration
      * group is not loaded and `php artisan migrate` creates nothing belonging to this package.
