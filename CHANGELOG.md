@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.4.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.3.1...reyemtech/laravel-hubspot-v0.4.0) (2026-07-31)
+
+
+### Features
+
+* **04-01:** add D-04's bidirectional vendor-namespace gate and widen R3 for Illuminate ([b02fe11](https://github.com/ReyemTech/laravel-hubspot/commit/b02fe11a9b1798ceb472aaaa622b07ffa34c872e))
+* **04-02:** wire the Model Sync tracer end to end ([259962a](https://github.com/ReyemTech/laravel-hubspot/commit/259962ae548063d2aef23bcaecc03e0801bb70a8))
+* **04-03:** resolve dot-notation, closure and update-map forms ([bdbcc4d](https://github.com/ReyemTech/laravel-hubspot/commit/bdbcc4d16a35f1d44b01a5c252ba596990132a35))
+* **04-03:** update an already-linked model by its stored id ([bea6b43](https://github.com/ReyemTech/laravel-hubspot/commit/bea6b4307ab76fdb41863e9d7da198d817164053))
+* **04-04:** the trait's three scopes and the unbound-model throw ([c053fb1](https://github.com/ReyemTech/laravel-hubspot/commit/c053fb100606dc0ff37c9ffb9f367cd38cdaa8d1))
+* **deps:** declare guzzlehttp/psr7, scope PHPUnit to src/Testing/ ([1137b3e](https://github.com/ReyemTech/laravel-hubspot/commit/1137b3e0496983b1ae7e1b86bb97f85621d7313b))
+* resolve every $hubspotMap form, and update by the stored id ([3e5697e](https://github.com/ReyemTech/laravel-hubspot/commit/3e5697e761e2c37c529f8d21316b16a5058c1721))
+* sync a bound model to HubSpot, end to end ([9544c71](https://github.com/ReyemTech/laravel-hubspot/commit/9544c7160df26b105494e8833ff912375ee87cea))
+
+
+### Bug Fixes
+
+* **04-01:** check every declared illuminate package, and tokenize like the gate ([849f7c9](https://github.com/ReyemTech/laravel-hubspot/commit/849f7c93a6bd08392be257979d2fa3b8ac2521ed))
+* **04-01:** declare the four illuminate requires, one of them a fix (D-19) ([03b20d9](https://github.com/ReyemTech/laravel-hubspot/commit/03b20d96f445cafb377b6c701aed3e6ba4ee38ea))
+* **04-01:** reassemble group-use imports before classifying vendor roots ([d42c40e](https://github.com/ReyemTech/laravel-hubspot/commit/d42c40e26a3e88166dff27f58d03a279027cb015))
+* **04-02:** close four Codex P2 findings on PR [#39](https://github.com/ReyemTech/laravel-hubspot/issues/39) (GREEN) ([95a11d2](https://github.com/ReyemTech/laravel-hubspot/commit/95a11d22b296427710f5746a5b29a63bf9294061))
+* **04-02:** close three silent tracer failures found on PR [#39](https://github.com/ReyemTech/laravel-hubspot/issues/39) (GREEN) ([5f30676](https://github.com/ReyemTech/laravel-hubspot/commit/5f30676c79150b3c0521354b6f92d9cb8133d529))
+* **04-03:** let R3 admit data_get, an unnamespaced Illuminate helper ([333c4b6](https://github.com/ReyemTech/laravel-hubspot/commit/333c4b6a327e9f5a592be6934ae0aba624ea7426))
+* **04-03:** read $hubspotUpdateMap from the model, closing SYNC-02 properly ([d719058](https://github.com/ReyemTech/laravel-hubspot/commit/d719058aa2ff504f6e09b0236b9dcc2f02afc059))
+* **04-04:** assert exception messages as literals, not factory-vs-factory ([da165dc](https://github.com/ReyemTech/laravel-hubspot/commit/da165dcef4b581641c50a23bd7f1e1215a02764c))
+* **04-04:** resolve cross-connection links through the ordinary builder API ([bc30d9b](https://github.com/ReyemTech/laravel-hubspot/commit/bc30d9b46d742a4b1d45203b570380347c2fd56b))
+* **04-04:** resolve cross-connection links when the query runs, not when it is built ([95d116c](https://github.com/ReyemTech/laravel-hubspot/commit/95d116cf6dbe38cf7d62ee18204a5e63b9901a8a))
+* **04-04:** resolve the scopes on the link table's own connection ([fe03728](https://github.com/ReyemTech/laravel-hubspot/commit/fe037280b7c378ed901932c3e937e00229802bc0))
+* **04-04:** splice the deferred link constraint in at the scope's position ([e840490](https://github.com/ReyemTech/laravel-hubspot/commit/e84049098217cfc3f57f015bb3c15d3dade79a76))
+* **ci:** fail closed when the mutation scope cannot be computed ([6ea8c87](https://github.com/ReyemTech/laravel-hubspot/commit/6ea8c87eee7ab69c3ec051149ac4d76960e5cf17))
+* **ci:** make the resolver say "I don't know" instead of guessing ([b82b91e](https://github.com/ReyemTech/laravel-hubspot/commit/b82b91edfc27673c8c9ba9f79d9a09f4f0096799))
+* **ci:** reassemble group use once, so both scanners cannot disagree ([674b022](https://github.com/ReyemTech/laravel-hubspot/commit/674b022558f21724ca9e0344f21ea6dc99fe96b7))
+* **ci:** replace the invalid zero-depth fetch with an explicit refspec ([ad3cd46](https://github.com/ReyemTech/laravel-hubspot/commit/ad3cd4618dc30cae08a908f243497ae688e03a7e))
+* **ci:** split the PSR-4 reader so it clears the complexity ceiling ([d995855](https://github.com/ReyemTech/laravel-hubspot/commit/d9958559df367d576b8f168202b880348b0c847e))
+* declare what src/ actually names, and scope what cannot be declared ([8d9a247](https://github.com/ReyemTech/laravel-hubspot/commit/8d9a2473b7b1829c64835ba67a34221ffe98feb6))
+* **deps:** declare the packages that own the namespaces, not just the root ([df7b49c](https://github.com/ReyemTech/laravel-hubspot/commit/df7b49ca1a1cabf547e9cb5542d5c12c40f3f71d))
+* **deps:** widen promises to what guzzle ^7.3 permits, and skip symbol imports ([0a8df86](https://github.com/ReyemTech/laravel-hubspot/commit/0a8df86477566168c87a66abe310d1888b030cd8))
+
 ## [0.3.1](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.3.0...reyemtech/laravel-hubspot-v0.3.1) (2026-07-30)
 
 
