@@ -112,6 +112,105 @@ final class HubspotObserverTest extends TestCase
     }
 
     /**
+     * A method NAMED `getDeletedAtColumn()` is not proof the model soft-deletes.
+     *
+     * `method_exists()` is a name check, and D-17's guard used to treat it as the whole contract.
+     * Two ways that misfires on a model that never used `SoftDeletes` (Codex, PR #48):
+     *
+     * 1. A model defining the method for unrelated reasons has its ordinary updates SUPPRESSED
+     *    whenever the named attribute has a non-null original value -- silently, since a suppressed
+     *    sync looks exactly like a model that was not meant to sync.
+     * 2. A non-public method of that name is reached through `Model::__call()` -- Eloquent defines
+     *    it, so PHP routes there rather than raising "Call to protected method" -- and Eloquent
+     *    forwards to the query builder, which raises `BadMethodCallException` from inside an
+     *    Eloquent event handler.
+     *
+     * The guard now asks whether the model carries `SoftDeletingScope`, which `SoftDeletes::boot`
+     * registers and nothing else does.
+     */
+    public function test_a_lookalike_delete_column_method_does_not_suppress_an_update(): void
+    {
+        Bus::fake();
+
+        $model = new class extends Model
+        {
+            use SyncsToHubspot;
+
+            protected $table = 'lookalikes';
+
+            /**
+             * @var array<string, string>
+             */
+            protected array $hubspotMap = ['email' => 'email'];
+
+            public function getDeletedAtColumn(): string
+            {
+                // Names a real attribute with a non-null original, which is what makes the old
+                // guard suppress this model's updates rather than merely misread them.
+                return 'email';
+            }
+        };
+
+        $model->setRawAttributes(['email' => 'ada@example.com'], true);
+
+        config(['hubspot.models' => [
+            $model::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]]);
+
+        $observer = new HubspotObserver(
+            new ModelBindings(app('config')),
+            app(Dispatcher::class),
+        );
+
+        $observer->updated($model);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
+     * The same misfire in its throwing form: a NON-PUBLIC method of that name. `method_exists()`
+     * returns true for it, and calling it from here reaches `Model::__call()` rather than a
+     * visibility error, which Eloquent forwards to the query builder -- so an update on this model
+     * died with `BadMethodCallException` inside an event handler.
+     */
+    public function test_a_non_public_delete_column_method_does_not_break_an_update(): void
+    {
+        Bus::fake();
+
+        $model = new class extends Model
+        {
+            use SyncsToHubspot;
+
+            protected $table = 'hidden_lookalikes';
+
+            /**
+             * @var array<string, string>
+             */
+            protected array $hubspotMap = ['email' => 'email'];
+
+            protected function getDeletedAtColumn(): string
+            {
+                return 'email';
+            }
+        };
+
+        $model->setRawAttributes(['email' => 'ada@example.com'], true);
+
+        config(['hubspot.models' => [
+            $model::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]]);
+
+        $observer = new HubspotObserver(
+            new ModelBindings(app('config')),
+            app(Dispatcher::class),
+        );
+
+        $observer->updated($model);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
      * An ATTRIBUTE named `hubspotAutoSync` is not a declaration.
      *
      * `getHubspotAutoSync()` asks `property_exists()`, which sees only real declared properties.

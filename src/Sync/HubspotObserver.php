@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Sync;
 
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Facades\Config;
 
 /**
@@ -68,15 +69,35 @@ final class HubspotObserver
      * properties on every restore. That is the exact failure this guard exists to prevent, made
      * invisible by testing only against the default column.
      *
-     * A model that does not use `SoftDeletes` has no such method and no restore to speak of, so it
-     * skips the guard entirely rather than being asked about a column it does not have.
+     * Whether the model soft-deletes is decided by `SoftDeletingScope` being registered, NOT by
+     * `method_exists($model, 'getDeletedAtColumn')` (Codex, PR #48). A name check is not a contract:
+     * a model defining that method for unrelated reasons would have its ordinary updates silently
+     * suppressed, and a NON-PUBLIC method of that name is reached through `Model::__call()` --
+     * Eloquent defines it, so PHP routes there rather than raising a visibility error -- which
+     * Eloquent forwards to the query builder, raising `BadMethodCallException` inside an event
+     * handler. `SoftDeletes::bootSoftDeletes()` registers that scope and nothing else does, so it
+     * identifies the trait itself rather than a method that resembles it.
+     *
+     * PHPStan cannot express "carries `SoftDeletingScope`, therefore uses `SoftDeletes`", so the
+     * call to `getDeletedAtColumn()` -- declared by the trait, not by `Model` -- carries a per-line
+     * suppression with this paragraph as its written reason (D-04 forbids a baseline, not a
+     * justified per-line ignore). A `method_exists()` guard would silence it too, and was rejected:
+     * only `SoftDeletes` registers that scope and it declares that method, so the guard would be
+     * unreachable -- and an unreachable branch is exactly what this plan has already deleted twice.
+     *
+     * `hasGlobalScope()` rather than `class_uses_recursive()`: it needs no widening of R3's
+     * allow-list (`SoftDeletingScope` is a namespaced `Illuminate` class, already admitted, while
+     * the helper is a bare global function that would need its own entry the way `data_get` did),
+     * and it holds for a model inheriting the trait from a parent class, since booting is what
+     * registers the scope.
      */
     public function updated(Model $model): void
     {
         // Narrowed to a string before use: getOriginal(null) returns the WHOLE original attribute
         // array, which is never null, so an unnarrowed value would make this guard swallow every
         // update on every model.
-        $deletedAtColumn = method_exists($model, 'getDeletedAtColumn')
+        $deletedAtColumn = $model->hasGlobalScope(SoftDeletingScope::class)
+            // @phpstan-ignore-next-line method.notFound (see this method's docblock for the reason)
             ? $model->getDeletedAtColumn()
             : null;
 

@@ -129,7 +129,7 @@ coverage:
       architecture rules all fire"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (761 passed, 2839 assertions)"
+        ref: "vendor/bin/pest (763 passed, 2841 assertions)"
         status: pass
       - kind: other
         ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
@@ -202,6 +202,21 @@ to a string first (`getOriginal(null)` returns the whole original attribute arra
 null, so an unnarrowed value would make the guard swallow every update on every model). `ArchivedLead`
 is the fixture; `SoftDeletingLead` stays on the default column, because the guard has to hold for
 both and one fixture can only be one of them.
+
+**Codex P2 — `method_exists()` is a name check, not a contract.** Having resolved the delete column
+through `getDeletedAtColumn()`, the guard still decided WHETHER to ask by whether a method of that
+name existed. Two misfires on a model that never used `SoftDeletes`: one defining that method for
+unrelated reasons had its ordinary updates silently suppressed whenever the named attribute had a
+non-null original, and a NON-PUBLIC method of that name raised `BadMethodCallException` from inside
+an event handler. Codex predicted "Call to protected method"; the actual mechanism is `Model::__call`
+intercepting (Eloquent defines it, so PHP routes there rather than raising a visibility error) and
+forwarding to the query builder — verified by probe, and the conclusion holds either way.
+
+The guard now asks `hasGlobalScope(SoftDeletingScope::class)`, which `SoftDeletes::bootSoftDeletes()`
+registers and nothing else does. Chosen over `class_uses_recursive()` because it needs no widening of
+R3's allow-list — `SoftDeletingScope` is a namespaced `Illuminate` class already admitted, while the
+helper is a bare global function that would need its own entry the way `data_get` did — and it holds
+for a model inheriting the trait from a parent, since booting registers the scope.
 
 **The backward-compatibility gate, live for the first time.** `HubspotObserver` originally took the
 config repository as a fourth constructor argument, and `roave/backward-compatibility-check` counts
