@@ -11,8 +11,8 @@ use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\PropertyMapper;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
 use ReyemTech\Hubspot\Tests\Support\Sync\NarrowedLead;
+use ReyemTech\Hubspot\Tests\Support\Sync\NarrowedSyncTestCase;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
-use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
 
 /**
  * The job's update leg (SYNC-02, D-11): a second sync of an already-linked model addresses its
@@ -33,7 +33,7 @@ use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
  */
 mutates(SyncHubspotObjectJob::class, PropertyMapper::class);
 
-final class UpdateSyncTest extends SyncTestCase
+final class UpdateSyncTest extends NarrowedSyncTestCase
 {
     /**
      * @return array{status: string, results: list<array{id: string, properties: array<string, string>}>}

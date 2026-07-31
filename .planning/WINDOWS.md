@@ -18,7 +18,7 @@ last_updated: 2026-07-31T02:25:33.228Z
 | 1 | 01 | unrun-verify | .github/workflows/ci.yml |  | vendor/bin/pest --coverage --min=95 fails on the empty src/ (PHPUnit runner warning, not a coverage-percentage evaluation); resolves automatically once Phase 2 adds the first src/ file. See 01-01-SUMMARY.md Decisions Made #3. | open |  | 2026-07-26T20:02:20.332Z |  |
 | 2 | 01 | unrun-verify | .github/workflows/quality.yml |  | mutation job (pest --mutate --min=80) cannot compute a real MSI over the deliberately-empty src/; WARN+exit1 via failOnPhpunitWarning, resolves once Phase 2 adds source files (mirrors plan 01's coverage-floor finding) | open |  | 2026-07-26T20:36:32.352Z |  |
 | 3 | 01 | deviation | tests/Arch/LayerBoundariesTest.php |  | Concurrent git staging in a shared working directory caused commit 022b9e6 (plan 05) to accidentally include three of plan 04's task-2 files; content correct, but plan 04 lacks its own dedicated GREEN commit for the ten rules in git history | open |  | 2026-07-26T20:36:32.666Z |  |
-| 4 | 04 | deviation | src/Sync/SyncHubspotObjectJob.php |  | SyncsToHubspot has no getHubspotUpdateMap() accessor; job narrows update map to [] until a future plan adds it to the trait (SyncsToHubspot.php is 04-04's, and 04-03/04-04 run in the same parallel wave) | open |  | 2026-07-31T02:25:33.228Z |  |
+| 4 | 04 | deviation | src/Sync/SyncHubspotObjectJob.php |  | RESOLVED 2026-07-31 in 04-03: getHubspotUpdateMap() added to SyncsToHubspot and wired into the job. Codex raised the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the full create map, silently overwriting the properties a consumer declared the update map to protect | resolved |  | 2026-07-31T02:25:33.228Z |  |
 
 ````json
 [
@@ -64,7 +64,7 @@ last_updated: 2026-07-31T02:25:33.228Z
     "phase": "04",
     "file": "src/Sync/SyncHubspotObjectJob.php",
     "line": null,
-    "description": "SyncsToHubspot has no getHubspotUpdateMap() accessor; job narrows update map to [] until a future plan adds it to the trait (SyncsToHubspot.php is 04-04's, and 04-03/04-04 run in the same parallel wave)",
+    "description": "RESOLVED 2026-07-31 in 04-03: getHubspotUpdateMap() added to SyncsToHubspot and wired into the job (Codex P1 on PR #42)",
     "status": "open",
     "reason": "",
     "recorded_at": "2026-07-31T02:25:33.228Z",

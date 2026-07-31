@@ -51,14 +51,14 @@ key-files:
     - tests/Arch/LayerBoundariesTest.php
 
 key-decisions:
-  - "$hubspotUpdateMap has no model-facing accessor as of this plan. SyncsToHubspot.php is
-    non-negotiable #9's do-not-touch file (04-04 owns it, and 04-03/04-04 run in the SAME parallel
-    wave per ROADMAP.md -- editing it here would race a concurrent worktree). The job therefore
-    calls mapForUpdate($model, $map, []) unconditionally: every model narrows to the full map until
-    a future plan adds the accessor. The SELECTION rule itself (empty updateMap => full map applies)
-    is fully implemented and unit-tested in PropertyMapper against explicit array arguments; only
-    the model-to-array extraction step is deferred. Recorded in WINDOWS.md (entry #4, kind:
-    deviation) so this does not silently fall through a wave boundary."
+  - "$hubspotUpdateMap IS read from the model, via SyncsToHubspot::getHubspotUpdateMap(). This was
+    initially deferred -- SyncsToHubspot.php is 04-04's file -- and Codex raised the deferral as a
+    P1 on PR #42: passing [] means mapForUpdate() falls back to the FULL create map, so a consumer
+    who declared an update map to protect a create-only or independently-managed HubSpot property
+    had it silently ignored and overwritten on every update. Shipping a documented option that does
+    nothing is worse than the small scope extension, so the accessor landed here. getHubspotUpdateMap()
+    is declared OPTIONAL (property_exists guard) unlike getHubspotMap(), so a model that never
+    narrows its updates need not declare an empty property to say so."
   - "The update leg reads the model's link row via $this->model->hubspotLink()->first() (the same
     trait accessor SyncsToHubspot::hubspotLink() exposes to consumers), not a second
     hubspot_object_links query built by hand -- one identity resolution, reused."
@@ -222,15 +222,17 @@ re-upserting it.**
 
 ## Decisions Made
 
-- **`$hubspotUpdateMap` has no model-facing accessor yet.** `SyncsToHubspot.php` is explicitly
-  off-limits to this plan (non-negotiable #9) because it and `04-04` run in the same parallel wave
-  — touching it here would race a concurrent worktree editing the same file. The job calls
-  `mapForUpdate($model, $map, [])` unconditionally; the SELECTION rule itself (an empty update map
-  means "declares none," full map applies) is fully implemented and directly unit-tested in
-  `PropertyMapper` against explicit array arguments, so the logic is proven even though no current
-  model can yet supply a non-empty update map end-to-end. Recorded in `WINDOWS.md` (entry #4) so
-  this doesn't silently fall through a wave boundary — **no plan in the current roadmap
-  (04-04 through 04-09) currently owns adding a `getHubspotUpdateMap()` accessor to the trait.**
+- **`$hubspotUpdateMap` is read from the model — the initial deferral was wrong.** This plan first
+  left `SyncsToHubspot.php` alone (04-04 owns it) and passed `[]`, recording the gap rather than
+  closing it. **Codex raised that as a P1 on PR #42** and was right: `mapForUpdate()` reads an empty
+  update map as "the model declares none" and applies the FULL create map, so a consumer who
+  declared `$hubspotUpdateMap` specifically to protect a create-only or independently-managed
+  HubSpot property had it silently ignored — and every update overwrote exactly the field they
+  excluded. A documented option that does nothing is worse than a small scope extension, so
+  `getHubspotUpdateMap()` landed here. It is declared **optional** (a `property_exists()` guard),
+  unlike `getHubspotMap()`, so a model that never narrows updates need not declare an empty
+  property to say so. Covered by `UpdateSyncTest::test_an_update_sends_only_what_the_models_update_map_names`,
+  which fails if `firstname` leaves the process on an update.
 - **The update leg reads its link row through the SAME `hubspotLink()` accessor the public API
   exposes** (`$this->model->hubspotLink()->first()`), rather than issuing a second, hand-built
   `hubspot_object_links` query — one identity resolution, reused.
@@ -310,13 +312,12 @@ no HubSpot portal access was needed.
 
 - `PropertyMapper::map()`'s `(Model, array): array` signature is unchanged from 04-02 and does not
   need to change for 04-08's batch sync (per-record calls reuse it as-is).
-- **Open gap for a future plan:** no plan currently in the roadmap (04-04 through 04-09) adds a
-  `getHubspotUpdateMap()` accessor to `SyncsToHubspot`. Until one does, `$hubspotUpdateMap` is fully
-  implemented and unit-tested at the `PropertyMapper` level but cannot be exercised end-to-end
-  through any real bound model. Recorded in `WINDOWS.md` (kind: deviation, phase 04) so it surfaces
-  at ship time rather than silently falling through a wave boundary.
-- 04-04 (same wave) is unaffected: this plan touched none of `SyncsToHubspot.php`,
-  `ModelBindings.php`, `ConfigurationException.php` or `config/hubspot.php`.
+- **That gap is CLOSED, not deferred.** `getHubspotUpdateMap()` now exists on `SyncsToHubspot` and
+  the job passes it, so `$hubspotUpdateMap` works end-to-end through a real bound model. `WINDOWS.md`
+  entry #4 is resolved.
+- **04-04 must account for one file this plan did touch after all:** `src/Sync/SyncsToHubspot.php`
+  gained `getHubspotUpdateMap()`. Its query scopes and the rest of 04-04's surface are untouched, as
+  are `ModelBindings.php`, `ConfigurationException.php` and `config/hubspot.php`.
 - 04-05's `updated` handler will dispatch through this same `handle()` — the update leg it needs
   already exists and needs no further change when that handler starts firing on real `updated`
   events (D-17's restore-suppression is 04-05's own concern, unrelated to this leg).

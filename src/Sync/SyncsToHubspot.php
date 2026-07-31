@@ -115,4 +115,32 @@ trait SyncsToHubspot
 
         return $map;
     }
+
+    /**
+     * The narrower map a model may declare to limit what an UPDATE sends, or `[]` when it declares
+     * none — in which case `PropertyMapper::mapForUpdate()` applies the full `$hubspotMap`.
+     *
+     * Declared optional, unlike `$hubspotMap`: a model that never narrows its updates should not
+     * have to write an empty property to say so. `property_exists()` on `$this` is what
+     * distinguishes "not declared" from "declared empty", and both resolve to `[]` here because
+     * `mapForUpdate()` treats them identically.
+     *
+     * @return array<string, mixed>
+     */
+    public function getHubspotUpdateMap(): array
+    {
+        if (! property_exists($this, 'hubspotUpdateMap')) {
+            return [];
+        }
+
+        /**
+         * @phpstan-ignore-line declared by the consuming model, never by this trait — same
+         *  contract as $hubspotMap above.
+         *
+         * @var array<string, mixed> $map
+         */
+        $map = $this->hubspotUpdateMap;
+
+        return $map;
+    }
 }

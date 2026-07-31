@@ -102,15 +102,16 @@ final class SyncHubspotObjectJob implements ShouldQueue
             // would let a changed id_property value (e.g. a changed email) repoint the write at a
             // different HubSpot record than the one this model has always synced to.
             //
-            // $hubspotUpdateMap has no model-facing accessor yet: SyncsToHubspot exposes
-            // getHubspotMap() only (04-02), and a getHubspotUpdateMap() companion belongs beside
-            // the query scopes 04-04 adds to that same trait -- this plan does not touch it. Every
-            // model narrows to the empty array until that accessor exists, and mapForUpdate()
-            // already treats an empty update map as "the model declares none": the full $map
-            // applies unnarrowed. The SELECTION rule itself lives in exactly one place --
-            // PropertyMapper::mapForUpdate() -- proven directly against explicit map/update-map
-            // arguments in PropertyMapperTest.
-            $properties = $mapper->mapForUpdate($this->model, $map, []);
+            // The model's own $hubspotUpdateMap, read through the trait. Passing [] here was a
+            // Codex P1 on PR #42: mapForUpdate() reads an empty update map as "the model declares
+            // none" and falls back to the full $map, so a consumer who declared an update map to
+            // protect a create-only or independently-managed HubSpot property had it silently
+            // ignored and overwritten on every update. The SELECTION rule still lives in exactly
+            // one place -- PropertyMapper::mapForUpdate().
+            /** @var array<string, string|Closure> $updateMap */
+            $updateMap = $this->model->getHubspotUpdateMap(); // @phpstan-ignore-line method.notFound
+
+            $properties = $mapper->mapForUpdate($this->model, $map, $updateMap);
 
             $gateway->update($binding->objectType, $link->hubspot_id, $properties);
 
