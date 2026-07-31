@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Unit\Sync;
 
 use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Bus;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
+use ReyemTech\Hubspot\Sync\SyncsToHubspot;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\TestCase;
 
@@ -38,6 +40,7 @@ final class HubspotObserverTest extends TestCase
         $observer = new HubspotObserver(
             new ModelBindings(app('config')),
             app(Dispatcher::class),
+            app('config'),
         );
 
         $observer->created(new SyncedLead(['email' => 'ada@example.com']));
@@ -64,6 +67,7 @@ final class HubspotObserverTest extends TestCase
         $observer = new HubspotObserver(
             new ModelBindings(app('config')),
             app(Dispatcher::class),
+            app('config'),
         );
 
         $this->expectException(ConfigurationException::class);
@@ -71,5 +75,89 @@ final class HubspotObserverTest extends TestCase
         $observer->created(new SyncedLead(['email' => 'ada@example.com']));
 
         Bus::assertNothingDispatched();
+    }
+
+    /**
+     * A bound model that does NOT apply the trait still resolves its events from
+     * `hubspot.auto_sync.on`, rather than fataling on a missing method.
+     *
+     * `ModelBindings::validate()` checks `id_property`, not trait usage, so `hubspot.models` can
+     * name a model with no `getHubspotAutoSync()` on it. That is a misconfiguration, and the JOB is
+     * where it surfaces (`PropertyMapper` needs `$hubspotMap`) -- but the observer's own job is to
+     * gate an event, and it must not turn a config mistake into a fatal error inside an Eloquent
+     * event handler, which is a far worse place to discover it.
+     *
+     * An anonymous model rather than a fixture file: the class exists only to be trait-less, and
+     * constructing the observer directly means nothing has to be registered, migrated or booted.
+     */
+    public function test_a_bound_model_without_the_trait_falls_back_to_the_configured_events(): void
+    {
+        Bus::fake();
+
+        $model = new class extends Model
+        {
+            protected $table = 'untraited';
+        };
+
+        config(['hubspot.models' => [
+            $model::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]]);
+
+        $observer = new HubspotObserver(
+            new ModelBindings(app('config')),
+            app(Dispatcher::class),
+            app('config'),
+        );
+
+        $observer->created($model);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
+     * `$hubspotAutoSync = true` is not one of the two documented forms (a narrowing array, or
+     * `false`). It collapses to "declared nothing", because "sync on everything in `auto_sync.on`"
+     * is precisely what declaring nothing already means -- treating it as a third shape would put
+     * an undocumented case in front of every caller for no behavioural gain.
+     */
+    public function test_a_per_model_true_defers_to_the_configured_events(): void
+    {
+        Bus::fake();
+
+        $model = new class extends Model
+        {
+            use SyncsToHubspot;
+
+            protected $table = 'always_syncs';
+
+            /**
+             * Declared because the trait's contract expects it of every consuming model, the same
+             * way SoftDeletes expects a deleted_at column -- not because this test reads it.
+             *
+             * @var array<string, string>
+             */
+            protected array $hubspotMap = ['email' => 'email'];
+
+            /**
+             * @var array<int, string>|bool
+             */
+            protected array|bool $hubspotAutoSync = true;
+        };
+
+        self::assertNull($model->getHubspotAutoSync());
+
+        config(['hubspot.models' => [
+            $model::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]]);
+
+        $observer = new HubspotObserver(
+            new ModelBindings(app('config')),
+            app(Dispatcher::class),
+            app('config'),
+        );
+
+        $observer->created($model);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
     }
 }

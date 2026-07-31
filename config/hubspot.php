@@ -255,6 +255,48 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Auto-sync
+    |--------------------------------------------------------------------------
+    |
+    | Which Eloquent events on a bound model push that model to HubSpot. The
+    | package's own service provider attaches the observer at boot -- there is
+    | nothing to add to your AppServiceProvider.
+    |
+    | Three switches decide independently whether a given event dispatches, and
+    | any one of them saying no is enough:
+    |
+    |   1. 'enabled'                  the kill switch for auto-sync as a whole
+    |   2. 'on'                       which events sync, application-wide
+    |   3. $hubspotAutoSync           a per-model override on the model itself
+    |
+    | The per-model override is a property on the model, and it wins over 'on':
+    |
+    |     protected array $hubspotAutoSync = ['created'];   // narrow to these
+    |     protected array|bool $hubspotAutoSync = false;    // never auto-sync
+    |
+    | 'on' deliberately ships WITHOUT any delete event. Archiving a HubSpot
+    | record is not reversible from the API -- there is no unarchive endpoint --
+    | so a local delete removing CRM history has to be something you asked for
+    | rather than something you inherited from a default.
+    |
+    | 'queue' keeps the HubSpot call off the request. Leaving it true is what
+    | makes HubSpot's availability irrelevant to your own response times; the
+    | package never calls the API during a model event.
+    |
+    | Plain scalars and arrays only, here and everywhere in this file:
+    | `php artisan config:cache` serialises with var_export(), which throws on a
+    | closure. A closure here would break every consumer that caches config, in
+    | production, rather than merely failing a test.
+    |
+    */
+    'auto_sync' => [
+        'enabled' => (bool) env('HUBSPOT_AUTO_SYNC', true),
+        'on' => ['created', 'updated'],
+        'queue' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Webhooks
     |--------------------------------------------------------------------------
     |

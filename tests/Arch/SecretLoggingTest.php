@@ -97,8 +97,9 @@ function reyemtech_hubspot_all_php_files(string $root): array
  * `array<string, mixed>` by checking every key for real, one at a time. Shared by
  * `reyemtech_hubspot_require_config_array()` (the top-level `require`) and
  * `reyemtech_hubspot_config_dot_paths()` (each nested sub-array it recurses into) rather than an
- * inline `@var` override, since a config file's own arrays are always string-keyed by
- * construction but that fact is not visible to static analysis without checking it.
+ * inline `@var` override. Config MAPS are string-keyed by construction; config LISTS are not, and
+ * the caller filters those out before reaching here rather than this function widening to accept
+ * them -- a non-string key in a map is still a real defect and must still throw.
  *
  * @param  array<array-key, mixed>  $value
  * @return array<string, mixed>
@@ -133,6 +134,19 @@ function reyemtech_hubspot_config_dot_paths(array $config, string $prefix): arra
         $path = $prefix.'.'.$key;
 
         if (is_array($value)) {
+            // A LIST is a leaf, not a branch. This walker exists to enumerate config KEY paths so
+            // R10 can check them against secret-looking names, and a list has no keys to check --
+            // `auto_sync.on => ['created', 'updated']` names events, not settings. Recursing into
+            // one would produce `hubspot.auto_sync.on.0`, which is not a config key anybody can
+            // set, and until 04-05 added the first list-valued key the walker instead THREW on
+            // one, on the strength of a comment asserting config arrays are always string-keyed.
+            // The path itself is still recorded, so the name `on` is checked like any other.
+            if (array_is_list($value)) {
+                $paths[] = $path;
+
+                continue;
+            }
+
             $nested = reyemtech_hubspot_ensure_string_keyed_array($value, $path);
             $paths = [...$paths, ...reyemtech_hubspot_config_dot_paths($nested, $path)];
 
