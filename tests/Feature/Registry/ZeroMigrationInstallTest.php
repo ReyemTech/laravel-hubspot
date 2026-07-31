@@ -175,8 +175,6 @@ final class ZeroMigrationInstallTest extends TestCase
                 self::assertFileExists($target);
             }
         } finally {
-            // The target is inside the Testbench skeleton application, so it is removed however this
-            // test ends rather than being left for the next run to trip over.
             File::delete($targets);
         }
     }
