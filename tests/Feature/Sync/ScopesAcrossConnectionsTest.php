@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
@@ -109,5 +110,99 @@ final class ScopesAcrossConnectionsTest extends CrossConnectionTestCase
         $emails = TenantLead::pendingHubspotSync()->pluck('email')->sort()->values()->all();
 
         self::assertSame(['never-synced@example.com', 'stale@example.com'], $emails);
+    }
+
+    /**
+     * The cross-connection branch cannot put the link lookup inside the parent statement, so it
+     * necessarily reads the link table separately. WHEN it reads is the part that is a choice, and
+     * reading at scope-call time is the wrong one (Codex, PR #44): every other Eloquent scope is
+     * lazy, so a builder that has already hit the database the moment it was constructed breaks the
+     * only mental model a caller has for it, and it widens the staleness window from "between two
+     * adjacent statements" -- unavoidable -- to "between construction and execution", which the
+     * caller controls and can hold open indefinitely.
+     *
+     * Deferring cannot make the read atomic with the parent query, and does not claim to. It bounds
+     * the window to the part that no two-statement strategy can remove.
+     */
+    public function test_the_scopes_issue_no_query_until_the_builder_is_executed(): void
+    {
+        Hubspot::fake();
+
+        TenantLead::create(['email' => 'built@example.com', 'first_name' => 'Ada']);
+
+        /** @var list<string> $statements */
+        $statements = [];
+
+        DB::listen(function (QueryExecuted $query) use (&$statements): void {
+            $statements[] = $query->sql;
+        });
+
+        $builders = [
+            'whereHubspotId' => static fn () => TenantLead::query()->whereHubspotId('built@example.com'),
+            'syncedToHubspot' => static fn () => TenantLead::syncedToHubspot(),
+            'pendingHubspotSync' => static fn () => TenantLead::pendingHubspotSync(),
+        ];
+
+        foreach ($builders as $name => $build) {
+            $statements = [];
+
+            $builder = $build();
+
+            self::assertSame(
+                [],
+                $statements,
+                $name.'() must not touch the database while merely building a query. Reading the '
+                .'link table at scope-call time makes a builder that looks lazy execute eagerly.'
+            );
+
+            $builder->get();
+
+            self::assertCount(
+                2,
+                $statements,
+                $name.'() must read the link table and the parent table once each, when executed.'
+            );
+        }
+    }
+
+    /**
+     * The behavioural consequence of the above, and the reason it is worth code rather than a
+     * docblock: a link row written AFTER the builder was constructed but BEFORE it ran must be
+     * seen. Under a scope-call-time read, this model stays in the result as pending work that has
+     * already been done.
+     *
+     * The link row is written the way `SyncHubspotObjectJob` writes one rather than by running the
+     * job, because what is under test is the read path's timing, not the write path.
+     */
+    public function test_pending_hubspot_sync_sees_a_link_written_after_the_builder_was_built(): void
+    {
+        DB::connection('tenant')->table('tenant_leads')->insert([
+            'email' => 'raced@example.com',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $lead = TenantLead::query()->sole();
+
+        $pending = TenantLead::pendingHubspotSync();
+
+        HubspotObjectLink::create([
+            'model_type' => $lead->getMorphClass(),
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($lead->getMorphClass()),
+            // The `id` property, not getKey(): TenantLead declares `@property int $id`, while
+            // getKey() is typed mixed and D-18 makes model_id a string column deliberately.
+            'model_id' => (string) $lead->id,
+            'object_type' => 'contacts',
+            'hubspot_id' => 'raced@example.com',
+            'synced_at' => now(),
+            'is_stale' => false,
+        ]);
+
+        self::assertSame(
+            0,
+            $pending->count(),
+            'A model linked after the builder was built, but before it ran, is no longer pending. '
+            .'Reporting it as pending re-queues work that is already done.'
+        );
     }
 }
