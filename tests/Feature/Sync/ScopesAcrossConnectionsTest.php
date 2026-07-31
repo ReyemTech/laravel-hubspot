@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use ReyemTech\Hubspot\Facades\Hubspot;
@@ -113,70 +114,15 @@ final class ScopesAcrossConnectionsTest extends CrossConnectionTestCase
     }
 
     /**
-     * The cross-connection branch cannot put the link lookup inside the parent statement, so it
-     * necessarily reads the link table separately. WHEN it reads is the part that is a choice, and
-     * reading at scope-call time is the wrong one (Codex, PR #44): every other Eloquent scope is
-     * lazy, so a builder that has already hit the database the moment it was constructed breaks the
-     * only mental model a caller has for it, and it widens the staleness window from "between two
-     * adjacent statements" -- unavoidable -- to "between construction and execution", which the
-     * caller controls and can hold open indefinitely.
+     * The cross-connection constraint must sit where the scope was CALLED, so a chained top-level
+     * `orWhere()` widens it rather than filtering it: `(link) OR email = ?`, never
+     * `email = ? AND id IN (...)`, which demotes the OR leg to a filter and drops the unlinked lead
+     * it was written to find (Codex, PR #44).
      *
-     * Deferring cannot make the read atomic with the parent query, and does not claim to. It bounds
-     * the window to the part that no two-statement strategy can remove.
-     */
-    public function test_the_scopes_issue_no_query_until_the_builder_is_executed(): void
-    {
-        Hubspot::fake();
-
-        TenantLead::create(['email' => 'built@example.com', 'first_name' => 'Ada']);
-
-        /** @var list<string> $statements */
-        $statements = [];
-
-        DB::listen(function (QueryExecuted $query) use (&$statements): void {
-            $statements[] = $query->sql;
-        });
-
-        $builders = [
-            'whereHubspotId' => static fn () => TenantLead::query()->whereHubspotId('built@example.com'),
-            'syncedToHubspot' => static fn () => TenantLead::syncedToHubspot(),
-            'pendingHubspotSync' => static fn () => TenantLead::pendingHubspotSync(),
-        ];
-
-        foreach ($builders as $name => $build) {
-            $statements = [];
-
-            $builder = $build();
-
-            self::assertSame(
-                [],
-                $statements,
-                $name.'() must not touch the database while merely building a query. Reading the '
-                .'link table at scope-call time makes a builder that looks lazy execute eagerly.'
-            );
-
-            $builder->get();
-
-            self::assertCount(
-                2,
-                $statements,
-                $name.'() must read the link table and the parent table once each, when executed.'
-            );
-        }
-    }
-
-    /**
-     * Deferring the link resolution must not move WHERE the constraint lands in the query.
-     *
-     * A constraint appended at compile time sits after everything the caller chained, so
-     * `syncedToHubspot()->orWhere('email', ...)` degrades from `(link exists) OR email = ?` to
-     * `email = ? AND id IN (...)` — the OR leg stops being an alternative and becomes a filter, and
-     * the unlinked lead it was written to find is silently dropped (Codex, PR #44).
-     *
-     * The shared-connection branch keeps the caller's meaning because Laravel places a scope's
-     * clauses where the scope was called. This asserts the cross-connection branch agrees, and
-     * `SyncsToHubspotTraitTest` asserts the same chain on a shared connection — the two are pinned
-     * to the same answer from both sides, which is the only way a divergence like this stays fixed.
+     * The shared-connection branch gets this from Laravel, which places a scope's clauses where the
+     * scope was called. This asserts the cross-connection branch agrees, and
+     * `SyncsToHubspotTraitTest` asserts the same chain on a shared connection -- pinned from both
+     * sides, which is the only way a divergence like this stays fixed rather than drifting together.
      */
     public function test_a_scope_keeps_its_position_when_a_caller_chains_a_top_level_or_where(): void
     {
@@ -206,21 +152,14 @@ final class ScopesAcrossConnectionsTest extends CrossConnectionTestCase
     }
 
     /**
-     * The splice must INSERT at the scope's position, never insert-and-consume what follows.
-     *
-     * `array_splice()`'s length argument is the difference: `0` inserts, and a negative length
-     * removes up to that many elements from the end. With only ONE clause after the insertion
-     * point, `-1` still removes nothing -- removal stops one from the end, which is the insertion
-     * point itself -- so the previous test cannot tell the two apart. TWO clauses after the scope
-     * is the smallest arrangement that can, and both surviving `DecrementInteger` mutants on the
-     * two splice lengths were exactly this.
+     * The same property with two clauses after the scope rather than one.
      *
      * `(link) AND first_name = ? OR email = ?` groups as `(link AND Ada) OR unlinked`. Bea is
-     * linked but not Ada, so she is the row that separates the intended query from both failure
-     * modes: a constraint appended at the end drops the unlinked lead, and a splice that eats the
-     * `first_name` clause admits Bea.
+     * linked but not Ada, so she is the row that separates a correctly-placed constraint from one
+     * that has swallowed the `first_name` clause -- a failure an arrangement with a single trailing
+     * clause cannot see at all.
      */
-    public function test_a_scope_inserts_at_its_position_without_consuming_later_clauses(): void
+    public function test_a_scope_composes_with_two_clauses_chained_after_it(): void
     {
         Hubspot::fake();
 
@@ -242,52 +181,121 @@ final class ScopesAcrossConnectionsTest extends CrossConnectionTestCase
             ->values()
             ->all();
 
-        self::assertSame(
-            ['linked@example.com', 'unlinked@example.com'],
-            $emails,
-            'Bea present means the first_name clause was consumed by the splice; the unlinked lead '
-            .'missing means the constraint was appended at the end instead of inserted.'
-        );
+        self::assertSame(['linked@example.com', 'unlinked@example.com'], $emails);
     }
 
     /**
-     * The behavioural consequence of the above, and the reason it is worth code rather than a
-     * docblock: a link row written AFTER the builder was constructed but BEFORE it ran must be
-     * seen. Under a scope-call-time read, this model stays in the result as pending work that has
-     * already been done.
+     * A scope used inside a NESTED predicate must still constrain (Codex, PR #44).
      *
-     * The link row is written the way `SyncHubspotObjectJob` writes one rather than by running the
-     * job, because what is under test is the read path's timing, not the write path.
+     * This is the case that killed the deferred implementation outright: registering the constraint
+     * on the nested builder left that builder with no clauses of its own, so
+     * `addNestedWhereQuery()` discarded the empty group and the constraint vanished entirely --
+     * `select * from tenant_leads`, every unlinked model returned, no error anywhere. Resolving
+     * through the ordinary builder API cannot fail this way, because the nested builder receives a
+     * real clause.
      */
-    public function test_pending_hubspot_sync_sees_a_link_written_after_the_builder_was_built(): void
+    public function test_a_scope_still_constrains_inside_a_nested_predicate(): void
     {
+        Hubspot::fake();
+
+        TenantLead::create(['email' => 'linked@example.com', 'first_name' => 'Ada']);
+
         DB::connection('tenant')->table('tenant_leads')->insert([
-            'email' => 'raced@example.com',
+            'email' => 'unlinked@example.com',
+            'first_name' => 'Ada',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-        $lead = TenantLead::query()->sole();
-
-        $pending = TenantLead::pendingHubspotSync();
-
-        HubspotObjectLink::create([
-            'model_type' => $lead->getMorphClass(),
-            'lookup_hash' => HubspotObjectLink::lookupHashFor($lead->getMorphClass()),
-            // The `id` property, not getKey(): TenantLead declares `@property int $id`, while
-            // getKey() is typed mixed and D-18 makes model_id a string column deliberately.
-            'model_id' => (string) $lead->id,
-            'object_type' => 'contacts',
-            'hubspot_id' => 'raced@example.com',
-            'synced_at' => now(),
-            'is_stale' => false,
-        ]);
+        $emails = TenantLead::query()
+            ->where(static fn (Builder $nested): Builder => $nested->syncedToHubspot())
+            ->pluck('email')
+            ->all();
 
         self::assertSame(
-            0,
-            $pending->count(),
-            'A model linked after the builder was built, but before it ran, is no longer pending. '
-            .'Reporting it as pending re-queues work that is already done.'
+            ['linked@example.com'],
+            $emails,
+            'A nested predicate that loses the constraint returns every row, which is the most '
+            .'dangerous shape this defect can take: no error, just an unfiltered result.'
         );
+    }
+
+    /**
+     * A global scope must apply to the WHOLE query, link leg included (Codex, PR #44).
+     *
+     * `applyScopes()` regroups the existing clauses when it adds a global scope, so a constraint
+     * whose position was recorded as a numeric offset beforehand ends up outside the regrouped
+     * predicate: `link OR (email AND global)` instead of `(link OR email) AND global`. For the
+     * global scope every consumer actually has -- `SoftDeletes` -- that means the link leg returns
+     * soft-deleted rows while the shared-connection branch excludes them.
+     *
+     * A plain global scope stands in for `SoftDeletes` here: it exercises the identical
+     * `applyScopes()` regrouping without making this fixture carry a `deleted_at` column and a
+     * second trait whose own behaviour is not what is under test.
+     */
+    public function test_a_global_scope_applies_to_the_link_leg_too(): void
+    {
+        Hubspot::fake();
+
+        TenantLead::create(['email' => 'linked@example.com', 'first_name' => 'Ada']);
+        TenantLead::create(['email' => 'hidden@example.com', 'first_name' => 'Excluded']);
+
+        TenantLead::addGlobalScope('not-excluded', static function (Builder $query): void {
+            $query->where('first_name', '!=', 'Excluded');
+        });
+
+        try {
+            $emails = TenantLead::syncedToHubspot()
+                ->orWhere('email', 'nobody@example.com')
+                ->pluck('email')
+                ->all();
+        } finally {
+            // Global scopes are static per model class; leaking one would reshape every later test.
+            TenantLead::addGlobalScope('not-excluded', static function (Builder $query): void {});
+        }
+
+        self::assertSame(
+            ['linked@example.com'],
+            $emails,
+            'The excluded lead is linked, so it comes back only if the global scope failed to '
+            .'apply to the link leg -- which is how a SoftDeletes consumer would see deleted rows.'
+        );
+    }
+
+    /**
+     * The cross-connection branch resolves its links WHEN THE SCOPE IS CALLED, and that is stated
+     * here rather than left implicit, because it is the one place this branch is visibly unlike an
+     * ordinary Eloquent scope.
+     *
+     * Deferring it to execution time was implemented and reverted -- see `hubspotLinkedKeys()` for
+     * the three silent wrong-results defects deferral produced, each found only after the previous
+     * was fixed. This test is what makes a future re-attempt announce itself rather than land
+     * quietly.
+     */
+    public function test_the_cross_connection_branch_resolves_its_links_when_the_scope_is_called(): void
+    {
+        Hubspot::fake();
+
+        TenantLead::create(['email' => 'eager@example.com', 'first_name' => 'Ada']);
+
+        /** @var list<string> $statements */
+        $statements = [];
+
+        DB::listen(function (QueryExecuted $query) use (&$statements): void {
+            $statements[] = $query->sql;
+        });
+
+        $builder = TenantLead::syncedToHubspot();
+
+        self::assertCount(
+            1,
+            $statements,
+            'The link table is read while the scope is being applied. If this ever becomes 0, the '
+            .'resolution has been deferred again -- read hubspotLinkedKeys() before keeping it.'
+        );
+
+        $builder->get();
+
+        self::assertCount(2, $statements, 'Executing the builder adds the parent statement.');
     }
 }

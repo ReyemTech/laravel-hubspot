@@ -9,7 +9,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\Relations\Relation;
-use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
 
@@ -184,13 +183,7 @@ trait SyncsToHubspot
             return $query->whereHas('hubspotLink', $constrain);
         }
 
-        return $this->whereHubspotLinkResolved(
-            $query,
-            fn (QueryBuilder $compiled, string $key): QueryBuilder => $compiled->whereIn(
-                $key,
-                $this->hubspotLinkedKeys($constrain),
-            ),
-        );
+        return $query->whereIn($this->getQualifiedKeyName(), $this->hubspotLinkedKeys($constrain));
     }
 
     /**
@@ -205,13 +198,7 @@ trait SyncsToHubspot
             return $query->whereHas('hubspotLink');
         }
 
-        return $this->whereHubspotLinkResolved(
-            $query,
-            fn (QueryBuilder $compiled, string $key): QueryBuilder => $compiled->whereIn(
-                $key,
-                $this->hubspotLinkedKeys(),
-            ),
-        );
+        return $query->whereIn($this->getQualifiedKeyName(), $this->hubspotLinkedKeys());
     }
 
     /**
@@ -255,92 +242,15 @@ trait SyncsToHubspot
             );
         }
 
-        return $this->whereHubspotLinkResolved(
-            $query,
-            function (QueryBuilder $compiled, string $key): QueryBuilder {
-                $links = $this->hubspotLinkQuery()->get(['model_id', 'is_stale']);
-
-                return $compiled->where(
-                    static function (QueryBuilder $legs) use ($key, $links): void {
-                        $legs->whereNotIn($key, $links->pluck('model_id'))
-                            ->orWhereIn($key, $links->where('is_stale', true)->pluck('model_id'));
-                    },
-                );
-            },
-        );
-    }
-
-    /**
-     * Applies a cross-connection link constraint WHEN THE QUERY RUNS, not when the scope is called.
-     *
-     * The cross-connection branch cannot put the link lookup inside the parent statement, so it has
-     * to read the link table separately; that much is forced. When it reads is a choice, and reading
-     * at scope-call time was the wrong one (Codex, PR #44). Two reasons, and the second is the one
-     * that makes this code rather than a docblock:
-     *
-     * 1. Every other Eloquent scope is lazy. A builder that has already hit the database the moment
-     *    it was constructed breaks the only mental model a caller has for one.
-     * 2. It widens the staleness window from "between two adjacent statements", which no
-     *    two-statement strategy can avoid, to "between construction and execution" -- which the
-     *    caller controls and can hold open for as long as it likes. A link row written inside that
-     *    window is invisible, so `pendingHubspotSync()` keeps reporting work that is already done.
-     *
-     * `Query\Builder::beforeQuery()` is the framework's own hook for exactly this: the callbacks run
-     * inside `toSql()`, which every execution path (`get`, `count`, `paginate`, `exists`, the write
-     * paths) reaches before touching the connection. This does NOT make the link read atomic with
-     * the parent query and does not claim to -- it bounds the window to the part that is inherent.
-     *
-     * Deferring must not also MOVE the constraint, which is the second half of this (Codex, PR #44).
-     * A callback that simply calls `$compiled->whereIn(...)` appends, so the constraint lands after
-     * everything the caller chained afterwards, and
-     * `syncedToHubspot()->orWhere('email', $address)` degrades from `(link exists) OR email = ?` to
-     * `email = ? AND id IN (...)`: the OR leg stops being an alternative and becomes a filter,
-     * silently dropping the unlinked row it was written to find. Laravel places a scope's clauses
-     * where the scope was called, so the shared-connection branch keeps the caller's meaning; a
-     * cross-connection branch that did not would make the two answer differently, which is the one
-     * thing this pair of branches may never do.
-     *
-     * So the insertion POSITIONS are recorded here, while the scope still sits where the caller put
-     * it, and the callback splices into them rather than appending. The constraint is built on a
-     * scratch builder so its clauses and its bindings can be spliced in together, at offsets that
-     * shift by the same amount -- which is what keeps every `?` matched to its own value.
-     * `$wheres` and `$bindings` are public builder state, not reached-into internals, and the pair
-     * of position tests on both connections is what holds this to the shared branch's answer.
-     *
-     * One consequence worth stating rather than discovering: `applyBeforeQueryCallbacks()` clears
-     * the callback list after running it, and the spliced constraint stays on the query, so a
-     * builder executed twice resolves its links ONCE and both executions agree -- the behaviour to
-     * want from `->count()` followed by `->get()`.
-     *
-     * @param  Builder<static>  $query
-     * @param  Closure(QueryBuilder, string): QueryBuilder  $constrain
-     * @return Builder<static>
-     */
-    private function whereHubspotLinkResolved(Builder $query, Closure $constrain): Builder
-    {
+        $links = $this->hubspotLinkQuery()->get(['model_id', 'is_stale']);
         $key = $this->getQualifiedKeyName();
-        $compiled = $query->getQuery();
 
-        $whereOffset = count($compiled->wheres);
-        $bindingOffset = count($compiled->getRawBindings()['where']);
-
-        $compiled->beforeQuery(
-            static function (QueryBuilder $running) use ($constrain, $key, $whereOffset, $bindingOffset): void {
-                $scratch = $running->newQuery();
-
-                $constrain($scratch, $key);
-
-                array_splice($running->wheres, $whereOffset, 0, $scratch->wheres);
-                array_splice(
-                    $running->bindings['where'],
-                    $bindingOffset,
-                    0,
-                    $scratch->getRawBindings()['where'],
-                );
+        return $query->where(
+            static function (Builder $outerQuery) use ($key, $links): void {
+                $outerQuery->whereNotIn($key, $links->pluck('model_id'))
+                    ->orWhereIn($key, $links->where('is_stale', true)->pluck('model_id'));
             },
         );
-
-        return $query;
     }
 
     /**
@@ -416,6 +326,36 @@ trait SyncsToHubspot
      * magnitude as the table being filtered, and bounded by the driver's own parameter limit, so
      * this is the branch that gives out first at scale. It fails loudly when it does. The
      * same-connection branch is unaffected and remains a single correlated subquery.
+     *
+     * This read happens WHEN THE SCOPE IS CALLED, not when the builder executes, and that is a
+     * decision rather than an oversight (Codex, PR #44, three findings deep). Deferring it to
+     * execution time is the obvious improvement -- it would make the builder lazy like every other
+     * Eloquent scope, and narrow the staleness window from "construction to execution", which the
+     * caller controls, to "between two adjacent statements", which no two-statement strategy can
+     * avoid. It was implemented, via `Query\Builder::beforeQuery()`, and then reverted, because
+     * deferral has to reproduce by hand everything the query builder does for a clause added at
+     * scope-call time, and it kept failing to:
+     *
+     * 1. Appending in the callback moved the constraint to the end of the query, so
+     *    `syncedToHubspot()->orWhere('email', $address)` became `email = ? AND id IN (...)` instead
+     *    of `(link) OR email = ?` -- an OR leg silently demoted to a filter.
+     * 2. Splicing at recorded offsets fixed that, and then broke inside a nested predicate:
+     *    `where(fn ($q) => $q->syncedToHubspot())` registers the callback on the nested builder,
+     *    which has no clauses of its own, so `addNestedWhereQuery()` discards the empty group and
+     *    the constraint vanished ENTIRELY -- `select * from tenant_leads`, every unlinked model
+     *    returned.
+     * 3. The recorded offsets are also captured before `applyScopes()` regroups `$wheres`, so a
+     *    model using `SoftDeletes` got `link OR (email AND deleted_at IS NULL)` instead of
+     *    `(link OR email) AND deleted_at IS NULL` -- the link leg bypassing the global scope, which
+     *    for `SoftDeletes` means returning soft-deleted rows.
+     *
+     * Each of those was a SILENT WRONG-RESULTS defect, and each was found only after the previous
+     * one was fixed. Resolving here, through the ordinary builder API, gets correct composition in
+     * every one of those contexts for free, because Laravel is doing the placing. The trade is
+     * therefore eagerness -- a surprise, and a wider staleness window -- against three classes of
+     * wrong answer, and the results the caller gets are right either way only on this side of it.
+     * A work-queue scope like `pendingHubspotSync()` is a snapshot the instant it returns anyway;
+     * that is inherent to reading a queue, not something deferral would have fixed.
      *
      * @param  (Closure(Builder<HubspotObjectLink>): void)|null  $constrain
      * @return Collection<int, mixed>
