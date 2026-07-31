@@ -378,8 +378,11 @@ Fixed by mirroring that precedent exactly, in the still-unshipped migration (edi
 second migration): `hubspot_object_links` gained a `char('lookup_hash', 64) NOT NULL` column
 carrying the SHA-256 digest of the raw `model_type`, and the unique index moved from
 `(model_type, model_id, object_type)` to `(lookup_hash, model_id, object_type)`. `model_type`
-itself stays, readable, for an operator inspecting the table, but — like `label` beside
-`lookup_hash` on the association-types table — is never a predicate again. The migration's
+itself stays, readable, for an operator inspecting the table, and — like `label` beside
+`lookup_hash` on the association-types table — is never the *identity key* again. It is still a
+predicate: `morphOne()` emits `model_type = getMorphClass()` by construction and the digest is
+AND-ed onto it, as the paragraph below describes. The distinction is the whole correction, so it
+is stated the same way in both places rather than tightened in one and left loose in the other. The migration's
 docblock was rewritten in full: it no longer claims `model_type` is package-controlled, and states
 plainly that `getMorphClass()` is what makes it user-defined and why the digest is now needed.
 
