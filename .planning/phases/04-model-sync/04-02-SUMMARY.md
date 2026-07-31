@@ -64,7 +64,7 @@ patterns-established:
   - "Sync collaborators are resolved from the container per call, never captured at construction, for the same 'Hubspot::fake() swaps a container binding' reason Gateway contracts are bound non-shared."
   - "New ConfigurationException factories always carry a full sprintf message asserted verbatim in a test (mutation-covering precedent for STANDARDS §9's 'names the fix' rule)."
 
-requirements-completed: [SYNC-01a, SYNC-03, REG-01b]
+requirements-completed: [SYNC-01a, SYNC-03a, REG-01b]
 
 coverage:
   - id: D1
@@ -80,7 +80,7 @@ coverage:
     human_judgment: false
   - id: D2
     description: "One created event on a bound model issues exactly one HubSpot upsert request carrying the mapped properties, and exactly one hubspot_object_links row"
-    requirement: "SYNC-03"
+    requirement: "SYNC-03a"
     verification:
       - kind: unit
         ref: "tests/Feature/Sync/TracerSyncTest.php#test_creating_a_bound_model_issues_exactly_one_upsert_request_carrying_the_mapped_properties"
@@ -337,7 +337,7 @@ portal access was needed (all HTTP calls are canned via `Hubspot::fake()`).
   change when 04-03 adds dot-notation and closure forms; `HubspotObserver` gains `updated`/`deleted`/
   `trashed`/`forceDeleted`/`restored` in 04-05/04-06 without touching `created()`'s shape;
   `ServiceProvider::migrationGroups()`'s pattern is proven for a second, unrelated gate.
-- REG-01b and one slice of SYNC-01/SYNC-03 tick here. SYNC-01a is not fully closed (the query scopes
+- REG-01b and SYNC-03a tick here; SYNC-03 itself is never ticked, only its parts. SYNC-01a is not fully closed (the query scopes
   D-06 names — `whereHubspotId()`, `syncedToHubspot()`, `pendingHubspotSync()` — are 04-04's), nor is
   SYNC-03 (queued-by-default under `Bus::fake()`, and the collection-level batch entry point, are
   04-05/04-08's).

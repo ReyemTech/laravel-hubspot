@@ -55,14 +55,14 @@ commit in git history on every task (`CLAUDE.md` → Working method; D-13/D-25).
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 04-01-T1/T2 | 04-01 | 1 | SYNC-01a (split text), D-03/D-19/D-20 | T-04-01, T-04-02, T-04-SC | Undeclared production require cannot reach `main`; requires are gated by vendor, not by count | Ci | `vendor/bin/pest tests/Ci/ComposerManifestTest.php` | ✅ exists, **edit** | ⬜ pending |
 | 04-01-T3 | 04-01 | 1 | REG-01b (rewording), D-01/D-04 | T-04-02, T-04-03, T-04-04 | An Illuminate root named in `src/` without a backing require fails the build, and so does a new third-party root | Ci | `bash scripts/ci/check-vendor-namespaces.sh --self-test` | ❌ W0 | ⬜ pending |
-| 04-02-T2/T3 | 04-02 | 2 | SYNC-01a, SYNC-03, REG-01b | T-04-05…T-04-10 | One event, one upsert, one link row; a binding without `id_property` throws at boot | Feature | `vendor/bin/pest tests/Feature/Sync/TracerSyncTest.php` | ❌ W0 | ⬜ pending |
+| 04-02-T2/T3 | 04-02 | 2 | SYNC-01a, SYNC-03a, REG-01b | T-04-05…T-04-10 | One event, one upsert, one link row; a binding without `id_property` throws at boot | Feature | `vendor/bin/pest tests/Feature/Sync/TracerSyncTest.php` | ❌ W0 | ⬜ pending |
 | 04-03-T1/T2 | 04-03 | 3 | SYNC-02 | T-04-11, T-04-13, T-04-14 | A null relation omits its key rather than clearing a CRM property | Unit | `vendor/bin/pest tests/Unit/Sync/PropertyMapperTest.php` | ❌ W0 | ⬜ pending |
 | 04-03-T3 | 04-03 | 3 | SYNC-02 | T-04-12 | An update addresses the stored HubSpot id, never a re-derived property | Feature | `vendor/bin/pest tests/Feature/Sync/UpdateSyncTest.php` | ❌ W0 | ⬜ pending |
 | 04-04-T1/T2 | 04-04 | 3 | SYNC-01a, REG-01b | T-04-15, T-04-16, T-04-17, T-04-18 | Three models on one object type never share a link row; an unbound model throws | Feature + Unit | `vendor/bin/pest tests/Feature/Sync/ModelBindingTest.php tests/Unit/Sync/SyncsToHubspotTraitTest.php` | ❌ W0 | ⬜ pending |
-| 04-05-T1/T2 | 04-05 | 4 | SYNC-03 | T-04-19, T-04-20, T-04-21, T-04-22 | No API call in a request lifecycle; each gate operand flips the outcome alone | Feature | `vendor/bin/pest tests/Feature/Sync/AutoSyncBootTest.php` | ❌ W0 | ⬜ pending |
+| 04-05-T1/T2 | 04-05 | 4 | SYNC-03b | T-04-19, T-04-20, T-04-21, T-04-22 | No API call in a request lifecycle; each gate operand flips the outcome alone | Feature | `vendor/bin/pest tests/Feature/Sync/AutoSyncBootTest.php` | ❌ W0 | ⬜ pending |
 | 04-06-T2/T3 | 04-06 | 5 | SYNC-04 | T-04-23…T-04-27 | A delete cannot surprise anyone; a force delete archives once, not twice | Unit + Feature | `vendor/bin/pest tests/Unit/Sync/DeletePolicyTest.php tests/Feature/Sync/DeletePolicyTest.php` | ❌ W0 | ⬜ pending |
 | 04-07-T1/T2 | 04-07 | 6 | SYNC-05 | T-04-28…T-04-32 | `migrate:fresh --seed` fires zero API calls and queues zero jobs; `config:cache` still works | Feature | `vendor/bin/pest tests/Feature/Sync/SyncSuppressionTest.php` | ❌ W0 | ⬜ pending |
-| 04-08-T2/T3 | 04-08 | 7 | SYNC-03 (batch half) | T-04-33…T-04-36 | One collection, one request; a partial batch keeps what landed | Feature | `vendor/bin/pest tests/Feature/Sync/BatchSyncTest.php` | ❌ W0 | ⬜ pending |
+| 04-08-T2/T3 | 04-08 | 7 | SYNC-03c | T-04-33…T-04-36 | One collection, one request; a partial batch keeps what landed | Feature | `vendor/bin/pest tests/Feature/Sync/BatchSyncTest.php` | ❌ W0 | ⬜ pending |
 | 04-09-T1/T2 | 04-09 | 7 | REG-04b, REG-01b | T-04-37…T-04-40 | The doctor reports the resolved policy rather than re-deriving it; the test asserting the opposite is deleted in the same change | Feature | `vendor/bin/pest tests/Feature/Registry/DoctorCommandTest.php` | ✅ exists, **edit** | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
@@ -74,7 +74,7 @@ commit in git history on every task (`CLAUDE.md` → Working method; D-13/D-25).
 **New test files:**
 
 - [ ] `tests/Feature/Sync/TracerSyncTest.php` — **04-02**, the end-to-end slice: SYNC-01a's single
-      binding, SYNC-03's observer-plus-job path, REG-01b's read-back through the trait, and D-12's
+      binding, SYNC-03a's observer-plus-job path, REG-01b's read-back through the trait, and D-12's
       boot-time throw
 - [ ] `tests/Unit/Sync/PropertyMapperTest.php` — **04-03**, SYNC-02, all three `$hubspotMap` forms
       plus the null-relation case (a null relation omits the key rather than sending null or
@@ -84,13 +84,13 @@ commit in git history on every task (`CLAUDE.md` → Working method; D-13/D-25).
 - [ ] `tests/Unit/Sync/SyncsToHubspotTraitTest.php` — **04-04**, REG-01b and D-06's relation + scopes
 - [ ] `tests/Feature/Sync/ModelBindingTest.php` — **04-04**, SYNC-01a, including three models bound to
       `contacts` simultaneously and the API-only path with no binding at all
-- [ ] `tests/Feature/Sync/AutoSyncBootTest.php` — **04-05**, SYNC-03, observer attaches at boot with
+- [ ] `tests/Feature/Sync/AutoSyncBootTest.php` — **04-05**, SYNC-03b, observer attaches at boot with
       nothing in the consumer's `AppServiceProvider`; includes D-17's restore suppression, which lands
       with the `updated` handler rather than a plan later
 - [ ] `tests/Unit/Sync/DeletePolicyTest.php` and `tests/Feature/Sync/DeletePolicyTest.php` —
       **04-06**, SYNC-04's policy table over primitives and the three-event behaviour
 - [ ] `tests/Feature/Sync/SyncSuppressionTest.php` — **04-07**, SYNC-05
-- [ ] `tests/Feature/Sync/BatchSyncTest.php` — **04-08**, SYNC-03's batch half and SC4's exact
+- [ ] `tests/Feature/Sync/BatchSyncTest.php` — **04-08**, SYNC-03c and SC4's exact
       request count
 
 **Existing files that must be EDITED, not created:**
@@ -128,7 +128,7 @@ commit in git history on every task (`CLAUDE.md` → Working method; D-13/D-25).
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| Real-portal upsert convergence after a lost response | SYNC-03 / D-11 | The default suite does zero network I/O (D-12) and integration tests are opt-in, secret-gated, and never required to merge | Extend `scripts/probes/smoke/` — the existing probe already demonstrated the lost-response failure live on a real portal, which is what D-11 addresses |
+| Real-portal upsert convergence after a lost response | SYNC-03a / D-11 | The default suite does zero network I/O (D-12) and integration tests are opt-in, secret-gated, and never required to merge | Extend `scripts/probes/smoke/` — the existing probe already demonstrated the lost-response failure live on a real portal, which is what D-11 addresses |
 
 Everything else has automated verification.
 
