@@ -132,6 +132,37 @@ final class SyncsToHubspotTraitTest extends MultiBindingTestCase
     }
 
     /**
+     * The shared-connection half of
+     * `ScopesAcrossConnectionsTest::test_a_scope_keeps_its_position_when_a_caller_chains_a_top_level_or_where`.
+     *
+     * Laravel places a scope's clauses where the scope was called, so a chained top-level
+     * `orWhere()` widens the scope rather than filtering it. That is the REFERENCE meaning; this
+     * test states it explicitly so the cross-connection branch has something to be equal to, rather
+     * than each side asserting its own behaviour and both drifting together unnoticed.
+     */
+    public function test_a_scope_composes_with_a_later_or_where_as_an_alternative_not_a_filter(): void
+    {
+        Hubspot::fake();
+
+        SyncedLead::create(['email' => 'linked@example.com', 'first_name' => 'Ada']);
+
+        DB::table('synced_leads')->insert([
+            'email' => 'unlinked@example.com',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $emails = SyncedLead::syncedToHubspot()
+            ->orWhere('email', 'unlinked@example.com')
+            ->pluck('email')
+            ->sort()
+            ->values()
+            ->all();
+
+        self::assertSame(['linked@example.com', 'unlinked@example.com'], $emails);
+    }
+
+    /**
      * Every scope has a second, cross-connection branch (see
      * `SyncsToHubspot::hubspotLinkSharesConnectionWith()`), which resolves the link rows in PHP
      * and constrains the parent by key. That branch is CORRECT here too -- it would return exactly

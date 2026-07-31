@@ -166,6 +166,91 @@ final class ScopesAcrossConnectionsTest extends CrossConnectionTestCase
     }
 
     /**
+     * Deferring the link resolution must not move WHERE the constraint lands in the query.
+     *
+     * A constraint appended at compile time sits after everything the caller chained, so
+     * `syncedToHubspot()->orWhere('email', ...)` degrades from `(link exists) OR email = ?` to
+     * `email = ? AND id IN (...)` — the OR leg stops being an alternative and becomes a filter, and
+     * the unlinked lead it was written to find is silently dropped (Codex, PR #44).
+     *
+     * The shared-connection branch keeps the caller's meaning because Laravel places a scope's
+     * clauses where the scope was called. This asserts the cross-connection branch agrees, and
+     * `SyncsToHubspotTraitTest` asserts the same chain on a shared connection — the two are pinned
+     * to the same answer from both sides, which is the only way a divergence like this stays fixed.
+     */
+    public function test_a_scope_keeps_its_position_when_a_caller_chains_a_top_level_or_where(): void
+    {
+        Hubspot::fake();
+
+        TenantLead::create(['email' => 'linked@example.com', 'first_name' => 'Ada']);
+
+        DB::connection('tenant')->table('tenant_leads')->insert([
+            'email' => 'unlinked@example.com',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $emails = TenantLead::syncedToHubspot()
+            ->orWhere('email', 'unlinked@example.com')
+            ->pluck('email')
+            ->sort()
+            ->values()
+            ->all();
+
+        self::assertSame(
+            ['linked@example.com', 'unlinked@example.com'],
+            $emails,
+            'The scope must remain an alternative the chained orWhere() can widen, not a filter '
+            .'applied on top of it. Losing the unlinked lead means the constraint moved.'
+        );
+    }
+
+    /**
+     * The splice must INSERT at the scope's position, never insert-and-consume what follows.
+     *
+     * `array_splice()`'s length argument is the difference: `0` inserts, and a negative length
+     * removes up to that many elements from the end. With only ONE clause after the insertion
+     * point, `-1` still removes nothing -- removal stops one from the end, which is the insertion
+     * point itself -- so the previous test cannot tell the two apart. TWO clauses after the scope
+     * is the smallest arrangement that can, and both surviving `DecrementInteger` mutants on the
+     * two splice lengths were exactly this.
+     *
+     * `(link) AND first_name = ? OR email = ?` groups as `(link AND Ada) OR unlinked`. Bea is
+     * linked but not Ada, so she is the row that separates the intended query from both failure
+     * modes: a constraint appended at the end drops the unlinked lead, and a splice that eats the
+     * `first_name` clause admits Bea.
+     */
+    public function test_a_scope_inserts_at_its_position_without_consuming_later_clauses(): void
+    {
+        Hubspot::fake();
+
+        TenantLead::create(['email' => 'linked@example.com', 'first_name' => 'Ada']);
+        TenantLead::create(['email' => 'other@example.com', 'first_name' => 'Bea']);
+
+        DB::connection('tenant')->table('tenant_leads')->insert([
+            'email' => 'unlinked@example.com',
+            'first_name' => 'Ada',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $emails = TenantLead::syncedToHubspot()
+            ->where('first_name', 'Ada')
+            ->orWhere('email', 'unlinked@example.com')
+            ->pluck('email')
+            ->sort()
+            ->values()
+            ->all();
+
+        self::assertSame(
+            ['linked@example.com', 'unlinked@example.com'],
+            $emails,
+            'Bea present means the first_name clause was consumed by the splice; the unlinked lead '
+            .'missing means the constraint was appended at the end instead of inserted.'
+        );
+    }
+
+    /**
      * The behavioural consequence of the above, and the reason it is worth code rather than a
      * docblock: a link row written AFTER the builder was constructed but BEFORE it ran must be
      * seen. Under a scope-call-time read, this model stays in the result as pending work that has
