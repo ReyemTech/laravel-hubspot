@@ -486,7 +486,7 @@ predicates.
   four existing cross-connection tests stayed green. GREEN after the deferral. Full suite 739
   passed / 2813 assertions; coverage 100.0%; scoped mutation 100.00% (76/76); PHPStan, phpcs, pint
   clean.
-- **Committed in:** RED `2cab49b`, GREEN `<green-sha>`.
+- **Committed in:** RED `2cab49b`, GREEN `95d116c`.
 
 ---
 
