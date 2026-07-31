@@ -270,36 +270,55 @@ function composerManifestInstalledPsr4Prefixes(): array
     $entries = [];
 
     foreach (composerManifestInstalledPackages() as $package) {
-        $name = $package['name'] ?? null;
+        foreach (composerManifestPsr4EntriesForPackage($package, $paths) as $entry) {
+            $entries[] = $entry;
+        }
+    }
 
-        if (! is_string($name)) {
+    return $entries;
+}
+
+/**
+ * The PSR-4 entries of ONE installed package, or none if it declares no usable ones.
+ *
+ * Extracted from composerManifestInstalledPsr4Prefixes() rather than inlined: together the two
+ * loops and their five guards exceed phpcs's cyclomatic-complexity ceiling of 10
+ * (Generic.Metrics.CyclomaticComplexity), which CI enforces as the "code shape" gate. The split is
+ * also the honest one -- "which entries does this package contribute" is a different question from
+ * "collect every package's contributions".
+ *
+ * @param  array<string, mixed>  $package
+ * @param  array<string, string>  $paths
+ * @return list<array{package: string, prefix: string, path: string}>
+ */
+function composerManifestPsr4EntriesForPackage(array $package, array $paths): array
+{
+    $name = $package['name'] ?? null;
+    $autoload = $package['autoload'] ?? null;
+    $psr4 = is_array($autoload) ? ($autoload['psr-4'] ?? null) : null;
+
+    if (! is_string($name) || ! is_array($psr4)) {
+        return [];
+    }
+
+    $packagePath = $paths[$name] ?? null;
+
+    if ($packagePath === null) {
+        return [];
+    }
+
+    $entries = [];
+
+    foreach ($psr4 as $prefix => $relativeSrc) {
+        if (! is_string($prefix) || ! is_string($relativeSrc)) {
             continue;
         }
 
-        $autoload = $package['autoload'] ?? null;
-        $psr4 = is_array($autoload) ? ($autoload['psr-4'] ?? null) : null;
-
-        if (! is_array($psr4)) {
-            continue;
-        }
-
-        $packagePath = $paths[$name] ?? null;
-
-        if ($packagePath === null) {
-            continue;
-        }
-
-        foreach ($psr4 as $prefix => $relativeSrc) {
-            if (! is_string($prefix) || ! is_string($relativeSrc)) {
-                continue;
-            }
-
-            $entries[] = [
-                'package' => $name,
-                'prefix' => $prefix,
-                'path' => rtrim($packagePath, '/').'/'.trim($relativeSrc, '/'),
-            ];
-        }
+        $entries[] = [
+            'package' => $name,
+            'prefix' => $prefix,
+            'path' => rtrim($packagePath, '/').'/'.trim($relativeSrc, '/'),
+        ];
     }
 
     return $entries;
