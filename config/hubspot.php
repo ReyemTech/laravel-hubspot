@@ -147,6 +147,26 @@ return [
     | relation and `hubspotId()` accessor. No migration this package ships
     | ever alters a table you own.
     |
+    | More than one model may bind to the SAME object type at once -- the
+    | shape a single global "id column" cannot express:
+    |
+    |     'models' => [
+    |         App\Models\Lead::class => ['object' => 'contacts', 'id_property' => 'email'],
+    |         App\Models\Contact::class => ['object' => 'contacts', 'id_property' => 'email'],
+    |         App\Models\HealthCheckIntake::class => [
+    |             'object' => 'contacts',
+    |             'id_property' => 'intake_email',
+    |         ],
+    |     ],
+    |
+    | Each of the three carries its own id_property, and each resolves its
+    | own hubspot_object_links rows without colliding with the other two --
+    | the link table is keyed on the MODEL CLASS as well as the object
+    | type, so a lookup through one never returns another's row. An object
+    | type with no local model at all -- no binding, no migration, no
+    | table -- is reachable through the API-only surface this config key
+    | has nothing to do with: Hubspot::objects()->find('line_items', $id).
+    |
     | The default is empty, and that is what keeps a bare `composer
     | require` migration-free: declaring even one binding here is what
     | makes this package load its own `hubspot_object_links` migration

@@ -71,8 +71,15 @@ final class WhitespaceIdPropertyThrowsAtBootTest extends TestCase
             'the same as an absent one.',
         );
 
+        // The literal message, for the same mutation-coverage reason
+        // MissingIdPropertyThrowsAtBootTest's own assertion was changed in 04-04 (Codex-equivalent
+        // finding): comparing a factory's output against itself never catches an internal
+        // concatenation mutant, because both calls run the same, possibly mutated, code.
         self::assertSame(
-            ConfigurationException::missingIdProperty(SyncedLead::class)->getMessage(),
+            SyncedLead::class.' is bound in hubspot.models but has no "id_property" set. Add '
+            .'the HubSpot property this model upserts on, for example \'id_property\' => '
+            .'\'email\' for a model bound to the "contacts" object. Without it, an upsert has '
+            .'no property to converge on and this package refuses to guess one.',
             $this->bootException->getMessage(),
         );
     }

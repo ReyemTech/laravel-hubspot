@@ -7,7 +7,6 @@ namespace ReyemTech\Hubspot\Sync;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Registry\HubspotObjectType;
-use RuntimeException;
 
 /**
  * Reads and validates `config('hubspot.models')` -- the single source of truth every other Sync
@@ -62,19 +61,16 @@ final class ModelBindings
     /**
      * The binding for one model class.
      *
-     * Only ever called for a class `ServiceProvider::boot()` has already registered the observer
-     * for, so a miss here is an internal invariant violation, not a user-facing config mistake --
-     * `ConfigurationException::unboundSyncModel()` (04-04) is the directed error for a genuinely
-     * user-reachable miss, e.g. calling a trait method on a model nobody bound.
+     * The single resolution point every Sync collaborator that needs a model's binding reaches --
+     * `SyncsToHubspot::hubspotLink()` (and every scope built on it), `HubspotObserver` and
+     * `SyncHubspotObjectJob` all resolve through this one method. Throws
+     * {@see ConfigurationException::unboundSyncModel()} on a miss (04-04): a model that applies
+     * the trait without a `hubspot.models` entry is D-12's inverse -- the fix is named, never
+     * guessed, and never a fallback object type.
      */
     public function for(string $modelClass): ModelBinding
     {
-        return $this->all()[$modelClass] ?? throw new RuntimeException(sprintf(
-            'No HubSpot binding is registered for %s. This should be unreachable: the observer '
-            .'is only attached to classes ServiceProvider::boot() already found in '
-            .'hubspot.models.',
-            $modelClass,
-        ));
+        return $this->all()[$modelClass] ?? throw ConfigurationException::unboundSyncModel($modelClass);
     }
 
     /**

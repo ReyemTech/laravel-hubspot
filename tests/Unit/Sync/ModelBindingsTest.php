@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Unit\Sync;
 
 use Illuminate\Config\Repository as ConfigRepository;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Sync\ModelBinding;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\TestCase;
-use RuntimeException;
 
 /**
  * `ModelBindings` read and resolved directly against a plain config array, with no application
@@ -67,8 +67,15 @@ final class ModelBindingsTest extends TestCase
     /**
      * The full message, not a substring: `expectExceptionMessage()` only checks a `str_contains()`
      * match, which would still pass with the sprintf's own trailing text mutated away or
-     * rearranged. Caught here the same way this codebase asserts every other directed error --
-     * verbatim, against the factory's own real output rather than a copied literal.
+     * rearranged. Asserted against a hardcoded literal, not
+     * `unboundSyncModel(...)->getMessage()` called a second time -- comparing a factory's output
+     * against itself never catches a mutated internal concatenation, since both calls run the
+     * same, possibly mutated, code and therefore always agree with each other.
+     *
+     * `ConfigurationException`, not the internal-invariant `RuntimeException` this test asserted
+     * before 04-04: `ConfigurationException::unboundSyncModel()` is now the one exception `for()`
+     * throws on any miss, whether the caller is `ServiceProvider::boot()`'s own defensive check or
+     * a model genuinely absent from `hubspot.models` (04-04-PLAN.md's key_links).
      */
     public function test_for_throws_for_a_class_that_was_never_bound(): void
     {
@@ -76,11 +83,13 @@ final class ModelBindingsTest extends TestCase
             $this->bindings()->for(self::class);
 
             self::fail('Expected for() to throw for a class that was never bound.');
-        } catch (RuntimeException $exception) {
+        } catch (ConfigurationException $exception) {
             self::assertSame(
-                'No HubSpot binding is registered for '.self::class.'. This should be unreachable: '
-                .'the observer is only attached to classes ServiceProvider::boot() already found '
-                .'in hubspot.models.',
+                self::class.' uses ReyemTech\Hubspot\Sync\SyncsToHubspot but has no entry in '
+                .'hubspot.models. Add one naming the HubSpot object it syncs to and the '
+                .'property it upserts on, for example \''.self::class.'\' => [\'object\' => '
+                .'\'contacts\', \'id_property\' => \'email\']. This package never guesses which '
+                .'object type an unbound model belongs to.',
                 $exception->getMessage(),
             );
         }

@@ -75,8 +75,16 @@ final class MissingIdPropertyThrowsAtBootTest extends TestCase
             'Expected building the application to throw a ConfigurationException naming the missing id_property.',
         );
 
+        // The literal message, not `missingIdProperty()->getMessage()` compared against itself:
+        // a mutated internal sprintf (reordered/dropped concatenation segments) would still equal
+        // whatever the SAME mutated code produced a second time, which is why pest --mutate
+        // reports several concatenation mutants on this factory as UNTESTED without a hardcoded
+        // expectation somewhere in the suite (Codex-equivalent finding, 04-04).
         self::assertSame(
-            ConfigurationException::missingIdProperty(SyncedLead::class)->getMessage(),
+            SyncedLead::class.' is bound in hubspot.models but has no "id_property" set. Add '
+            .'the HubSpot property this model upserts on, for example \'id_property\' => '
+            .'\'email\' for a model bound to the "contacts" object. Without it, an upsert has '
+            .'no property to converge on and this package refuses to guess one.',
             $this->bootException->getMessage(),
         );
     }

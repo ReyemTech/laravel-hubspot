@@ -6,12 +6,12 @@ namespace ReyemTech\Hubspot\Tests\Unit\Sync;
 
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Support\Facades\Bus;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\TestCase;
-use RuntimeException;
 
 /**
  * `HubspotObserver::created()` constructed and called directly, rather than through a real
@@ -49,6 +49,11 @@ final class HubspotObserverTest extends TestCase
      * The binding lookup this class's own docblock says never to skip: called for a model class
      * `hubspot.models` does not name, `created()` must throw rather than dispatch a job whose
      * binding lookup is guaranteed to fail on the worker anyway.
+     *
+     * `ConfigurationException`, not the internal-invariant `RuntimeException` this test asserted
+     * before 04-04 (Codex would have found the same gap this file's own docblock names): a model
+     * genuinely absent from `hubspot.models` is D-12's inverse and now throws the same directed
+     * error `ModelBindings::for()` throws for any other caller.
      */
     public function test_created_throws_rather_than_dispatching_for_a_model_that_was_never_bound(): void
     {
@@ -61,7 +66,7 @@ final class HubspotObserverTest extends TestCase
             app(Dispatcher::class),
         );
 
-        $this->expectException(RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
 
         $observer->created(new SyncedLead(['email' => 'ada@example.com']));
 

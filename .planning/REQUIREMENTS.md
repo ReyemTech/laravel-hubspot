@@ -235,7 +235,7 @@ REL-02.
 
 ### Registry
 
-- [ ] **REG-01**: Object type normalisation
+- [x] **REG-01**: Object type normalisation
   — `REQ-object-type-registry` (core spec §3, §13 Phase 2)
 
   - Acceptance: **absent in source** — the spec states the component's job (`HubspotObjectType`
@@ -412,18 +412,21 @@ REL-02.
       one generic observer with the object type carried as data. The service provider reads `models`
       at boot and attaches the generic observer — nothing is required in the consumer's
       `AppServiceProvider`.
+
     - Shipped 2026-07-30, proven end to end in `tests/Feature/Sync/TracerSyncTest.php`.
 
   - [ ] **SYNC-03b**: queued by default, and the per-model override — **04-05**
     - Acceptance: sync is queued by default and **no API call occurs in a request lifecycle** unless
       explicitly told otherwise, asserted under `Bus::fake()`. Per-model override via
       `protected array $hubspotAutoSync = ['created'];` or `false`.
+
     - `tests/Feature/Sync/AutoSyncBootTest.php`.
 
   - [ ] **SYNC-03c**: a collection issues one batch request, not N — **04-08**
     - Acceptance: `Model::syncManyToHubspot(iterable $models)` (D-16) resolves to one queued job and
       one `ObjectGateway::upsertMany()` call, and the test asserting the **exact** request count
       passes. An N+1 here is a test failure, not a code smell.
+
     - `tests/Feature/Sync/BatchSyncTest.php`.
 
 - [ ] **SYNC-04**: Delete policy derived from the model, guarded by default

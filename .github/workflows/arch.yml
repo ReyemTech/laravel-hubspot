@@ -23,7 +23,7 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Run the architecture suite
         run: vendor/bin/pest tests/Arch
@@ -42,7 +42,7 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Prove every architecture rule fails a build under its own fixture
         run: bash scripts/ci/verify-arch-rules-fire.sh

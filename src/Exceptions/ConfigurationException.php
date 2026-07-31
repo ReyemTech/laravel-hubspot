@@ -111,4 +111,23 @@ final class ConfigurationException extends LogicException implements HubspotExce
             $idProperty,
         ));
     }
+
+    /**
+     * A model applies `Sync\SyncsToHubspot` but has no entry in `hubspot.models` -- D-12's
+     * inverse. Thrown by `Sync\ModelBindings::for()`, the single resolution point every Sync
+     * collaborator that needs a model's binding reaches (`SyncsToHubspot::hubspotLink()` and every
+     * scope built on it, `HubspotObserver`, `SyncHubspotObjectJob`): a genuinely unbound model
+     * fails here, naming the fix, rather than guessing which HubSpot object type it belongs to.
+     */
+    public static function unboundSyncModel(string $modelClass): self
+    {
+        return new self(sprintf(
+            '%s uses ReyemTech\Hubspot\Sync\SyncsToHubspot but has no entry in hubspot.models. '
+            .'Add one naming the HubSpot object it syncs to and the property it upserts on, for '
+            .'example \'%s\' => [\'object\' => \'contacts\', \'id_property\' => \'email\']. This '
+            .'package never guesses which object type an unbound model belongs to.',
+            $modelClass,
+            $modelClass,
+        ));
+    }
 }
