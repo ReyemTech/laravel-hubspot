@@ -126,6 +126,118 @@ function composerManifestEnumeratedExceptions(): array
 }
 
 /**
+ * Every fully-qualified name a PHP source names, with GROUP USE reassembled.
+ *
+ * `use Psr\Http\Message\{RequestInterface, ResponseInterface};` does not tokenize the way a reader
+ * expects: PHP emits the prefix as one `T_NAME_QUALIFIED` and each member separately, so a naive
+ * scan sees `Psr\Http\Message` and two bare `T_STRING`s. Both scanners in this file were wrong in
+ * different ways because of it — the Illuminate one silently MISSED a root (the token said
+ * `Console`, not `Illuminate`), and the Guzzle/Psr one looked for a nonexistent `Message.php` and,
+ * after the resolver was made strict, failed a green build. Codex, PR #40.
+ *
+ * This exists once so the two cannot disagree again. `scripts/ci/check-vendor-namespaces.sh` solves
+ * the identical problem in its own embedded PHP; the two are separate implementations of one rule
+ * because they run in different contexts, and both are covered by tests that use group-use syntax.
+ *
+ * @return list<string>
+ */
+function composerManifestQualifiedNamesIn(string $contents): array
+{
+    $tokens = PhpToken::tokenize($contents);
+
+    $significant = [];
+
+    foreach ($tokens as $index => $token) {
+        if (in_array($token->id, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+            continue;
+        }
+
+        $significant[] = $index;
+    }
+
+    $names = [];
+    $consumed = [];
+    $count = count($significant);
+
+    for ($k = 0; $k < $count; $k++) {
+        if ($tokens[$significant[$k]]->id !== T_USE) {
+            continue;
+        }
+
+        $cursor = $k + 1;
+
+        if (isset($significant[$cursor]) && in_array($tokens[$significant[$cursor]]->id, [T_FUNCTION, T_CONST], true)) {
+            $cursor++;
+        }
+
+        $prefixIndex = $significant[$cursor] ?? null;
+        $separatorIndex = $significant[$cursor + 1] ?? null;
+        $braceIndex = $significant[$cursor + 2] ?? null;
+
+        if ($prefixIndex === null || $separatorIndex === null || $braceIndex === null) {
+            continue;
+        }
+
+        if (! in_array($tokens[$prefixIndex]->id, [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            continue;
+        }
+
+        if ($tokens[$separatorIndex]->id !== T_NS_SEPARATOR || $tokens[$braceIndex]->text !== '{') {
+            continue;
+        }
+
+        $prefix = ltrim($tokens[$prefixIndex]->text, '\\');
+        $consumed[$prefixIndex] = true;
+
+        $member = $cursor + 3;
+        $skipAlias = false;
+
+        while ($member < $count) {
+            $memberToken = $tokens[$significant[$member]];
+
+            if ($memberToken->text === '}') {
+                break;
+            }
+
+            if ($memberToken->id === T_AS) {
+                $skipAlias = true;
+                $member++;
+
+                continue;
+            }
+
+            if (in_array($memberToken->id, [T_STRING, T_NAME_QUALIFIED], true)) {
+                $consumed[$significant[$member]] = true;
+
+                if ($skipAlias) {
+                    $skipAlias = false;
+                } else {
+                    $names[] = $prefix.'\\'.$memberToken->text;
+                }
+            }
+
+            $member++;
+        }
+
+        $k = $member;
+    }
+
+    foreach ($tokens as $index => $token) {
+        if (isset($consumed[$index])) {
+            continue;
+        }
+
+        // T_NAME_RELATIVE (`namespace\Foo`) is excluded: it always resolves against the current
+        // file's own namespace, so it can never name a vendor root.
+        if (in_array($token->id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            $names[] = ltrim($token->text, '\\');
+        }
+    }
+
+    return $names;
+}
+
+/**
  * Every `Illuminate\<Segment>` root referenced anywhere under `src/`, mapped to the `require` key
  * it must be backed by. Both a `use Illuminate\Segment\...;` import and a fully-qualified
  * `\Illuminate\Segment\...` reference are detected -- the same shape D-04's shell gate
@@ -162,15 +274,8 @@ function composerManifestIlluminateRootsUsedInSrc(): array
 
         $contents = (string) file_get_contents($file->getPathname());
 
-        foreach (PhpToken::tokenize($contents) as $token) {
-            // T_NAME_RELATIVE (`namespace\Foo`) is excluded for the same reason the shell gate
-            // excludes it: it always resolves against the current file's own namespace, so it can
-            // never name a vendor root.
-            if (! in_array($token->id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
-                continue;
-            }
-
-            $segments = explode('\\', ltrim($token->text, '\\'));
+        foreach (composerManifestQualifiedNamesIn($contents) as $qualifiedName) {
+            $segments = explode('\\', $qualifiedName);
 
             if (count($segments) < 2 || $segments[0] !== 'Illuminate') {
                 continue;
@@ -420,12 +525,7 @@ function composerManifestGuzzleAndPsrPackagesUsedInSrc(): array
 
         $contents = (string) file_get_contents($file->getPathname());
 
-        foreach (PhpToken::tokenize($contents) as $token) {
-            if (! in_array($token->id, [T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
-                continue;
-            }
-
-            $qualifiedName = ltrim($token->text, '\\');
+        foreach (composerManifestQualifiedNamesIn($contents) as $qualifiedName) {
             $segments = explode('\\', $qualifiedName);
 
             if (count($segments) < 2 || ! in_array($segments[0], ['GuzzleHttp', 'Psr'], true)) {
@@ -668,4 +768,45 @@ it('keeps every path of a psr-4 prefix declared in Composer array form', functio
     expect($entries)->toHaveCount(2)
         ->and(array_column($entries, 'path'))->toBe(['/tmp/acme/src', '/tmp/acme/generated'])
         ->and(array_unique(array_column($entries, 'prefix')))->toBe(['Acme\\Multi\\']);
+});
+
+it('reassembles group use before resolving ownership', function (): void {
+    // Codex, PR #40. Both scanners in this file tokenised naively, and were wrong in DIFFERENT
+    // ways: the Illuminate one silently missed the root (the token reads `Console`, not
+    // `Illuminate`), and the Guzzle/Psr one looked for a nonexistent `Message.php` — which, once
+    // the resolver was made strict, turned a green build red. Pint's laravel preset forbids
+    // grouped imports so neither is reachable from src/ today, which is exactly why it needs a
+    // test rather than a comment.
+    $source = <<<'PHP'
+    <?php
+    namespace ReyemTech\Hubspot\Scratch;
+    use Psr\Http\Message\{RequestInterface, ResponseInterface};
+    use Illuminate\{Console\Command, Support\Carbon as Clock};
+    use GuzzleHttp\Promise\PromiseInterface;
+    PHP;
+
+    $names = composerManifestQualifiedNamesIn($source);
+
+    expect($names)
+        ->toContain('Psr\Http\Message\RequestInterface')
+        ->toContain('Psr\Http\Message\ResponseInterface')
+        ->toContain('Illuminate\Console\Command')
+        ->toContain('Illuminate\Support\Carbon')
+        ->toContain('GuzzleHttp\Promise\PromiseInterface');
+
+    // `Clock` is a local alias, not a namespace segment. Asserted separately rather than chained:
+    // PHPStan cannot see `->not` through Pest's expectation chain generics.
+    expect(in_array('Illuminate\Support\Clock', $names, true))->toBeFalse();
+});
+
+it('resolves a grouped Psr import to the package that owns it', function (): void {
+    $psr4Entries = composerManifestInstalledPsr4Prefixes();
+
+    // The concrete failure Codex described: the naive scan yields `Psr\Http\Message`, ownership
+    // verification looks for Message.php, finds nothing, and returns null — failing the manifest
+    // test even though psr/http-message ships both interfaces and is declared.
+    expect(composerManifestOwningPackage('Psr\Http\Message\RequestInterface', $psr4Entries))
+        ->toBe('psr/http-message')
+        ->and(composerManifestOwningPackage('Psr\Http\Message', $psr4Entries))
+        ->toBeNull();
 });
