@@ -2,6 +2,20 @@
 
 ## [0.4.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.3.1...reyemtech/laravel-hubspot-v0.4.0) (2026-07-31)
 
+> **Note on the four `04-04` cross-connection entries below.** They are four attempts at one
+> problem, not four separate improvements, and two of them were reverted before this release was
+> cut. This list is generated from commit history, so it records the route rather than the
+> destination.
+>
+> What actually ships is `bc30d9b`. When a bound model and `hubspot_object_links` live on different
+> database connections, `whereHubspotId()`, `syncedToHubspot()` and `pendingHubspotSync()` resolve
+> the link rows on the link table's own connection and constrain the model query by key. That
+> resolution is **eager** — it happens when the scope is called, not when the query runs.
+>
+> `95d116c` ("when the query runs, not when it is built") and `e840490` ("splice the deferred
+> constraint") describe a deferred version that was reverted by `bc30d9b`: it broke inside nested
+> predicates and let a link leg bypass global scopes such as `SoftDeletes`. Neither is the behaviour
+> of this release, and this note exists so the entries below are not read as if they were.
 
 ### Features
 
