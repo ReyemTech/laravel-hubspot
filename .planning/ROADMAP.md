@@ -184,12 +184,12 @@ binding modes — is this phase's. **SYNC-01b** — Generated mode, scaffolding 
 is Phase 9's, with SHIP-01, because scaffolding is an installer function. `04-01-PLAN.md` writes the
 split into `.planning/REQUIREMENTS.md`, matching the REG-01a/b and REG-04a/b precedent.
 
-**Plans**: 1/9 plans executed
+**Plans**: 2/9 plans executed
 
 Plans:
 
 - [x] 04-01-PLAN.md — Housekeeping first (D-20): the manifest vendor allow-list, four illuminate requires, D-04's bidirectional source-hygiene gate, R3's widening, and six amended documents
-- [ ] 04-02-PLAN.md — Tracer: one bound model, one `created` event, one upsert, one `hubspot_object_links` row, read back through the trait
+- [x] 04-02-PLAN.md — Tracer: one bound model, one `created` event, one upsert, one `hubspot_object_links` row, read back through the trait
 - [ ] 04-03-PLAN.md — `PropertyMapper`'s three `$hubspotMap` forms, `$hubspotUpdateMap`'s narrowing, and the job's update-by-stored-id leg
 - [ ] 04-04-PLAN.md — Three models on one object type, an API-only type with no binding, and the trait's relation plus three query scopes
 - [ ] 04-05-PLAN.md — The generic observer's event surface, its three independent gates, zero HTTP in a request lifecycle, and D-17's restore guard
@@ -364,7 +364,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Foundation & Gates | 7/7 | Complete | 2026-07-27 |
 | 2. Gateway Layer | 6/6 | Complete | 2026-07-27 |
 | 3. Registry & Stores | 3/3 | Complete | 2026-07-29 |
-| 4. Model Sync | 1/9 | In Progress|  |
+| 4. Model Sync | 2/9 | In Progress|  |
 | 5. Inbound Webhooks | 0/TBD | Not started | - |
 | 6. Signals Core | 0/TBD | Not started | - |
 | 7. Signal Stores & Attribution | 0/TBD | Not started | - |

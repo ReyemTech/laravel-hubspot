@@ -287,6 +287,7 @@ REL-02.
        Codex on PR #22. Note also that the default unlabelled row's null label needs deliberate
        handling, as most databases permit repeated `NULL`s in a unique index; `03-02-PLAN.md`
        requires one mechanism to be chosen and justified.
+
     2. **`DefinitionsApi` was named without its `Schema` namespace segment.** There is no
        `DefinitionsApi` in `Crm\Associations\V4\Api\` — that namespace holds `BasicApi`, `BatchApi`
        and `ReportApi` only. Verified against the installed `hubspot/api-client` 14.1.0. It also
@@ -399,6 +400,17 @@ REL-02.
 
 - [ ] **SYNC-03**: One model trait, one observer, one queued job
   — `REQ-model-sync-trait` (core spec §3, §7, §13 Phase 3)
+
+  - **Not a single-plan requirement — listed in three plans' frontmatter (04-02, 04-05, 04-08)
+    without a lettered split.** 04-02 (2026-07-30) ships the trait/observer/job WIRING this
+    acceptance describes (`SyncsToHubspot`, `HubspotObserver`, `SyncHubspotObjectJob`, the
+    service provider attaching the observer at boot with nothing required in the consumer's
+    `AppServiceProvider`) and proves it end to end in `TracerSyncTest.php`. It does **not** prove
+    "queued by default; no API call in a request lifecycle" under `Bus::fake()` (04-05's own
+    `AutoSyncBootTest.php`), the per-model `$hubspotAutoSync` override (04-05), or "syncing a
+    collection issues one batch request" (04-08). Do not tick until all three land — flagged here
+    rather than silently ticked by 04-02, since `requirements mark-complete` has no way to express
+    a three-plan requirement without this note.
 
   - Acceptance: `SyncsToHubspot` replaces per-object traits entirely, backed by one queued job and one
     generic observer with the object type carried as data. The service provider reads `models` at boot
@@ -797,7 +809,7 @@ Deferred. Tracked but not in the current roadmap.
 | REG-04 | Phase 3 + 4 | **OPEN at the end of Phase 3, deliberately.** Split 2026-07-28 into REG-04a / REG-04b; raised by Codex on PR #22. **REG-04a DONE 2026-07-29 (03-03):** `hubspot:doctor` reports the store per concern, the bound resolver, reconciliation state, and rows across directions; `hubspot:associations:doctor` ships in full, searching every reported association type for the expected directional id and recording a pairing only when both directions were observed. **REG-04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — needs SYNC-01a. `hubspot:doctor` NAMES that section as not built rather than omitting it, and a test holds that; printing "not available yet" is not an implementation, so do not tick until 04b lands |
 | SYNC-01 | Phase 4 + 9 | **Split 2026-07-30 (D-15).** SYNC-01's acceptance text named all three binding modes (Attached, API-only, Generated), but Generated — scaffolding a model plus migration — is an installer function and the installer is SHIP-01. **SYNC-01a (Phase 4):** bindings keyed by model, `Model::class => ['object' => ..., 'id_property' => ...]`; Attached and API-only modes both work; three local models binding to `contacts` simultaneously is expressible, each resolving its own link row. **SYNC-01b (Phase 9, with SHIP-01):** Generated mode. Do not tick SYNC-01 until both halves land |
 | SYNC-02 | Phase 4 | Pending |
-| SYNC-03 | Phase 4 | Pending |
+| SYNC-03 | Phase 4 | Pending -- 04-02 ships the trait/observer/job wiring (2026-07-30); queued-by-default (04-05) and batch dispatch (04-08) still owed |
 | SYNC-04 | Phase 4 | Pending |
 | SYNC-05 | Phase 4 | Pending |
 | HOOK-01 | Phase 5 | Pending |

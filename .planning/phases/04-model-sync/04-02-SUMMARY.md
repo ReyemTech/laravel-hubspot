@@ -1,0 +1,504 @@
+---
+phase: 04-model-sync
+plan: 02
+subsystem: sync
+tags: [laravel, eloquent, hubspot, model-binding, queue, migrations, mutation-testing]
+
+requires:
+  - phase: 04-model-sync (04-01)
+    provides: R3 widened to permit Illuminate in Sync, illuminate/queue+bus+collections+console declared, D-19's illuminate/console gap closed
+provides:
+  - "Sync\\SyncsToHubspot trait: hubspotLink() (MorphOne), hubspotId(), getHubspotMap()"
+  - "Sync\\HubspotObjectLink: the package-owned link model over hubspot_object_links (D-13)"
+  - "Sync\\ModelBinding / Sync\\ModelBindings: reads+validates hubspot.models, D-12's boot-time throw"
+  - "Sync\\PropertyMapper: literal-attribute form of $hubspotMap resolution"
+  - "Sync\\HubspotObserver: generic observer, per-call binding lookup, never constructor-captured"
+  - "Sync\\SyncHubspotObjectJob: the single queued job -- upsert on id_property (D-11), deleteWhenMissingModels (D-10)"
+  - "database/migrations/sync/..._create_hubspot_object_links_table.php, gated on hubspot.models !== []"
+  - "ConfigurationException::missingIdProperty(), ::idPropertyNotMapped()"
+  - "config/hubspot.php's models key"
+affects: [04-03 (PropertyMapper's dot-notation/closure forms), 04-04 (trait scopes, ModelBindingTest), 04-05 (auto-sync boot, queued-by-default), 04-06 (delete policy, restore), 04-08 (batch sync)]
+
+tech-stack:
+  added: []
+  patterns:
+    - "Generic Eloquent observer registered by CLASS STRING (Model::observe(HubspotObserver::class)), binding resolved by get_class($model) at call time -- never constructor-captured, since Model::observe() silently discards an instance"
+    - "Queue job collaborators (ModelBindings, PropertyMapper, ObjectGatewayContract) resolved as handle() method parameters, never constructor properties -- mirrors ServiceProvider's non-shared gateway binding reasoning for Hubspot::fake()"
+    - "casts() method / constructor-assigned property defaults instead of $casts property / property-default literals, specifically so pest --mutate can attribute a covering test to an executed line rather than an uninstrumented property-default declaration -- extends the existing supportedStores()/consoleCommands() method-not-constant precedent to Eloquent casts and job properties"
+    - "Second ServiceProvider::migrationGroups() entry gated on hubspot.models !== [], added without touching the existing hubspot.store entry"
+
+key-files:
+  created:
+    - src/Sync/SyncsToHubspot.php
+    - src/Sync/HubspotObjectLink.php
+    - src/Sync/ModelBinding.php
+    - src/Sync/ModelBindings.php
+    - src/Sync/PropertyMapper.php
+    - src/Sync/HubspotObserver.php
+    - src/Sync/SyncHubspotObjectJob.php
+    - database/migrations/sync/0001_01_01_000000_create_hubspot_object_links_table.php
+    - tests/Feature/Sync/TracerSyncTest.php
+    - tests/Feature/Sync/MissingIdPropertyThrowsAtBootTest.php
+    - tests/Feature/Sync/UnmappedIdPropertyThrowsTest.php
+    - tests/Unit/Sync/PropertyMapperTest.php
+    - tests/Unit/Sync/ModelBindingsTest.php
+    - tests/Unit/Sync/HubspotObserverTest.php
+    - tests/Unit/Sync/HubspotObjectLinkTest.php
+    - tests/Support/Sync/SyncTestCase.php
+    - tests/Support/Sync/SyncedLead.php
+  modified:
+    - src/Exceptions/ConfigurationException.php
+    - src/ServiceProvider.php
+    - config/hubspot.php
+
+key-decisions:
+  - "The one-way surface (D-05 trait namespace, D-18 model_id string column, D-12 boot-time throw) was confirmed as locked at Task 1 (checkpoint, gate=resolved) before this plan wrote any code."
+  - "hubspot_object_links is UNIQUE on (lookup_hash, model_id, object_type) -- one link row per model instance per object type, which is what lets three models bind to contacts without colliding. D-18 names a composite (model_type, model_id) index; it is satisfied by this unique index rather than by a second standalone one. CORRECTED from the raw (model_type, model_id, object_type) key this plan first shipped -- see the next entry."
+  - "hubspot_object_links DOES carry a lookup_hash char(64) NOT NULL digest of model_type, exactly like the association-types migration. This plan initially argued the opposite on the grounds that model_type is a package-controlled FQCN -- true only until this same plan changed the write to getMorphClass(), which makes it a USER-DEFINED morph alias. Lead and lead then collide under MySQL default collation. Same defect Codex raised as a P1 on PR #27. lookup_hash is the IDENTITY KEY, not the only permitted predicate: hubspotLink() uses morphOne(), which necessarily emits model_type = getMorphClass(), and adds lookup_hash alongside it to make that comparison collation-unambiguous. The rule is that raw model_type must never be the SOLE identity key or predicate -- never that it may not appear. Do not remove the digest from the unique key, the write path, or the read path."
+  - "hubspot_id is never nulled, only flagged stale (is_stale/stale_at) -- SYNC-04's restore path (04-06) needs the id to stay re-linkable, since HubSpot has no unarchive endpoint."
+  - "$hubspotMap is NOT declared as a trait property, even with an empty-array default: PHP fatal-errors composing a class that redeclares a trait's typed property with a different default value. Each consuming model declares its own $hubspotMap; the trait's getHubspotMap() reads it dynamically with one documented @phpstan-ignore-line."
+  - "HubspotObjectLink's $casts became a casts(): array method, and SyncHubspotObjectJob's deleteWhenMissingModels moved from a property default into the constructor body -- both purely a mutation-testing coverage-attribution fix (a property default is never an executed line), verified correct against Illuminate\\Queue\\Queue::createObjectPayload() and Concerns\\HasAttributes::initializeHasAttributes()."
+  - "PropertyMapper casts every resolved value to a string (matching ObjectGatewayContract::upsert()'s array<string,string> shape) rather than leaving that to the job -- it is the one place in the chain that already knows a model attribute's real PHP type."
+
+patterns-established:
+  - "Sync collaborators are resolved from the container per call, never captured at construction, for the same 'Hubspot::fake() swaps a container binding' reason Gateway contracts are bound non-shared."
+  - "New ConfigurationException factories always carry a full sprintf message asserted verbatim in a test (mutation-covering precedent for STANDARDS §9's 'names the fix' rule)."
+
+requirements-completed: [SYNC-01a, SYNC-03, REG-01b]
+
+coverage:
+  - id: D1
+    description: "SyncsToHubspot trait: hubspotLink() MorphOne relation, hubspotId() accessor reading the link table (never a model column), getHubspotMap()"
+    requirement: "REG-01b"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/Sync/TracerSyncTest.php#test_hubspot_link_and_hubspot_id_resolve_the_stored_id"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Sync/TracerSyncTest.php#test_hubspot_id_is_null_before_any_sync_has_happened"
+        status: pass
+    human_judgment: false
+  - id: D2
+    description: "One created event on a bound model issues exactly one HubSpot upsert request carrying the mapped properties, and exactly one hubspot_object_links row"
+    requirement: "SYNC-03"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/Sync/TracerSyncTest.php#test_creating_a_bound_model_issues_exactly_one_upsert_request_carrying_the_mapped_properties"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Sync/TracerSyncTest.php#test_exactly_one_link_row_exists_afterwards_carrying_the_model_class_key_object_type_and_hubspot_id"
+        status: pass
+    human_judgment: false
+  - id: D3
+    description: "A binding without id_property throws ConfigurationException while the application boots, naming the model and the key to add"
+    requirement: "SYNC-01a"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/Sync/MissingIdPropertyThrowsAtBootTest.php#test_a_binding_without_id_property_throws_while_the_application_boots"
+        status: pass
+    human_judgment: false
+  - id: D4
+    description: "A binding whose id_property is not produced by the model's own $hubspotMap throws at sync time, distinct from the boot-time D-12 case; an empty-string resolved value is treated the same way"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/Sync/UnmappedIdPropertyThrowsTest.php#test_a_map_that_does_not_produce_the_bound_id_property_throws_naming_the_model_and_the_property"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Sync/TracerSyncTest.php#test_an_id_property_that_resolves_to_an_empty_string_throws_rather_than_upserting_on_nothing"
+        status: pass
+    human_judgment: false
+  - id: D5
+    description: "An install with no hubspot.models bindings registers no migration path (zero-migration install intact) and the whole suite stays green (692 tests, 100% coverage, 96.50% MSI)"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/PackageSkeletonTest.php, tests/Ci/MigrationPublishingTest.php"
+        status: pass
+      - kind: other
+        ref: "vendor/bin/pest --coverage --min=95 && vendor/bin/pest --mutate --min=80"
+        status: pass
+    human_judgment: false
+
+duration: ~2h15m (dominated by three ~27-minute full-suite mutation-testing runs)
+completed: 2026-07-30
+status: complete
+---
+
+# Phase 4 Plan 2: Model Sync Tracer Summary
+
+**The Model Sync tracer wired end to end: `SyncsToHubspot` + one `hubspot.models` binding is the whole setup — one `created` event now produces exactly one HubSpot upsert and one `hubspot_object_links` row, readable back through the trait, with no consumer schema touched.**
+
+## Performance
+
+- **Duration:** ~2h15m (three full-suite `pest --mutate` runs at ~1,660-1,704s each dominate the wall clock; active implementation/review time was much shorter)
+- **Tasks:** 3 (1 checkpoint, already resolved before this session started; 2 executed)
+- **Files modified/created:** 19 tracked in the final commits (7 new `src/Sync/` classes, 1 migration, 3 modified existing files, 8 test files)
+
+## Accomplishments
+
+- `Sync\SyncsToHubspot` trait: `hubspotLink()` (a typed `MorphOne<HubspotObjectLink, $this>`), `hubspotId()`, `getHubspotMap()` — the REG-01b local-id-resolution half Phase 3 deliberately left open
+- `Sync\HubspotObjectLink`, the package-owned model over the new `hubspot_object_links` table (D-13) — no consumer schema is ever altered by binding a model
+- `Sync\ModelBinding` (a `final readonly` value object) and `Sync\ModelBindings` (reads `hubspot.models`, throws `ConfigurationException::missingIdProperty()` at boot for D-12)
+- `Sync\PropertyMapper`, the literal-attribute form of `$hubspotMap` resolution, casting every resolved value to a string to match the Gateway's own `upsert()` contract
+- `Sync\HubspotObserver`, the single generic observer every bound model shares, its binding resolved by `get_class($model)` at call time rather than captured at construction (`Model::observe()`'s documented pitfall)
+- `Sync\SyncHubspotObjectJob`, the single queued job — upserts on the binding's `id_property` (D-11, converging a lost-response retry instead of duplicating), `deleteWhenMissingModels = true` (D-10)
+- `database/migrations/sync/0001_01_01_000000_create_hubspot_object_links_table.php`, gated as a second `ServiceProvider::migrationGroups()` entry on `hubspot.models !== []`
+- Two new `ConfigurationException` factories, both message-verbatim tested: `missingIdProperty()` (boot-time) and `idPropertyNotMapped()` (sync-time)
+- `config/hubspot.php`'s new `models` key, documented inline, closure-free (`config:cache`-safe)
+
+## Task Commits
+
+1. **Task 2: RED — the end-to-end tracer test and its bound test model** — `3c5fd1f` (test)
+2. **Task 3: GREEN — the vertical slice through storage, binding, mapping, observer, job and gateway** — `6381786` (feat)
+
+_Task 1 (the one-way-surface checkpoint) was answered `confirm-as-locked` before this execution session began, recorded in `04-02-PLAN.md` as `gate="resolved"`; nothing to commit for it here._
+
+## Files Created/Modified
+
+- `src/Sync/SyncsToHubspot.php` — the trait
+- `src/Sync/HubspotObjectLink.php` — the link model
+- `src/Sync/ModelBinding.php` — the value object
+- `src/Sync/ModelBindings.php` — the config reader/validator
+- `src/Sync/PropertyMapper.php` — literal `$hubspotMap` resolution
+- `src/Sync/HubspotObserver.php` — the generic observer
+- `src/Sync/SyncHubspotObjectJob.php` — the queued job
+- `database/migrations/sync/0001_01_01_000000_create_hubspot_object_links_table.php` — the new gated migration group
+- `src/Exceptions/ConfigurationException.php` — `missingIdProperty()`, `idPropertyNotMapped()`
+- `src/ServiceProvider.php` — `ModelBindings` singleton, `bootModelBindings()`, the second `migrationGroups()` entry
+- `config/hubspot.php` — the `models` key
+- `tests/Support/Sync/SyncTestCase.php`, `tests/Support/Sync/SyncedLead.php` — the tracer's shared fixture
+- `tests/Feature/Sync/TracerSyncTest.php`, `MissingIdPropertyThrowsAtBootTest.php`, `UnmappedIdPropertyThrowsTest.php`
+- `tests/Unit/Sync/PropertyMapperTest.php`, `ModelBindingsTest.php`, `HubspotObserverTest.php`, `HubspotObjectLinkTest.php`
+
+## Exact `hubspot_object_links` shape (later plans assert this verbatim)
+
+Columns: `id` (auto), `model_type` (string), `lookup_hash` (`char(64)`, `NOT NULL`, SHA-256 digest
+of `model_type`), `model_id` (string, D-18), `object_type` (string, 64), `hubspot_id` (string),
+`synced_at` (nullable timestamp), `is_stale` (boolean, default `false`), `stale_at` (nullable
+timestamp), `created_at`/`updated_at`.
+
+Indexes: `unique(['lookup_hash', 'model_id', 'object_type'])` and
+`index(['object_type', 'hubspot_id'])`.
+
+**This section was wrong when first written and is now correct.** It originally specified a raw
+`unique(['model_type', 'model_id', 'object_type'])` and *no* `lookup_hash`, on the stated grounds
+that `model_type` is a package-controlled FQCN. This same plan then changed the link write to
+`getMorphClass()`, which returns a user-defined morph-map alias — so `Lead` and `lead` collide under
+MySQL's case-insensitive default collation. Codex found it on PR #39; it is the same defect it
+raised as a P1 on PR #27 for the association-types table.
+
+Assert the shape above, not the one this plan shipped first.
+
+## Exact `ConfigurationException` messages (later plans assert these verbatim)
+
+```
+missingIdProperty(string $modelClass):
+"%s is bound in hubspot.models but has no "id_property" set. Add the HubSpot property this
+model upserts on, for example 'id_property' => 'email' for a model bound to the "contacts"
+object. Without it, an upsert has no property to converge on and this package refuses to
+guess one."
+
+idPropertyNotMapped(string $modelClass, string $idProperty):
+"%s is bound to HubSpot with id_property "%s", but its $hubspotMap does not produce that key.
+Add an entry to $hubspotMap that maps "%s" to one of the model's own attributes, so the
+upsert has a value to converge on."
+```
+
+`Sync\ModelBindings::for()`'s internal-invariant `RuntimeException` (never user-facing;
+`ConfigurationException::unboundSyncModel()` in 04-04 is the directed error for that):
+
+```
+"No HubSpot binding is registered for %s. This should be unreachable: the observer is only
+attached to classes ServiceProvider::boot() already found in hubspot.models."
+```
+
+## Decisions Made
+
+- Confirmed at Task 1 (checkpoint, resolved before this session): D-05 (trait namespace), D-18 (the
+  composite index reading), D-12 (boot-time throw) all confirmed as written in `04-CONTEXT.md`.
+- `HubspotObjectLink`'s `$casts` became a `casts(): array` method, and `SyncHubspotObjectJob`'s
+  `deleteWhenMissingModels` moved from a property default to a constructor-body assignment — both
+  purely to give `pest --mutate` an executed line to attribute test coverage to (a property default
+  is baked into the class's static definition, not evaluated as bytecode at construction time —
+  the same reason `ServiceProvider::supportedStores()`/`consoleCommands()` are methods rather than
+  class constants). Verified correct against the actual framework mechanisms that read each value
+  (`Concerns\HasAttributes::initializeHasAttributes()` merges `casts()` into `$casts` before `fill()`
+  runs; `Illuminate\Queue\Queue::createObjectPayload()` reads `$job->deleteWhenMissingModels` off the
+  live object at dispatch time, after the constructor has already run).
+- `PropertyMapper::map()` casts every resolved value to a string, matching
+  `ObjectGatewayContract::upsert()`'s own `array<string, string>` parameter shape, rather than
+  leaving that coercion to the job — `PropertyMapper` is the one place in the chain that already
+  knows a model attribute's real, possibly non-string PHP type.
+- `HubspotObserver::created()` still calls `ModelBindings::for(get_class($model))` even though the
+  job re-resolves the binding independently on the worker (D-09) — kept as a genuine, tested
+  defensive check (a call for a model class `ServiceProvider::boot()` never bound now throws rather
+  than silently dispatching a doomed job), not a documentation-only comment beside a no-op line.
+
+## Deviations from Plan
+
+### Auto-fixed Issues (Rule 2 — auto-add missing critical test coverage)
+
+**1. Two additional Feature test files, not named in `04-02-PLAN.md`'s `files_modified`**
+- **Found during:** Task 2 (writing the RED tracer test)
+- **Issue:** The plan's own Task 2 acceptance criteria requires "the D-12 boot-failure case in its
+  own test that builds an application" — this cannot be expressed inside `TracerSyncTest.php`'s
+  shared, already-valid `SyncTestCase` fixture (a class-level `defineEnvironment()` fixes one config
+  for every test in the class). Separately, Task 3's action text requires BOTH new
+  `ConfigurationException` factories to exist and follow this codebase's "every factory's message is
+  asserted verbatim, and is therefore mutation-covered" precedent — the tracer's own happy-path
+  binding never exercises `idPropertyNotMapped()`.
+- **Fix:** `tests/Feature/Sync/MissingIdPropertyThrowsAtBootTest.php` (isolated app boot, mirroring
+  `ServiceProviderDatabaseStoreTest`'s isolation pattern) and
+  `tests/Feature/Sync/UnmappedIdPropertyThrowsTest.php` (a binding whose `id_property` the model's
+  own map does not produce).
+- **Verification:** Both pass; both assert the full exception message verbatim.
+- **Committed in:** `3c5fd1f` (RED), `6381786` (GREEN, no behavioral change to these tests).
+
+**2. Four additional Unit test files, not named in `04-02-PLAN.md`'s `files_modified`**
+- **Found during:** Task 3, after the first `pest --mutate` run measured 95.49% with several
+  genuine, reachable survivors inside this plan's own new classes (`PropertyMapper`'s `continue`
+  branch, `SyncsToHubspot::hubspotId()`'s nullsafe operator, `ModelBindings::for()`'s message
+  concatenation, `HubspotObserver::created()`'s binding-lookup guard).
+- **Issue:** `TracerSyncTest.php` alone left several real branches in `phase_artifacts`-owned
+  deliverables of this plan untested or uncovered — a coverage/mutation gap in code this plan
+  itself created, not a pre-existing gap out of scope per the Rule 1-3 scope boundary.
+- **Fix:** `tests/Unit/Sync/PropertyMapperTest.php`, `ModelBindingsTest.php`,
+  `HubspotObserverTest.php`, `HubspotObjectLinkTest.php` — plus, in the same pass, reordering one
+  existing `TracerSyncTest.php` map fixture and adding four new tracer test methods
+  (`test_hubspot_id_is_null_before_any_sync_has_happened`,
+  `test_an_id_property_that_resolves_to_an_empty_string_throws_rather_than_upserting_on_nothing`,
+  `test_the_job_deletes_itself_rather_than_failing_when_its_model_is_missing`, and `synced_at`/
+  `is_stale` cast assertions on the existing link-row test).
+- **Verification:** Re-ran the full mutation suite twice more after these additions; MSI rose from
+  95.49% → 96.50%, and every surviving mutant inside `src/Sync/` was eliminated except one
+  documented equivalent (below).
+- **Committed in:** `6381786`.
+
+**3. `HubspotObjectLink`'s `$casts` property → `casts()` method; `SyncHubspotObjectJob`'s
+`deleteWhenMissingModels` property default → constructor-body assignment**
+- **Found during:** Task 3, same mutation-testing pass — both were reported `UNCOVERED` (not merely
+  untested) regardless of how thoroughly the resulting behaviour was asserted, because a property's
+  own default-value declaration is never an executed line coverage instrumentation can attribute a
+  test to.
+- **Fix:** Converted both to the method/constructor-body shape this codebase's own
+  `ServiceProvider::supportedStores()`/`consoleCommands()` already established for exactly this
+  reason. Verified against the actual framework read paths (see Key Decisions) before making the
+  change, not merely to silence the tool.
+- **Verification:** Both mutations now report `tested` in the final mutation run.
+- **Committed in:** `6381786`.
+
+---
+
+**Total deviations:** 3 auto-fixed groups, all Rule 2 (missing critical test coverage/mutation
+robustness for this plan's own deliverables). No scope creep into 04-03/04-04/04-05/04-06/04-08's
+territory — the dot-notation and closure `$hubspotMap` forms, query scopes, static collection entry
+point, auto-sync queueing assertion, delete policy and batch sync are all untouched.
+
+## Known Accepted Mutation Survivor
+
+`Sync\SyncHubspotObjectJob::handle()`'s `(string) $this->model->getKey()` cast (`RemoveStringCast`)
+survives as `UNTESTED`, not `UNCOVERED` — a test does execute the line, it just cannot distinguish
+the mutant. SQLite (the test suite's driver) coerces both an `int` and a `string` bound parameter to
+the column's own `TEXT` affinity on write and read-back identically, so any assertion built by
+reading `HubspotObjectLink` back from the database sees the same value whether the explicit cast ran
+or not. `Model::getKey()` is declared `@return mixed` by the framework itself; the cast is still the
+correct, intentional implementation of D-18 (every primary-key strategy this package supports is a
+scalar, stored as a string regardless of which one a bound model uses) — it is simply not
+distinguishable through this test suite's own database driver. Left as-is rather than routed around
+with a contrived assertion against the query builder's bound parameters.
+
+## Issues Encountered
+
+- **`php -r 'var_export(require "config/hubspot.php");' > /dev/null` (Task 3's config:cache-safety
+  acceptance command) fails even on unmodified `main`**, because `env()` (defined in
+  `Illuminate\Support\helpers.php`) is never autoloaded by a bare `php -r` invocation without
+  `vendor/autoload.php` explicitly required first — confirmed via `git stash` that this is
+  pre-existing and unrelated to this plan's `models` key addition. The substantive property the
+  command checks (the config array is free of closures and therefore `var_export`-serializable) was
+  verified instead with `php -r 'require "vendor/autoload.php"; var_export(require
+  "config/hubspot.php");' > /dev/null`, which exits 0. Not fixed (Scope Boundary: pre-existing,
+  unrelated file/behaviour), only documented here so a future reader does not rediscover it as a
+  regression.
+- PHP fatal-errors composing a class that redeclares a trait's typed property with a different
+  default value (`"...define the same property... the definition differs and is considered
+  incompatible"`) — discovered empirically while writing `SyncedLead::$hubspotMap`. Resolved by NOT
+  declaring `$hubspotMap` on the trait at all (see Key Decisions); documented in the trait's own
+  docblock so a future contributor does not reintroduce the property and reopen the conflict.
+
+## User Setup Required
+
+None — no external service configuration required. This is a library-internal feature; the
+`hubspot.models` config key a real consumer app would populate is entirely local, and no HubSpot
+portal access was needed (all HTTP calls are canned via `Hubspot::fake()`).
+
+## Next Phase Readiness
+
+- The seven `src/Sync/` classes this plan built are the skeleton every remaining Model Sync plan
+  (04-03 through 04-08) expands. `PropertyMapper::map()`'s `(Model, array): array` signature does not
+  change when 04-03 adds dot-notation and closure forms; `HubspotObserver` gains `updated`/`deleted`/
+  `trashed`/`forceDeleted`/`restored` in 04-05/04-06 without touching `created()`'s shape;
+  `ServiceProvider::migrationGroups()`'s pattern is proven for a second, unrelated gate.
+- REG-01b and one slice of SYNC-01/SYNC-03 tick here. SYNC-01a is not fully closed (the query scopes
+  D-06 names — `whereHubspotId()`, `syncedToHubspot()`, `pendingHubspotSync()` — are 04-04's), nor is
+  SYNC-03 (queued-by-default under `Bus::fake()`, and the collection-level batch entry point, are
+  04-05/04-08's).
+- No blockers for 04-03. The one open question worth flagging forward: `PropertyMapper::map()`'s
+  current signature accepts `array<string, mixed>` and silently `continue`s past a non-string map
+  entry — 04-03 will need to decide whether a dot-notation string vs. a `Closure` value are
+  distinguished by `is_string()` alone (a dot-path IS a string) or need an explicit type check, since
+  the current `continue` guard would otherwise silently skip every closure-form entry once 04-03
+  starts writing them.
+
+---
+*Phase: 04-model-sync*
+*Completed: 2026-07-30*
+
+## Self-Check: PASSED
+
+All 20 files listed under Files Created/Modified verified present on disk. Both commits
+(`3c5fd1f` RED, `6381786` GREEN) verified present in `git log`.
+
+---
+
+## Addendum 2026-07-31: Four Codex P2 findings closed on PR #39
+
+A second, separate execution session on this same branch closed four Codex P2 findings raised on
+PR #39, after the three P1s documented above (`09ac8ab`/`5f30676`) had already been fixed and
+pushed. All four were real; none were routed around.
+
+### F1 — `hubspot_object_links` needed a case-sensitive unique key
+
+`model_type` stopped being package-controlled the moment the P1 fix (`5f30676`) moved the write
+path from `get_class()` to `getMorphClass()`: under a `Relation::morphMap()`, that value is a
+USER-DEFINED alias, not a FQCN the package reads itself. MySQL's usual default collation folds
+case, so two aliases differing only by case (`Lead` / `lead`) would collide in the unique index
+and in any `WHERE model_type = ?` predicate — the identical defect Codex raised as a **P1 on
+PR #27** for `hubspot_association_types`' `label` column.
+
+Fixed by mirroring that precedent exactly, in the still-unshipped migration (edited in place, no
+second migration): `hubspot_object_links` gained a `char('lookup_hash', 64) NOT NULL` column
+carrying the SHA-256 digest of the raw `model_type`, and the unique index moved from
+`(model_type, model_id, object_type)` to `(lookup_hash, model_id, object_type)`. `model_type`
+itself stays, readable, for an operator inspecting the table, and — like `label` beside
+`lookup_hash` on the association-types table — is never the *identity key* again. It is still a
+predicate: `morphOne()` emits `model_type = getMorphClass()` by construction and the digest is
+AND-ed onto it, as the paragraph below describes. The distinction is the whole correction, so it
+is stated the same way in both places rather than tightened in one and left loose in the other. The migration's
+docblock was rewritten in full: it no longer claims `model_type` is package-controlled, and states
+plainly that `getMorphClass()` is what makes it user-defined and why the digest is now needed.
+
+`Sync\HubspotObjectLink::lookupHashFor(string $modelType): string` is the single place the digest
+is computed (`hash('sha256', $modelType)`), called from both the write path
+(`SyncHubspotObjectJob::handle()`, whose `updateOrCreate()` identifying array now keys on
+`lookup_hash` rather than `model_type`) and the read path (`SyncsToHubspot::hubspotLink()`, which
+now adds `->where('lookup_hash', ...)` alongside `morphOne()`'s own built-in `model_type`
+predicate — AND-ing a collation-proof predicate onto an imprecise one only narrows a match, never
+widens it, so nothing already using `hubspotLink()` needed to change).
+
+### F2 — a whitespace-only `id_property` booted clean
+
+`ModelBindings::validate()` checked `$binding->idProperty === ''`, which a value of `'   '`
+survives. Fixed by comparing the trimmed value: `trim($binding->idProperty) === ''`. D-12's boot-
+time throw now covers both the absent and the whitespace-only shape.
+
+### F3 — `hubspotLink()` was not scoped to the binding's object type
+
+`SyncHubspotObjectJob` keys its `updateOrCreate()` on `(model_type, model_id, object_type)`, but
+`hubspotLink()` filtered only on `model_type` + `model_id`. If a model's binding changed object
+type after it had already synced, a second row would be written under the new object type and the
+first left behind — unscoped, `hubspotLink()` could resolve either one. Fixed by resolving the
+CURRENT binding's `object_type` from `ModelBindings` at call time (never cached in a property, the
+same reason `HubspotObserver::created()` resolves per call) and adding
+`->where('object_type', $objectType)`. `ModelBindings` is resolved through the `App` facade
+(`Illuminate\Support\Facades\App::make(ModelBindings::class)`), not the global `app()` helper —
+the helper lives in `Illuminate\Foundation\helpers.php`, a namespace `pest-plugin-arch`'s R3 rule
+flags as an unapproved dependency the instant a bare global function call appears in `Sync`, even
+though the underlying `Illuminate\Container\Container` class it forwards to would itself be
+allowed. `Illuminate\Support\Facades\App` ships inside the already-declared `illuminate/support`
+and stays inside `Illuminate\*`, so R3 passes with no new `composer.json` require.
+
+### F4 — the promised inverse `morphTo` was never built
+
+04-02-PLAN.md line 261 promised "a `morphTo` back to the linked model"; the migration already
+shipped the `(object_type, hubspot_id)` index for exactly that reverse lookup, but
+`HubspotObjectLink` never grew the relation. Added `public function model(): MorphTo`, explicit
+over the existing `model_type`/`model_id` columns (`$this->morphTo(name: 'model', type:
+'model_type', id: 'model_id')`).
+
+### TDD gate sequence
+
+RED (`8c1db21`) — five tests across two new files
+(`tests/Feature/Sync/ObjectLinkIntegrityTest.php` for F1/F3/F4,
+`tests/Feature/Sync/WhitespaceIdPropertyThrowsAtBootTest.php` for F2), run against the unfixed
+code and confirmed failing for the stated reasons:
+
+```
+FAIL WhitespaceIdPropertyThrowsAtBootTest > a whitespace only id property throws while the app boots
+  Failed asserting that null is an instance of class ConfigurationException.
+
+FAIL ObjectLinkIntegrityTest > the table carries a not null lookup hash column
+  Failed asserting that false is true.
+
+FAIL ObjectLinkIntegrityTest > a synced models lookup hash is the digest of its morph class
+  SQLSTATE[HY000]: General error: 1 table hubspot_object_links has no column named lookup_hash
+
+FAIL ObjectLinkIntegrityTest > hubspot link resolves only the row matching the current binding's
+object type
+  SQLSTATE[HY000]: General error: 1 table hubspot_object_links has no column named lookup_hash
+
+FAIL ObjectLinkIntegrityTest > the link carries an inverse morph to relation back to the linked
+model
+  SQLSTATE[HY000]: General error: 1 table hubspot_object_links has no column named lookup_hash
+
+Tests: 5 failed, 695 passed (2697 assertions)
+```
+
+Three of the four RED failures surface as the same underlying DB error (missing `lookup_hash`
+column) rather than four cleanly separated assertion mismatches — expected and accepted: F3's and
+F4's tests insert rows that must satisfy the POST-fix schema's `NOT NULL lookup_hash` from the
+start (so the RED test file needs no editing once GREEN lands), and the schema literally does not
+exist yet pre-fix. All five genuinely fail against the unfixed code for the reasons stated in each
+finding.
+
+GREEN (`95a11d2`) — implemented all four fixes; RED suite now green, full suite green.
+
+### Final gate figures
+
+| Gate | Result |
+|---|---|
+| `vendor/bin/pint --test` | pass (one `fully_qualified_strict_types` auto-fix applied, re-verified) |
+| `vendor/bin/phpstan analyse` | 0 errors, no baseline |
+| `vendor/bin/phpcs --standard=phpcs.xml -q` | pass |
+| `vendor/bin/pest` (full suite) | **700 passed** (2702 assertions) |
+| `vendor/bin/pest --coverage --min=95` | **100.0%** |
+| `vendor/bin/pest --mutate --min=80` | **96.36%** (45 untested, 2 uncovered, 1244 tested; exit 0) |
+| `bash scripts/ci/check-vendor-namespaces.sh` (+ `--self-test`) | pass |
+| `bash scripts/ci/verify-arch-rules-fire.sh` | 10/10 rules fired |
+| `bash scripts/ci/check-source-hygiene.sh` (+ `--self-test`) | pass |
+| `bash scripts/ci/verify-quality-gates-fire.sh` | pass |
+
+Two mutation survivors remain inside files this addendum touched, both pre-existing and unrelated
+to these four fixes (only their line numbers shifted, from code added above them):
+`Sync\HubspotObjectLink::getConnectionName()`'s `??` (line 102, untouched by this addendum) and
+`Sync\SyncHubspotObjectJob::handle()`'s `(string) $this->model->getKey()` cast (line 108, the same
+one already documented above under "Known Accepted Mutation Survivor"). Neither was introduced or
+newly exposed by F1–F4; both are out of this addendum's scope per the deviation-rules scope
+boundary (only fix issues directly caused by the current task's own changes).
+
+### Deviations
+
+None beyond what F1 itself required: populating the new `lookup_hash` column on write
+(`SyncHubspotObjectJob.php`, otherwise the `NOT NULL` constraint would break every insert) and
+reading it back on `hubspotLink()` (`SyncsToHubspot.php`) are both necessary, in-scope
+consequences of shipping the column at all — an unpopulated or unread digest column would leave
+F1 half-fixed and reintroduce, on the read side, the exact case-collision defect the column exists
+to close. No file outside `database/migrations/sync/`, `src/Sync/HubspotObjectLink.php`,
+`src/Sync/ModelBindings.php`, `src/Sync/SyncHubspotObjectJob.php`, `src/Sync/SyncsToHubspot.php`
+and the two new test files was touched.
+
+### Exact `hubspot_object_links` shape, corrected
+
+**Folded into the canonical "Exact `hubspot_object_links` shape" section above, and into
+`key-decisions`, rather than left here as a trailing correction.** Codex raised exactly that on
+PR #39: a later plan reads the canonical section at the top of this file, not an addendum at the
+bottom, so a superseding note down here would have let future work recreate the collation defect
+this very commit records as fixed. The two no longer disagree.

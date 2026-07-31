@@ -27,6 +27,8 @@ use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
+use ReyemTech\Hubspot\Sync\HubspotObserver;
+use ReyemTech\Hubspot\Sync\ModelBindings;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -135,6 +137,11 @@ final class ServiceProvider extends BaseServiceProvider
 
         $this->app->singleton(HubspotManager::class);
 
+        // Read fresh from config by every collaborator that resolves it (HubspotObserver,
+        // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport
+        // Hubspot::fake() would ever need to invalidate, unlike the gateways below.
+        $this->app->singleton(ModelBindings::class);
+
         // Intentionally non-shared: HubspotFake replaces the HubspotClientFactory singleton
         // instance and relies on every subsequent resolution constructing a fresh gateway
         // against it, rather than needing to forget a cached gateway instance.
@@ -190,6 +197,26 @@ final class ServiceProvider extends BaseServiceProvider
         }
 
         $this->publishes($publishable, 'hubspot-migrations');
+
+        $this->bootModelBindings();
+    }
+
+    /**
+     * D-12: validates every `hubspot.models` binding BEFORE attaching a single observer, so a
+     * misconfigured binding throws while the application boots rather than the first time a
+     * model happens to sync. `Model::observe()` is called with a CLASS STRING for every bound
+     * model, never an instance -- see `HubspotObserver`'s own docblock for why an instance would
+     * silently discard whatever binding data was baked into it.
+     */
+    private function bootModelBindings(): void
+    {
+        $bindings = $this->app->make(ModelBindings::class);
+
+        $bindings->validate();
+
+        foreach (array_keys($bindings->all()) as $modelClass) {
+            $modelClass::observe(HubspotObserver::class);
+        }
     }
 
     /**
@@ -226,12 +253,17 @@ final class ServiceProvider extends BaseServiceProvider
      * A nested group directory stays isolated from this one because `loadMigrationsFrom()` is not
      * recursive; the migrator globs a single directory.
      *
+     * `database/migrations/sync` (D-13, Phase 4) is exactly that second consumer, arriving one
+     * plan early: gated on `hubspot.models` being non-empty rather than rewriting the entry above,
+     * so an install with no bound models still registers no migration path at all (REG-03).
+     *
      * @return array<string, bool> absolute directory => whether to load it
      */
     private function migrationGroups(): array
     {
         return [
             __DIR__.'/../database/migrations' => $this->app->make('config')->get('hubspot.store') === 'database',
+            __DIR__.'/../database/migrations/sync' => $this->app->make('config')->get('hubspot.models') !== [],
         ];
     }
 

@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Registry & Stores
 status: complete
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-07-30T19:34:45.907Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-07-30T23:00:17.872Z"
 last_activity: 2026-07-29
 last_activity_desc: "executed 03-03-PLAN.md. `Gateway\\\\AssociationDefinitionsGateway` wraps `Schema\\\\Api\\\\DefinitionsApi` (the phase's only new `HubSpot\\\\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%."
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # Project State
@@ -36,7 +36,7 @@ Plan: 3 of 3 in current phase; 03-01, 03-02 and 03-03 all merged (PRs #24, #27, 
 Status: **Phase 3's work is done, and two of its four requirements deliberately do not close.** 03-01 shipped object-type normalisation, the seeded HubSpot-defined baseline and the store seam (array + cache) with `AssociationTypeRegistry` bound on the Phase 2 resolver key; 03-02 the database store, its dated migration and the directed missing-table error, with the unique key corrected to a collation-proof `lookup_hash`; 03-03 the Gateway-owned association-definitions read, `hubspot:associations:sync`, `hubspot:doctor` and `hubspot:associations:doctor`. **REG-02 and REG-03 tick. REG-01 and REG-04 stay OPEN** — their local-id-resolution and bound-model halves need model binding (SYNC-01) and are Phase 4's as REG-01b and REG-04b. `hubspot:doctor` NAMES its absent model section rather than omitting it, and a test holds that, precisely so nobody reads the command's existence as the requirement being met.
 Last activity: 2026-07-29 — executed 03-03-PLAN.md. `Gateway\AssociationDefinitionsGateway` wraps `Schema\Api\DefinitionsApi` (the phase's only new `HubSpot\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%.
 
-Progress: [███████░░░] 68%
+Progress: [███████░░░] 72%
 
 ## Performance Metrics
 
@@ -76,6 +76,7 @@ Progress: [███████░░░] 68%
 | Phase 02 P06 | ~95min | 3 tasks | 10 files |
 | Phase 03 P03 | ~110min | 3 tasks | 20 files |
 | Phase 04 P01 | 1h15m | 3 tasks | 17 files |
+| Phase 04-model-sync P02 | ~135min | 2 tasks | 20 files |
 
 ## Accumulated Context
 
@@ -155,6 +156,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: composer.lock is gitignored for this library and was never committed; verified the four new illuminate requires add zero installed packages locally (content-hash-only diff) rather than via a committed git diff
 - [Phase ?]: D-04's vendor-namespace gate uses PhpToken::tokenize() (T_NAME_QUALIFIED/T_NAME_FULLY_QUALIFIED), not a raw regex -- a regex draft false-positived on docblock prose and a regex string literal in the real src/ tree
 - [Phase ?]: SYNC-01 split into SYNC-01a (Phase 4: Attached/API-only, id_property) and SYNC-01b (Phase 9, with SHIP-01: Generated mode), matching the REG-01a/b and REG-04a/b precedent
+- [Phase ?]: 04-02: hubspot_object_links' composite (model_type, model_id) index is satisfied by the leftmost prefix of its own unique (model_type, model_id, object_type) index -- no second, standalone index
+- [Phase ?]: 04-02: SyncsToHubspot cannot declare $hubspotMap as a trait property (PHP fatal-errors a class redeclaring a trait's typed property with a different default) -- each consuming model declares it; getHubspotMap() reads it dynamically
+- [Phase ?]: 04-02: HubspotObjectLink's $casts became a casts() method and SyncHubspotObjectJob's deleteWhenMissingModels moved into the constructor body -- both purely so pest --mutate can attribute a covering test to an executed line, extending ServiceProvider::supportedStores()'s existing method-not-constant precedent
 
 ### Pending Todos
 
@@ -238,8 +242,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-30T19:34:45.870Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-07-30T23:00:17.847Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**
