@@ -184,33 +184,71 @@ function composerManifestIlluminateRootsUsedInSrc(): array
 }
 
 /**
- * @return array<string, string> package name => absolute install path, read from
- *   vendor/composer/installed.json -- the same file Composer itself generates and consults, never
- *   a hand-maintained map.
+ * Every package entry from vendor/composer/installed.json -- the same file Composer itself
+ * generates and consults, never a hand-maintained map. Handles both the modern shape (a top-level
+ * "packages" key) and the legacy shape (a bare list), the same way Composer's own runtime does.
+ *
+ * @return list<array<string, mixed>>
  */
-function composerManifestInstalledPackagePaths(): array
+function composerManifestInstalledPackages(): array
 {
     $installedJsonPath = dirname(__DIR__, 2).'/vendor/composer/installed.json';
 
     expect(is_file($installedJsonPath))->toBeTrue('Expected vendor/composer/installed.json to exist -- run composer install.');
 
     $installed = json_decode((string) file_get_contents($installedJsonPath), true, flags: JSON_THROW_ON_ERROR);
-    $packages = is_array($installed['packages'] ?? null) ? $installed['packages'] : $installed;
+
+    if (! is_array($installed)) {
+        throw new RuntimeException('Expected vendor/composer/installed.json to decode to an array.');
+    }
+
+    $packages = array_key_exists('packages', $installed) ? $installed['packages'] : $installed;
 
     if (! is_array($packages)) {
         throw new RuntimeException('Expected vendor/composer/installed.json to decode to an array of packages.');
     }
 
-    $paths = [];
-    $vendorComposerDir = dirname($installedJsonPath);
+    $result = [];
 
     foreach ($packages as $package) {
-        if (! is_array($package) || ! is_string($package['name'] ?? null) || ! is_string($package['install-path'] ?? null)) {
+        if (! is_array($package)) {
             continue;
         }
 
-        $resolved = $vendorComposerDir.'/'.$package['install-path'];
-        $paths[$package['name']] = realpath($resolved) ?: $resolved;
+        $entry = [];
+
+        foreach ($package as $key => $value) {
+            if (is_string($key)) {
+                $entry[$key] = $value;
+            }
+        }
+
+        $result[] = $entry;
+    }
+
+    return $result;
+}
+
+/**
+ * @return array<string, string> package name => absolute install path.
+ */
+function composerManifestInstalledPackagePaths(): array
+{
+    $installedJsonPath = dirname(__DIR__, 2).'/vendor/composer/installed.json';
+    $vendorComposerDir = dirname($installedJsonPath);
+
+    $paths = [];
+
+    foreach (composerManifestInstalledPackages() as $package) {
+        $name = $package['name'] ?? null;
+        $installPath = $package['install-path'] ?? null;
+
+        if (! is_string($name) || ! is_string($installPath)) {
+            continue;
+        }
+
+        $resolved = $vendorComposerDir.'/'.$installPath;
+        $paths[$name] = realpath($resolved) ?: $resolved;
     }
 
     return $paths;
@@ -228,29 +266,24 @@ function composerManifestInstalledPackagePaths(): array
  */
 function composerManifestInstalledPsr4Prefixes(): array
 {
-    $installedJsonPath = dirname(__DIR__, 2).'/vendor/composer/installed.json';
-    $installed = json_decode((string) file_get_contents($installedJsonPath), true, flags: JSON_THROW_ON_ERROR);
-    $packages = is_array($installed['packages'] ?? null) ? $installed['packages'] : $installed;
-
-    if (! is_array($packages)) {
-        throw new RuntimeException('Expected vendor/composer/installed.json to decode to an array of packages.');
-    }
-
     $paths = composerManifestInstalledPackagePaths();
     $entries = [];
 
-    foreach ($packages as $package) {
-        if (! is_array($package) || ! is_string($package['name'] ?? null)) {
+    foreach (composerManifestInstalledPackages() as $package) {
+        $name = $package['name'] ?? null;
+
+        if (! is_string($name)) {
             continue;
         }
 
-        $psr4 = $package['autoload']['psr-4'] ?? null;
+        $autoload = $package['autoload'] ?? null;
+        $psr4 = is_array($autoload) ? ($autoload['psr-4'] ?? null) : null;
 
         if (! is_array($psr4)) {
             continue;
         }
 
-        $packagePath = $paths[$package['name']] ?? null;
+        $packagePath = $paths[$name] ?? null;
 
         if ($packagePath === null) {
             continue;
@@ -262,7 +295,7 @@ function composerManifestInstalledPsr4Prefixes(): array
             }
 
             $entries[] = [
-                'package' => $package['name'],
+                'package' => $name,
                 'prefix' => $prefix,
                 'path' => rtrim($packagePath, '/').'/'.trim($relativeSrc, '/'),
             ];

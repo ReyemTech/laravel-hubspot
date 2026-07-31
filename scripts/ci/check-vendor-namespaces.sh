@@ -18,6 +18,20 @@
 #   roots"); this script ships BOTH directions, because D-19 is exactly the live defect the
 #   original direction would have caught, and neither direction is a substitute for the other.
 #
+#   Direction B approves at ROOT granularity, deliberately: "GuzzleHttp" and "Psr" are namespace
+#   roots, not Composer packages -- "GuzzleHttp" alone is shared by guzzlehttp/guzzle,
+#   guzzlehttp/promises and guzzlehttp/psr7, and "Psr" is shared by every psr/* package. Approving
+#   the root here says only "some declared require backs whatever gets named here", never which
+#   one. That is a real hole one level finer than this gate can see: PR #40 hit it directly --
+#   GuzzleHttp\Promise\* and GuzzleHttp\Psr7\* were approved at the root while their OWNING
+#   packages, guzzlehttp/promises and guzzlehttp/psr7, were undeclared. The finer-grained check
+#   lives beside this one, in tests/Ci/ComposerManifestTest.php
+#   (composerManifestGuzzleAndPsrPackagesUsedInSrc()), which resolves every GuzzleHttp/Psr name
+#   actually referenced in src/ to the specific package that owns it -- via installed.json's own
+#   PSR-4 map, not a hand-written table -- and asserts THAT package is declared. Neither check
+#   substitutes for the other: this one is what makes any GuzzleHttp/Psr root fail loudly if it
+#   has no backing require at all; that one is what makes the right package get named once it does.
+#
 # LIMITATION, stated rather than discovered: this check reads `use` imports and fully-qualified
 # class references via a regex, not a full parser. It cannot see a call to a global helper
 # function such as `data_get()`, which lives in `illuminate/collections`. `illuminate/collections`
@@ -36,15 +50,22 @@ cd "$ROOT"
 FIXTURES_DIR="$ROOT/tests/Ci/Fixtures/VendorNamespaces"
 
 # Vendor roots approved WITHOUT restriction, because a declared `require` backs every reference --
-# not because they are deferred. Each entry carries its own written reason; each is also admitted
-# in composer.json by exact name (tests/Ci/ComposerManifestTest.php's
-# composerManifestEnumeratedExceptions()), never by a `guzzlehttp/`- or `psr/`-prefix rule.
+# not because they are deferred. Approval here is at ROOT granularity (see the Direction B comment
+# above for why that is not the same as package granularity): every reference is also required, by
+# exact package name, to appear in composer.json (tests/Ci/ComposerManifestTest.php's
+# composerManifestEnumeratedExceptions() and, at the finer package-owning granularity,
+# composerManifestGuzzleAndPsrPackagesUsedInSrc()) -- never admitted here by a `guzzlehttp/`- or
+# `psr/`-prefix rule.
 APPROVED_VENDOR_ROOTS=(
-    # src/Gateway/HubspotClientFactory.php and four files under src/Testing/. Declared directly as
-    # `guzzlehttp/guzzle` (^7.3, matching hubspot/api-client's own requirement) under
-    # STANDARDS.md Sec.2 -- previously only a transitive dependency of hubspot/api-client, which
-    # STANDARDS.md Sec.2 is explicit would "work in practice -- and would still be an undeclared
-    # dependency."
+    # src/Gateway/HubspotClientFactory.php and four files under src/Testing/. `GuzzleHttp` is a
+    # namespace root shared by three separate packages: `guzzlehttp/guzzle` (^7.3, matching
+    # hubspot/api-client's own requirement), `guzzlehttp/promises` (^2.5.1, matching what the
+    # installed guzzlehttp/guzzle itself requires -- src/Testing/HubspotFake.php names
+    # GuzzleHttp\Promise\Create and PromiseInterface) and `guzzlehttp/psr7` (^1.7 || ^2.0, matching
+    # hubspot/api-client's own requirement -- src/Testing/DefaultResponses.php names
+    # GuzzleHttp\Psr7\Response), all declared under STANDARDS.md Sec.2. Previously only a
+    # transitive dependency of hubspot/api-client, which STANDARDS.md Sec.2 is explicit would
+    # "work in practice -- and would still be an undeclared dependency."
     "GuzzleHttp"
     # src/Testing/RecordedRequest.php and src/Testing/RequestLog.php -- PSR-7 message interfaces,
     # used only as type hints, never implemented. Declared directly as `psr/http-message`
@@ -53,9 +74,12 @@ APPROVED_VENDOR_ROOTS=(
 )
 
 # Vendor roots approved ONLY under one path prefix inside src/, with no backing `require` at all.
-# Format: "<root>:<path-prefix>" -- the path check is a literal prefix match against the file path
-# as it is passed to this gate (repo-relative for the real scan, and constructed to contain the
-# same prefix for --self-test's scratch fixtures).
+# Format: "<root>:<path-prefix>" -- the path check is a literal PREFIX match (never a substring
+# match anywhere in the path) against the file path normalized to start at its source root:
+# repo-relative for the real scan, and normalized down to the same "src/..." shape for
+# --self-test's scratch fixtures via normalize_to_src_relative() below. A nested directory that
+# merely ENDS in the scoped prefix (e.g. `src/Foo/src/Testing/`) must not match -- see
+# normalize_to_src_relative()'s own comment for why a substring search gets this wrong.
 PATH_SCOPED_VENDOR_ROOTS=(
     # src/Testing/RequestLog.php names PHPUnit\Framework\Assert from production code. Declaring
     # `phpunit/phpunit` in "require" would ship a test framework to every consumer's production
@@ -66,18 +90,54 @@ PATH_SCOPED_VENDOR_ROOTS=(
     "PHPUnit:src/Testing/"
 )
 
+# Normalizes a file path down to the "src/..." shape the PATH_SCOPED_VENDOR_ROOTS prefixes are
+# written against, by finding the FIRST path component literally equal to "src" and returning the
+# path from there onward.
+#
+# This is a component match, not a substring match, and the distinction is the entire point: a
+# real repo-relative path from `git ls-files` (e.g. "src/Foo/src/Testing/LeakedAssert.php") already
+# starts with "src" at component 0, so it is returned unchanged -- and correctly does NOT start
+# with "src/Testing/", because its true location is the nested src/Foo/src/Testing/, not the
+# top-level directory the PHPUnit exception is scoped to. A bare substring search over the same
+# string would find "src/Testing/" starting mid-path and wrongly approve it -- exactly the bug
+# Codex found on PR #40. For --self-test's absolute scratch paths (e.g.
+# "$tmp_dir/src/Testing/Foo.php"), the same component search skips the tmp-dir segments and starts
+# the returned path at "src/Testing/Foo.php", matching what the real scan would have produced for
+# the equivalent repo-relative file.
+normalize_to_src_relative() {
+    local file="$1"
+    local -a parts
+    local IFS='/'
+
+    read -ra parts <<< "$file"
+
+    local i
+    for i in "${!parts[@]}"; do
+        if [ "${parts[$i]}" = "src" ]; then
+            local rel="${parts[*]:$i}"
+            printf '%s\n' "$rel"
+            return 0
+        fi
+    done
+
+    printf '%s\n' "$file"
+}
+
 is_approved_vendor_root() {
     local root="$1"
     local file="$2"
     local entry
     local scoped_root
     local scoped_prefix
+    local normalized_file
 
     for entry in "${APPROVED_VENDOR_ROOTS[@]}"; do
         if [ "$root" = "$entry" ]; then
             return 0
         fi
     done
+
+    normalized_file="$(normalize_to_src_relative "$file")"
 
     for entry in "${PATH_SCOPED_VENDOR_ROOTS[@]}"; do
         scoped_root="${entry%%:*}"
@@ -87,8 +147,8 @@ is_approved_vendor_root() {
             continue
         fi
 
-        case "$file" in
-            "${scoped_prefix}"* | *"/${scoped_prefix}"*)
+        case "$normalized_file" in
+            "${scoped_prefix}"*)
                 return 0
                 ;;
         esac
@@ -712,7 +772,7 @@ PHP
         return 1
     fi
 
-    echo "Self-test passed: Direction A rejects an undeclared Illuminate root, Direction B rejects an unapproved third-party vendor root and accepts an unconditionally-approved one, the PHPUnit exception admits src/Testing/ and rejects everywhere else, a clean file is accepted by both, and group use is handled in all three ways -- legal imports accepted, and violations hidden inside a group still rejected in both directions."
+    echo "Self-test passed: Direction A rejects an undeclared Illuminate root, Direction B rejects an unapproved third-party vendor root and accepts an unconditionally-approved one, the PHPUnit exception admits the top-level src/Testing/ and rejects everywhere else -- including a NESTED directory that merely ends in src/Testing/ -- a clean file is accepted by both, and group use is handled in all three ways -- legal imports accepted, and violations hidden inside a group still rejected in both directions."
 
     return 0
 }
