@@ -346,3 +346,148 @@ portal access was needed (all HTTP calls are canned via `Hubspot::fake()`).
 
 All 20 files listed under Files Created/Modified verified present on disk. Both commits
 (`3c5fd1f` RED, `6381786` GREEN) verified present in `git log`.
+
+---
+
+## Addendum 2026-07-31: Four Codex P2 findings closed on PR #39
+
+A second, separate execution session on this same branch closed four Codex P2 findings raised on
+PR #39, after the three P1s documented above (`09ac8ab`/`5f30676`) had already been fixed and
+pushed. All four were real; none were routed around.
+
+### F1 — `hubspot_object_links` needed a case-sensitive unique key
+
+`model_type` stopped being package-controlled the moment the P1 fix (`5f30676`) moved the write
+path from `get_class()` to `getMorphClass()`: under a `Relation::morphMap()`, that value is a
+USER-DEFINED alias, not a FQCN the package reads itself. MySQL's usual default collation folds
+case, so two aliases differing only by case (`Lead` / `lead`) would collide in the unique index
+and in any `WHERE model_type = ?` predicate — the identical defect Codex raised as a **P1 on
+PR #27** for `hubspot_association_types`' `label` column.
+
+Fixed by mirroring that precedent exactly, in the still-unshipped migration (edited in place, no
+second migration): `hubspot_object_links` gained a `char('lookup_hash', 64) NOT NULL` column
+carrying the SHA-256 digest of the raw `model_type`, and the unique index moved from
+`(model_type, model_id, object_type)` to `(lookup_hash, model_id, object_type)`. `model_type`
+itself stays, readable, for an operator inspecting the table, but — like `label` beside
+`lookup_hash` on the association-types table — is never a predicate again. The migration's
+docblock was rewritten in full: it no longer claims `model_type` is package-controlled, and states
+plainly that `getMorphClass()` is what makes it user-defined and why the digest is now needed.
+
+`Sync\HubspotObjectLink::lookupHashFor(string $modelType): string` is the single place the digest
+is computed (`hash('sha256', $modelType)`), called from both the write path
+(`SyncHubspotObjectJob::handle()`, whose `updateOrCreate()` identifying array now keys on
+`lookup_hash` rather than `model_type`) and the read path (`SyncsToHubspot::hubspotLink()`, which
+now adds `->where('lookup_hash', ...)` alongside `morphOne()`'s own built-in `model_type`
+predicate — AND-ing a collation-proof predicate onto an imprecise one only narrows a match, never
+widens it, so nothing already using `hubspotLink()` needed to change).
+
+### F2 — a whitespace-only `id_property` booted clean
+
+`ModelBindings::validate()` checked `$binding->idProperty === ''`, which a value of `'   '`
+survives. Fixed by comparing the trimmed value: `trim($binding->idProperty) === ''`. D-12's boot-
+time throw now covers both the absent and the whitespace-only shape.
+
+### F3 — `hubspotLink()` was not scoped to the binding's object type
+
+`SyncHubspotObjectJob` keys its `updateOrCreate()` on `(model_type, model_id, object_type)`, but
+`hubspotLink()` filtered only on `model_type` + `model_id`. If a model's binding changed object
+type after it had already synced, a second row would be written under the new object type and the
+first left behind — unscoped, `hubspotLink()` could resolve either one. Fixed by resolving the
+CURRENT binding's `object_type` from `ModelBindings` at call time (never cached in a property, the
+same reason `HubspotObserver::created()` resolves per call) and adding
+`->where('object_type', $objectType)`. `ModelBindings` is resolved through the `App` facade
+(`Illuminate\Support\Facades\App::make(ModelBindings::class)`), not the global `app()` helper —
+the helper lives in `Illuminate\Foundation\helpers.php`, a namespace `pest-plugin-arch`'s R3 rule
+flags as an unapproved dependency the instant a bare global function call appears in `Sync`, even
+though the underlying `Illuminate\Container\Container` class it forwards to would itself be
+allowed. `Illuminate\Support\Facades\App` ships inside the already-declared `illuminate/support`
+and stays inside `Illuminate\*`, so R3 passes with no new `composer.json` require.
+
+### F4 — the promised inverse `morphTo` was never built
+
+04-02-PLAN.md line 261 promised "a `morphTo` back to the linked model"; the migration already
+shipped the `(object_type, hubspot_id)` index for exactly that reverse lookup, but
+`HubspotObjectLink` never grew the relation. Added `public function model(): MorphTo`, explicit
+over the existing `model_type`/`model_id` columns (`$this->morphTo(name: 'model', type:
+'model_type', id: 'model_id')`).
+
+### TDD gate sequence
+
+RED (`8c1db21`) — five tests across two new files
+(`tests/Feature/Sync/ObjectLinkIntegrityTest.php` for F1/F3/F4,
+`tests/Feature/Sync/WhitespaceIdPropertyThrowsAtBootTest.php` for F2), run against the unfixed
+code and confirmed failing for the stated reasons:
+
+```
+FAIL WhitespaceIdPropertyThrowsAtBootTest > a whitespace only id property throws while the app boots
+  Failed asserting that null is an instance of class ConfigurationException.
+
+FAIL ObjectLinkIntegrityTest > the table carries a not null lookup hash column
+  Failed asserting that false is true.
+
+FAIL ObjectLinkIntegrityTest > a synced models lookup hash is the digest of its morph class
+  SQLSTATE[HY000]: General error: 1 table hubspot_object_links has no column named lookup_hash
+
+FAIL ObjectLinkIntegrityTest > hubspot link resolves only the row matching the current binding's
+object type
+  SQLSTATE[HY000]: General error: 1 table hubspot_object_links has no column named lookup_hash
+
+FAIL ObjectLinkIntegrityTest > the link carries an inverse morph to relation back to the linked
+model
+  SQLSTATE[HY000]: General error: 1 table hubspot_object_links has no column named lookup_hash
+
+Tests: 5 failed, 695 passed (2697 assertions)
+```
+
+Three of the four RED failures surface as the same underlying DB error (missing `lookup_hash`
+column) rather than four cleanly separated assertion mismatches — expected and accepted: F3's and
+F4's tests insert rows that must satisfy the POST-fix schema's `NOT NULL lookup_hash` from the
+start (so the RED test file needs no editing once GREEN lands), and the schema literally does not
+exist yet pre-fix. All five genuinely fail against the unfixed code for the reasons stated in each
+finding.
+
+GREEN (`95a11d2`) — implemented all four fixes; RED suite now green, full suite green.
+
+### Final gate figures
+
+| Gate | Result |
+|---|---|
+| `vendor/bin/pint --test` | pass (one `fully_qualified_strict_types` auto-fix applied, re-verified) |
+| `vendor/bin/phpstan analyse` | 0 errors, no baseline |
+| `vendor/bin/phpcs --standard=phpcs.xml -q` | pass |
+| `vendor/bin/pest` (full suite) | **700 passed** (2702 assertions) |
+| `vendor/bin/pest --coverage --min=95` | **100.0%** |
+| `vendor/bin/pest --mutate --min=80` | **96.36%** (45 untested, 2 uncovered, 1244 tested; exit 0) |
+| `bash scripts/ci/check-vendor-namespaces.sh` (+ `--self-test`) | pass |
+| `bash scripts/ci/verify-arch-rules-fire.sh` | 10/10 rules fired |
+| `bash scripts/ci/check-source-hygiene.sh` (+ `--self-test`) | pass |
+| `bash scripts/ci/verify-quality-gates-fire.sh` | pass |
+
+Two mutation survivors remain inside files this addendum touched, both pre-existing and unrelated
+to these four fixes (only their line numbers shifted, from code added above them):
+`Sync\HubspotObjectLink::getConnectionName()`'s `??` (line 102, untouched by this addendum) and
+`Sync\SyncHubspotObjectJob::handle()`'s `(string) $this->model->getKey()` cast (line 108, the same
+one already documented above under "Known Accepted Mutation Survivor"). Neither was introduced or
+newly exposed by F1–F4; both are out of this addendum's scope per the deviation-rules scope
+boundary (only fix issues directly caused by the current task's own changes).
+
+### Deviations
+
+None beyond what F1 itself required: populating the new `lookup_hash` column on write
+(`SyncHubspotObjectJob.php`, otherwise the `NOT NULL` constraint would break every insert) and
+reading it back on `hubspotLink()` (`SyncsToHubspot.php`) are both necessary, in-scope
+consequences of shipping the column at all — an unpopulated or unread digest column would leave
+F1 half-fixed and reintroduce, on the read side, the exact case-collision defect the column exists
+to close. No file outside `database/migrations/sync/`, `src/Sync/HubspotObjectLink.php`,
+`src/Sync/ModelBindings.php`, `src/Sync/SyncHubspotObjectJob.php`, `src/Sync/SyncsToHubspot.php`
+and the two new test files was touched.
+
+### Exact `hubspot_object_links` shape, corrected (supersedes the table above)
+
+Columns: `id` (auto), `model_type` (string), `lookup_hash` (`char(64)`, `NOT NULL`, SHA-256 digest
+of `model_type`), `model_id` (string, D-18), `object_type` (string, 64), `hubspot_id` (string),
+`synced_at` (nullable timestamp), `is_stale` (boolean, default `false`), `stale_at` (nullable
+timestamp), `created_at`/`updated_at`.
+
+Indexes: `unique(['lookup_hash', 'model_id', 'object_type'])` and
+`index(['object_type', 'hubspot_id'])`.
