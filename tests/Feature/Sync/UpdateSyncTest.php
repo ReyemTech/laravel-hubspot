@@ -10,6 +10,7 @@ use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\PropertyMapper;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
+use ReyemTech\Hubspot\Tests\Support\Sync\NarrowedLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
 
@@ -85,6 +86,47 @@ final class UpdateSyncTest extends SyncTestCase
         self::assertTrue($link->synced_at?->greaterThan($originalSyncedAt));
 
         Carbon::setTestNow();
+    }
+
+    /**
+     * Codex P1 on PR #42. `$hubspotUpdateMap` had no model-facing accessor, so the job passed `[]`
+     * to `mapForUpdate()` — which reads an empty update map as "the model declares none" and falls
+     * back to the FULL create map. A consumer who declared an update map to protect a create-only
+     * or independently-managed HubSpot property had it silently ignored, and every update
+     * overwrote exactly the field they had excluded.
+     *
+     * `NarrowedLead` maps `email` and `firstname` on create and only `email` on update, so the
+     * assertion is direct: `firstname` must not leave the process on an update.
+     */
+    public function test_an_update_sends_only_what_the_models_update_map_names(): void
+    {
+        Hubspot::fake(['contacts' => Hubspot::response(self::cannedUpsertBody(), 200)]);
+
+        $lead = NarrowedLead::create(['email' => 'ada@example.com', 'first_name' => 'Ada']);
+
+        self::assertInstanceOf(HubspotObjectLink::class, $lead->hubspotLink);
+
+        $fake = Hubspot::fake();
+
+        app(Dispatcher::class)->dispatch(new SyncHubspotObjectJob(
+            NarrowedLead::query()->findOrFail($lead->id)
+        ));
+
+        Hubspot::assertRequestCount(1);
+
+        $body = (string) $fake->recordedRequests()[0]['request']->getBody();
+
+        /** @var array{properties?: array<string, string>} $decoded */
+        $decoded = json_decode($body, true, flags: JSON_THROW_ON_ERROR);
+        $properties = $decoded['properties'] ?? [];
+
+        self::assertArrayHasKey('email', $properties);
+        self::assertArrayNotHasKey(
+            'firstname',
+            $properties,
+            'An update must send only what $hubspotUpdateMap names. Sending the full $hubspotMap '
+            .'overwrites the create-only property the consumer declared the update map to protect.'
+        );
     }
 
     public function test_a_model_with_no_link_row_is_still_upserted_never_addressed_by_id(): void
