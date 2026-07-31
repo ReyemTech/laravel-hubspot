@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Unit\Sync;
 
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\SyncsToHubspot;
@@ -128,5 +129,56 @@ final class SyncsToHubspotTraitTest extends MultiBindingTestCase
         $match = SyncedLead::pendingHubspotSync()->get()->sole();
 
         self::assertSame($stale->id, $match->id);
+    }
+
+    /**
+     * Every scope has a second, cross-connection branch (see
+     * `SyncsToHubspot::hubspotLinkSharesConnectionWith()`), which resolves the link rows in PHP
+     * and constrains the parent by key. That branch is CORRECT here too -- it would return exactly
+     * the rows the tests above assert -- so no assertion about results can tell the two apart, and
+     * losing the shared-connection branch would be invisible to all of them while quietly turning
+     * every scope into two round trips and materialising every link row of the class into memory.
+     *
+     * Statements are what distinguishes them, so statements are what this counts. One statement
+     * means the link lookup travelled inside the parent query as a subquery the database resolved
+     * itself, which is the entire reason the branch exists.
+     *
+     * The listener is registered AFTER the fixtures are created, so the sync path's own writes are
+     * not counted, and `$statements` is reset per scope rather than re-registering a listener --
+     * `DB::listen()` appends, and a second registration would count every query twice.
+     */
+    public function test_a_shared_connection_resolves_each_scope_in_a_single_statement(): void
+    {
+        Hubspot::fake();
+
+        SyncedLead::create(['email' => 'counted@example.com', 'first_name' => 'Ada']);
+
+        /** @var list<string> $statements */
+        $statements = [];
+
+        DB::listen(function (QueryExecuted $query) use (&$statements): void {
+            $statements[] = $query->sql;
+        });
+
+        $scopes = [
+            'whereHubspotId' => static fn () => SyncedLead::query()
+                ->whereHubspotId('counted@example.com')->get(),
+            'syncedToHubspot' => static fn () => SyncedLead::syncedToHubspot()->get(),
+            'pendingHubspotSync' => static fn () => SyncedLead::pendingHubspotSync()->get(),
+        ];
+
+        foreach ($scopes as $name => $run) {
+            $statements = [];
+
+            $run();
+
+            self::assertCount(
+                1,
+                $statements,
+                $name.'() must resolve the link table inside the parent statement when both share '
+                .'a connection. More than one statement means it took the cross-connection branch, '
+                .'which reads every link row of this class into memory to do the same job.'
+            );
+        }
     }
 }

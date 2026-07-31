@@ -25,10 +25,18 @@ affects: [04-06 (pendingHubspotSync()'s stale leg is what its restore path's is_
 tech-stack:
   added: []
   patterns:
-    - "All three query scopes resolve through hubspotLink() itself via whereHas()/whereDoesntHave()
-      on the relation NAME, never a second hand-built query against HubspotObjectLink -- every fix
-      the relation already carries (the object-type scope, the lookup_hash digest) automatically
-      covers every scope built on top of it, with no risk of the two drifting apart"
+    - "All three query scopes resolve through hubspotLink() itself, never a hand-built set of
+      predicates against HubspotObjectLink -- every fix the relation already carries (the
+      object-type scope, the lookup_hash digest) automatically covers every scope built on top of
+      it, with no risk of the two drifting apart"
+    - "Each scope reaches that relation two ways, branched on connection (Codex, PR #44).
+      whereHas() compiles its existence subquery into the PARENT statement, which the parent's
+      connection executes -- so it cannot see a link table that HubspotObjectLink::getConnectionName()
+      has deliberately pinned elsewhere, and raised a missing-table error for a table one
+      connection over while hubspotLink itself read across correctly. Same connection keeps
+      whereHas()/whereDoesntHave() on the relation name (one statement, database-resolved);
+      different connections resolve the link rows via Relation::noConstraints() on the link
+      table's own connection and constrain the parent by key"
     - "pendingHubspotSync() wraps its two legs (whereDoesntHave + orWhereHas) in one outer where()
       closure so the scope composes safely with any other constraint a caller chains beside it --
       an orWhereHas() at the top level would OR against the entire query built so far"
@@ -95,10 +103,17 @@ key-decisions:
     limitation, not a real one. No baseline used (D-04)."
 
 patterns-established:
-  - "A query scope built on an existing, already-correct relation reuses that relation via
-    whereHas()/whereDoesntHave() rather than re-querying the underlying table directly -- one
-    identity resolution, reused, the same principle 04-03 established for
-    SyncHubspotObjectJob's update leg reading hubspotLink() rather than a second hand-built query."
+  - "A query scope built on an existing, already-correct relation reuses that relation rather than
+    re-stating its predicates -- one identity resolution, reused, the same principle 04-03
+    established for SyncHubspotObjectJob's update leg reading hubspotLink() rather than a second
+    hand-built query. Where whereHas() cannot carry the relation (a link table on another
+    connection), Relation::noConstraints() borrows the same relation's query instead, which is
+    what Builder::getRelationWithoutConstraints() does for whereHas() itself -- reuse survives the
+    branch, only the SQL shape changes."
+  - "A branch taken purely for efficiency, whose slow side returns identical results, is pinned by
+    counting STATEMENTS rather than asserting rows -- no result assertion can distinguish the two,
+    so losing the fast path would be invisible to every correctness test while silently doubling
+    round trips (all three RemoveEarlyReturn mutants survived until this test existed)."
 
 requirements-completed: [SYNC-01a, REG-01b]
 
@@ -164,13 +179,13 @@ coverage:
       clean, architecture and vendor-namespace gates fire correctly"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (732 passed, 2796 assertions)"
+        ref: "vendor/bin/pest (736 passed, 2803 assertions)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --coverage --min=95 (100.0%)"
+        ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 60/60 tested)"
+        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 74/74 tested)"
         status: pass
     human_judgment: false
 
@@ -199,9 +214,19 @@ prove SC2's "three models, one object type, zero collisions" end to end.**
 
 - `Sync\SyncsToHubspot::scopeWhereHubspotId()`, `::scopeSyncedToHubspot()`,
   `::scopePendingHubspotSync()` — the three query scopes D-06 names, every one resolving through
-  `hubspotLink()` itself (`whereHas()`/`whereDoesntHave()` on the relation name) rather than a
-  second hand-built query against `HubspotObjectLink`, so the relation's own object-type and
-  collation-proof (`lookup_hash`) scoping automatically covers every scope built on top of it
+  `hubspotLink()` itself rather than a hand-built set of predicates against `HubspotObjectLink`,
+  so the relation's own object-type and collation-proof (`lookup_hash`) scoping automatically
+  covers every scope built on top of it
+- `::hubspotLinkSharesConnectionWith()`, `::hubspotLinkQuery()`, `::hubspotLinkedKeys()` — the
+  cross-connection branch each scope takes when the bound model and `hubspot_object_links` are on
+  different connections (Codex, PR #44). `whereHas()` compiles its existence subquery into the
+  parent statement, executed by the parent's connection, so it looked for the package table in the
+  consumer's tenant database and raised a missing-table error — while `hubspotLink`/`hubspotId()`,
+  fixed for exactly this case on PR #39, kept answering correctly one connection over. The
+  same-connection path is unchanged (one correlated subquery); the cross-connection path resolves
+  the link rows on the link table's own connection and constrains the parent by key. Its cost is
+  stated rather than hidden: the keys are materialised in PHP, so that branch is bounded by the
+  driver's parameter limit and fails loudly at the scale where it gives out
 - `pendingHubspotSync()` covers both required legs — never-synced (no link row) and
   flagged-stale (`is_stale = true`) — wrapped in one outer `where()` closure so the scope
   composes safely with any constraint a caller chains beside it
@@ -349,9 +374,59 @@ predicates.
   04-02-SUMMARY.md's corrected canonical shape section.
 - **Committed in:** `c053fb1`.
 
+**3. [Review — Bug] The three scopes could not see a link table on another connection**
+- **Found by:** Codex on PR #44 (P2), against head `cc666d2f0b`.
+- **Issue:** `whereHas()` does not run its existence subquery on the RELATED model's connection. It
+  compiles the subquery into the PARENT statement, and the parent's connection executes the whole
+  thing — so an unqualified `hubspot_object_links` in that subquery is resolved in the parent's
+  database. That is wrong exactly when `HubspotObjectLink::getConnectionName()` has done the job
+  PR #39 gave it: pinning the link table to the connection the `sync` migration group ran against,
+  so a consumer whose models live on a tenant connection gets a `hubspotLink` relation that reads
+  correctly across the boundary. Reproduced with two in-memory SQLite databases:
+  `$lead->hubspotLink()` and `$lead->hubspotId()` answer correctly, while all three scopes raise
+  `SQLSTATE[HY000]: no such table: hubspot_object_links (Connection: tenant)` — a missing-table
+  error for a table that exists, one connection over. All three scopes are new in this plan, so
+  the finding is in scope for it.
+- **Decision (owner, this session):** make the scopes work rather than throw on the mismatch or
+  document it as a stock Laravel limitation. PR #39 already committed this package to a read
+  surface that survives the split; leaving the scopes out of that commitment would make the
+  surface half-working by design.
+- **Fix:** each scope branches on `hubspotLinkSharesConnectionWith()`. Shared connection keeps the
+  existing `whereHas()`/`whereDoesntHave()` form unchanged — one statement, subquery resolved by
+  the database. Different connections resolve the link rows through the SAME relation via
+  `Relation::noConstraints()` (the call `Builder::getRelationWithoutConstraints()` makes for
+  `whereHas()` itself; the framework method is `protected`, so it cannot be borrowed directly) on
+  the link table's own connection, and constrain the parent by `whereIn`/`whereNotIn` on its key.
+  Dropping the parent-key constraint is required, not incidental: a scope runs on a keyless model
+  instance, so leaving it on would produce `model_id = null` and match nothing. It also drops
+  `morphOne()`'s `model_type` predicate, which loses nothing — `lookup_hash` is the collation-proof
+  digest of exactly that value and survives. `pendingHubspotSync()` reads both legs out of ONE
+  result set, because two reads could observe a link written between them and drop a model that
+  belonged in the scope under either answer.
+- **Cost, stated rather than hidden:** the cross-connection branch materialises this binding's
+  link keys in PHP and sends them back as bindings, so it is bounded by the driver's parameter
+  limit and is the branch that gives out first at scale. It fails loudly when it does. The
+  same-connection branch is untouched.
+- **Files modified/created:** `src/Sync/SyncsToHubspot.php`;
+  `tests/Feature/Sync/ScopesAcrossConnectionsTest.php`, `tests/Support/Sync/TenantLead.php`,
+  `tests/Support/Sync/CrossConnectionTestCase.php` (new);
+  `tests/Unit/Sync/SyncsToHubspotTraitTest.php`.
+- **Verification:** RED first — 3 failed, 1 passed (the premise test, asserting the two tables
+  really are on different connections and the relation really does read across, so the other three
+  cannot pass for an unrelated reason). GREEN after the branch. Full suite 736 passed / 2803
+  assertions; coverage 100.0%; scoped mutation 100.00% (74/74); PHPStan, phpcs, pint clean.
+- **Note on the mutation figure:** the first scoped run came back 95.95% with three surviving
+  `RemoveEarlyReturn` mutants, one per scope, all deleting the shared-connection fast path. They
+  survived legitimately: the cross-connection branch returns identical rows for a shared
+  connection, so no result assertion can distinguish the two. They are killed by
+  `test_a_shared_connection_resolves_each_scope_in_a_single_statement`, which counts executed
+  STATEMENTS via `DB::listen()` instead — losing the fast path would otherwise be invisible to
+  every correctness test while silently doubling round trips and reading every link row of the
+  class into memory.
+
 ---
 
-**Total deviations:** 2 auto-fixed (both Rule 1). No scope creep — `PropertyMapper.php`,
+**Total deviations:** 3 auto-fixed (2 Rule 1, 1 review finding). No scope creep — `PropertyMapper.php`,
 `HubspotObserver.php`, `SyncHubspotObjectJob.php`, `HubspotObjectLink.php` and every file owned by
 a different wave-3/later plan were left untouched.
 

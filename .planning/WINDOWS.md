@@ -2,9 +2,9 @@
 schema_version: 1
 open_count: 3
 waived_count: 0
-fixed_count: 1
-total_count: 4
-last_updated: 2026-07-31T02:25:33.228Z
+fixed_count: 2
+total_count: 5
+last_updated: 2026-07-31T14:30:00.000Z
 ---
 
 # Broken Windows Ledger
@@ -19,6 +19,7 @@ last_updated: 2026-07-31T02:25:33.228Z
 | 2 | 01 | unrun-verify | .github/workflows/quality.yml |  | mutation job (pest --mutate --min=80) cannot compute a real MSI over the deliberately-empty src/; WARN+exit1 via failOnPhpunitWarning, resolves once Phase 2 adds source files (mirrors plan 01's coverage-floor finding) | open |  | 2026-07-26T20:36:32.352Z |  |
 | 3 | 01 | deviation | tests/Arch/LayerBoundariesTest.php |  | Concurrent git staging in a shared working directory caused commit 022b9e6 (plan 05) to accidentally include three of plan 04's task-2 files; content correct, but plan 04 lacks its own dedicated GREEN commit for the ten rules in git history | open |  | 2026-07-26T20:36:32.666Z |  |
 | 4 | 04 | deviation | src/Sync/SyncHubspotObjectJob.php |  | getHubspotUpdateMap() added to SyncsToHubspot and wired into SyncHubspotObjectJob, so $hubspotUpdateMap is honoured end to end. Codex raised the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the full create map, silently overwriting the properties a consumer declared the update map to protect | fixed | Closed in 04-03 rather than deferred to 04-04; shipping a documented option that does nothing is worse than the small scope extension. | 2026-07-31T02:25:33.228Z | 2026-07-31T04:10:00.000Z |
+| 5 | 04 | deviation | src/Sync/SyncsToHubspot.php |  | The three SyncsToHubspot query scopes could not see hubspot_object_links when the bound model was on another connection: whereHas() compiles its existence subquery into the PARENT statement, so the parent's connection resolved an unqualified hubspot_object_links in its own database and raised a missing-table error -- while hubspotLink/hubspotId(), pinned to the link connection by PR #39, kept answering correctly. Codex raised it as a P2 on PR #44. Each scope now branches: shared connection keeps whereHas() unchanged, different connections resolve the same relation on the link table's own connection via Relation::noConstraints() and constrain the parent by key. | fixed | Fixed in 04-04 rather than deferred or documented as a limitation: PR #39 already committed the read surface to surviving the connection split this package itself creates, and leaving the scopes out would make that surface half-working by design. | 2026-07-31T14:30:00.000Z | 2026-07-31T14:30:00.000Z |
 
 ````json
 [
@@ -69,6 +70,18 @@ last_updated: 2026-07-31T02:25:33.228Z
     "reason": "Closed in 04-03 rather than deferred to 04-04; shipping a documented option that does nothing is worse than the small scope extension.",
     "recorded_at": "2026-07-31T02:25:33.228Z",
     "resolved_at": "2026-07-31T04:10:00.000Z"
+  },
+  {
+    "id": 5,
+    "kind": "deviation",
+    "phase": "04",
+    "file": "src/Sync/SyncsToHubspot.php",
+    "line": null,
+    "description": "The three SyncsToHubspot query scopes could not see hubspot_object_links when the bound model was on another connection: whereHas() compiles its existence subquery into the PARENT statement, so the parent's connection resolved an unqualified hubspot_object_links in its own database and raised a missing-table error -- while hubspotLink/hubspotId(), pinned to the link connection by PR #39, kept answering correctly. Codex raised it as a P2 on PR #44. Each scope now branches: shared connection keeps whereHas() unchanged, different connections resolve the same relation on the link table's own connection via Relation::noConstraints() and constrain the parent by key.",
+    "status": "fixed",
+    "reason": "Fixed in 04-04 rather than deferred or documented as a limitation: PR #39 already committed the read surface to surviving the connection split this package itself creates, and leaving the scopes out would make that surface half-working by design.",
+    "recorded_at": "2026-07-31T14:30:00.000Z",
+    "resolved_at": "2026-07-31T14:30:00.000Z"
   }
 ]
 ````

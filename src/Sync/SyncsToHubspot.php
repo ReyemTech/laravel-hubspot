@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Sync;
 
+use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
 
 /**
@@ -48,11 +51,12 @@ use Illuminate\Support\Facades\App;
  *    only narrows a match, never widens one.
  *
  * The query scopes (`whereHubspotId()`, `syncedToHubspot()`, `pendingHubspotSync()`, 04-04) all
- * resolve through `hubspotLink()` itself -- via `whereHas()`/`whereDoesntHave()` on the relation
- * name, never a second hand-built query against `HubspotObjectLink` -- so every fix the relation
- * carries (the object-type scope, the collation-proof digest) automatically covers every scope
- * built on top of it. The static `syncManyToHubspot()` collection entry point is deliberately NOT
- * here -- 04-08 adds it.
+ * resolve through `hubspotLink()` itself, never through a hand-built set of predicates against
+ * `HubspotObjectLink`, so every fix the relation carries (the object-type scope, the
+ * collation-proof digest) automatically covers every scope built on top of it. They reach it two
+ * ways, chosen by connection -- see `hubspotLinkSharesConnectionWith()` for why one way is not
+ * enough. The static `syncManyToHubspot()` collection entry point is deliberately NOT here --
+ * 04-08 adds it.
  *
  * `$hubspotMap` is deliberately NOT declared as a property here, even an empty-array default:
  * PHP fatal-errors composing a class that redeclares a trait's TYPED property with a different
@@ -150,11 +154,11 @@ trait SyncsToHubspot
     }
 
     /**
-     * Only models linked to the given HubSpot id (D-06, D-13). A `whereHas()` across the morph
+     * Only models linked to the given HubSpot id (D-06, D-13). Resolved through the morph
      * relation, never a column predicate: there is no HubSpot id column on the consumer's table,
      * so a scope written as a column comparison would silently match nothing rather than throw.
      *
-     * `whereHas()` builds its existence query by calling `hubspotLink()` itself, so the relation's
+     * Both branches build their link query by calling `hubspotLink()` itself, so the relation's
      * own `object_type`/`lookup_hash` constraints apply here too -- a `Contact` linked to the same
      * HubSpot id a `Lead` is linked to is never returned by `Lead::whereHubspotId()` (T-04-17).
      *
@@ -171,12 +175,15 @@ trait SyncsToHubspot
      */
     public function scopeWhereHubspotId(Builder $query, string $hubspotId): Builder
     {
-        return $query->whereHas(
-            'hubspotLink',
-            static function (Builder $linkQuery) use ($hubspotId): void {
-                $linkQuery->where('hubspot_id', $hubspotId); // @phpstan-ignore-line argument.type
-            },
-        );
+        $constrain = static function (Builder $linkQuery) use ($hubspotId): void {
+            $linkQuery->where('hubspot_id', $hubspotId); // @phpstan-ignore-line argument.type
+        };
+
+        if ($this->hubspotLinkSharesConnectionWith($query)) {
+            return $query->whereHas('hubspotLink', $constrain);
+        }
+
+        return $query->whereIn($this->getQualifiedKeyName(), $this->hubspotLinkedKeys($constrain));
     }
 
     /**
@@ -187,7 +194,11 @@ trait SyncsToHubspot
      */
     public function scopeSyncedToHubspot(Builder $query): Builder
     {
-        return $query->whereHas('hubspotLink');
+        if ($this->hubspotLinkSharesConnectionWith($query)) {
+            return $query->whereHas('hubspotLink');
+        }
+
+        return $query->whereIn($this->getQualifiedKeyName(), $this->hubspotLinkedKeys());
     }
 
     /**
@@ -199,27 +210,134 @@ trait SyncsToHubspot
      *
      * Wrapped in one outer `where()` closure so this scope composes safely with any other
      * constraint a caller chains alongside it -- an `orWhereHas()` at the top level would OR
-     * against the ENTIRE query built so far, not just this scope's own two legs.
+     * against the ENTIRE query built so far, not just this scope's own two legs. The
+     * cross-connection branch needs that wrapper for the identical reason, so both legs are
+     * grouped there too.
+     *
+     * That branch reads both legs out of ONE result set rather than issuing a query per leg: the
+     * stale rows are a subset of the linked rows, and two separate reads could observe a link
+     * written between them -- a model returned as never-linked by the first and as fresh by the
+     * second, absent from a scope that should have contained it under either answer.
      *
      * @param  Builder<static>  $query
      * @return Builder<static>
      */
     public function scopePendingHubspotSync(Builder $query): Builder
     {
+        if ($this->hubspotLinkSharesConnectionWith($query)) {
+            return $query->where(
+                static function (Builder $outerQuery): void {
+                    $outerQuery->whereDoesntHave('hubspotLink')
+                        ->orWhereHas(
+                            'hubspotLink',
+                            static function (Builder $linkQuery): void {
+                                // See scopeWhereHubspotId()'s docblock: Larastan types this
+                                // closure's $linkQuery as the base Model rather than
+                                // HubspotObjectLink because hubspotLink() lives on a trait, not a
+                                // concrete model. is_stale is a real, cast column on it.
+                                $linkQuery->where('is_stale', true); // @phpstan-ignore-line argument.type
+                            },
+                        );
+                },
+            );
+        }
+
+        $links = $this->hubspotLinkQuery()->get(['model_id', 'is_stale']);
+        $key = $this->getQualifiedKeyName();
+
         return $query->where(
-            static function (Builder $outerQuery): void {
-                $outerQuery->whereDoesntHave('hubspotLink')
-                    ->orWhereHas(
-                        'hubspotLink',
-                        static function (Builder $linkQuery): void {
-                            // See scopeWhereHubspotId()'s docblock: Larastan types this closure's
-                            // $linkQuery as the base Model rather than HubspotObjectLink because
-                            // hubspotLink() lives on a trait, not a concrete model. is_stale is a
-                            // real, cast column on HubspotObjectLink.
-                            $linkQuery->where('is_stale', true); // @phpstan-ignore-line argument.type
-                        },
-                    );
+            static function (Builder $outerQuery) use ($key, $links): void {
+                $outerQuery->whereNotIn($key, $links->pluck('model_id'))
+                    ->orWhereIn($key, $links->where('is_stale', true)->pluck('model_id'));
             },
         );
+    }
+
+    /**
+     * Whether an existence subquery against the link table can legally appear inside a statement
+     * this query will execute.
+     *
+     * `whereHas()` does not run its subquery on the RELATED model's connection. It compiles the
+     * subquery into the parent statement, and the parent's connection executes the whole thing --
+     * so an unqualified `hubspot_object_links` in that subquery is looked up in the parent's
+     * database. That is fine almost always, and wrong exactly when this package's own
+     * {@see HubspotObjectLink::getConnectionName()} has done its job: it pins the link table to
+     * the connection the `sync` migration group ran against, so a consumer whose models live on a
+     * tenant connection gets a `hubspotLink` relation that reads correctly across the boundary --
+     * and, until this branch existed, three scopes that raised a missing-table error for a table
+     * that exists one connection over (Codex, PR #44).
+     *
+     * Connection NAMES are compared, not hosts or database names: two names are the same
+     * connection to Laravel and can therefore share a statement, while two different names may
+     * still address the same database (a read replica, an alias) and merely take the slower branch
+     * for it. Being conservative here costs a query; being permissive would cost correctness.
+     *
+     * Both names are read off MODELS rather than off the query builders they came from, because
+     * `Builder::getConnection()` is typed as the `ConnectionInterface`, which does not declare
+     * `getName()`, while `Model::getConnection()` is typed as the concrete `Connection`, which
+     * does. No accuracy is given up for that: a model's connection IS the one its builder runs on,
+     * since `Model::on()` sets the connection on the model and only then calls `newQuery()`
+     * (framework source, `Model::on()`), and a scope is invoked on the builder's own model -- so
+     * `$this` already carries whatever connection `$query` will execute against.
+     *
+     * `$query` is therefore unused for the comparison itself and taken only to keep this a
+     * question asked of a specific query rather than of the class in general.
+     *
+     * @param  Builder<static>  $query
+     */
+    private function hubspotLinkSharesConnectionWith(Builder $query): bool
+    {
+        return $query->getModel()->getConnection()->getName()
+            === $this->hubspotLinkQuery()->getModel()->getConnection()->getName();
+    }
+
+    /**
+     * The link table's own query for THIS binding, on the link table's OWN connection, carrying
+     * the relation's `lookup_hash` and `object_type` predicates but no parent key.
+     *
+     * `Relation::noConstraints()` is what drops the parent key, and it is the same call
+     * `Builder::getRelationWithoutConstraints()` makes for `whereHas()` -- the framework method
+     * itself is `protected`, so it cannot be borrowed from here, but going through the relation
+     * keeps the single source of the constraints intact rather than restating them. What it drops
+     * along with the parent key is `morphOne()`'s built-in `model_type` predicate; nothing is lost,
+     * because `lookup_hash` is the collation-proof digest of exactly that value and survives (see
+     * the class docblock).
+     *
+     * Dropping the parent key is required, not incidental: a scope is called on a model instance
+     * the framework resolves for the builder, which has no key, so leaving the constraint on would
+     * produce `model_id = null` and match nothing at all.
+     *
+     * @return Builder<HubspotObjectLink>
+     */
+    private function hubspotLinkQuery(): Builder
+    {
+        /** @var MorphOne<HubspotObjectLink, $this> $relation */
+        $relation = Relation::noConstraints(fn (): MorphOne => $this->hubspotLink());
+
+        return $relation->getQuery();
+    }
+
+    /**
+     * The `model_id` values of this binding's link rows, read on the link table's own connection.
+     *
+     * The cross-connection branch's whole cost lives here: the keys are materialised in PHP and
+     * sent back as bindings, rather than staying inside a subquery the database resolves. The
+     * result set is one row per model of this class that has ever synced -- the same order of
+     * magnitude as the table being filtered, and bounded by the driver's own parameter limit, so
+     * this is the branch that gives out first at scale. It fails loudly when it does. The
+     * same-connection branch is unaffected and remains a single correlated subquery.
+     *
+     * @param  (Closure(Builder<HubspotObjectLink>): void)|null  $constrain
+     * @return Collection<int, mixed>
+     */
+    private function hubspotLinkedKeys(?Closure $constrain = null): Collection
+    {
+        $linkQuery = $this->hubspotLinkQuery();
+
+        if ($constrain !== null) {
+            $constrain($linkQuery);
+        }
+
+        return $linkQuery->pluck('model_id');
     }
 }
