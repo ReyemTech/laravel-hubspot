@@ -128,11 +128,29 @@ jobs:
     # `needs:` on that job here (they run in separate workflows/files), but
     # a failing `tests` job elsewhere in the same pull request should be
     # read as "the number below isn't meaningful yet", not ignored.
+    #
+    # SCOPE differs by event, deliberately, and the job name stays the same either way because it
+    # is a required status check — renaming it would silently stop branch protection from ever
+    # seeing this gate again (which is exactly what happened to the manifest check in #37).
+    #
+    #   pull_request  -> only the classes the PR changes, in parallel. Seconds instead of ~15
+    #                    minutes, with the signal kept where the new code is.
+    #   push to main  -> the whole of src/, unscoped. This is what still catches "a change over
+    #                    here weakened a mutant the tests over there used to kill" — after merge
+    #                    rather than before it, which is the deliberate trade.
+    #
+    # The full run was measured at 10.5-16 minutes across ten consecutive runs, all green, with MSI
+    # at 96-99% against a floor of 80. At that margin it was not doing gate work per PR; it was
+    # costing a quarter of an hour to restate a number that had never moved.
     name: mutation (pest --mutate, MSI floor 80)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          # The scope resolver diffs against the base branch, so the default shallow clone is not
+          # enough.
+          fetch-depth: 0
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -143,5 +161,44 @@ jobs:
       - name: Install dependencies
         run: composer install --prefer-dist --no-interaction
 
+      - name: Prove the scope resolver maps every src/ file to a class that autoloads
+        run: bash scripts/ci/mutation-scope.sh --self-test
+
+      - name: Resolve the mutation scope
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "Push to main: mutating the whole of src/."
+            exit 0
+          fi
+
+          git fetch --no-tags --depth=0 origin "${{ github.base_ref }}" >/dev/null 2>&1 || true
+          classes="$(bash scripts/ci/mutation-scope.sh "origin/${{ github.base_ref }}")"
+
+          if [ -z "$classes" ]; then
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            echo "This pull request changes no PHP file under src/. Nothing to mutate."
+            exit 0
+          fi
+
+          echo "mode=scoped" >> "$GITHUB_OUTPUT"
+          echo "classes=${classes}" >> "$GITHUB_OUTPUT"
+          echo "Mutating only what this pull request changes:"
+          printf '  %s\n' ${classes//,/ }
+
       - name: Run the mutation floor
-        run: vendor/bin/pest --mutate --min=80
+        run: |
+          case "${{ steps.scope.outputs.mode }}" in
+            skip)
+              echo "Skipped: no src/ change in this pull request, so there is no mutation to run."
+              echo "The whole-src run still executes on push to main."
+              ;;
+            scoped)
+              vendor/bin/pest --mutate --parallel --min=80 \
+                --class='${{ steps.scope.outputs.classes }}'
+              ;;
+            *)
+              vendor/bin/pest --mutate --parallel --min=80
+              ;;
+          esac
