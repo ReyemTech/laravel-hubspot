@@ -53,8 +53,8 @@ key-files:
 
 key-decisions:
   - "The one-way surface (D-05 trait namespace, D-18 model_id string column, D-12 boot-time throw) was confirmed as locked at Task 1 (checkpoint, gate=resolved) before this plan wrote any code."
-  - "hubspot_object_links carries the composite (model_type, model_id) index via the LEFTMOST PREFIX of its own UNIQUE (model_type, model_id, object_type) index -- no second, standalone index. Documented in the migration docblock precisely so a future reader does not add the redundant index back."
-  - "No lookup_hash collation workaround, unlike the association-types migration: model_type and model_id are package/PHP-controlled (a class name, a primary-key value), never free text compared case-insensitively for meaning."
+  - "hubspot_object_links is UNIQUE on (lookup_hash, model_id, object_type) -- one link row per model instance per object type, which is what lets three models bind to contacts without colliding. D-18 names a composite (model_type, model_id) index; it is satisfied by this unique index rather than by a second standalone one. CORRECTED from the raw (model_type, model_id, object_type) key this plan first shipped -- see the next entry."
+  - "hubspot_object_links DOES carry a lookup_hash char(64) NOT NULL digest of model_type, exactly like the association-types migration. This plan initially argued the opposite on the grounds that model_type is a package-controlled FQCN -- true only until this same plan changed the write to getMorphClass(), which makes it a USER-DEFINED morph alias. Lead and lead then collide under MySQL default collation. Same defect Codex raised as a P1 on PR #27. Do not remove the digest, and do not reinstate a raw model_type predicate on either the write or the read path."
   - "hubspot_id is never nulled, only flagged stale (is_stale/stale_at) -- SYNC-04's restore path (04-06) needs the id to stay re-linkable, since HubSpot has no unarchive endpoint."
   - "$hubspotMap is NOT declared as a trait property, even with an empty-array default: PHP fatal-errors composing a class that redeclares a trait's typed property with a different default value. Each consuming model declares its own $hubspotMap; the trait's getHubspotMap() reads it dynamically with one documented @phpstan-ignore-line."
   - "HubspotObjectLink's $casts became a casts(): array method, and SyncHubspotObjectJob's deleteWhenMissingModels moved from a property default into the constructor body -- both purely a mutation-testing coverage-attribution fix (a property default is never an executed line), verified correct against Illuminate\\Queue\\Queue::createObjectPayload() and Concerns\\HasAttributes::initializeHasAttributes()."
@@ -171,12 +171,22 @@ _Task 1 (the one-way-surface checkpoint) was answered `confirm-as-locked` before
 
 ## Exact `hubspot_object_links` shape (later plans assert this verbatim)
 
-Columns: `id` (auto), `model_type` (string), `model_id` (string, D-18), `object_type` (string, 64),
-`hubspot_id` (string), `synced_at` (nullable timestamp), `is_stale` (boolean, default `false`),
-`stale_at` (nullable timestamp), `created_at`/`updated_at`.
+Columns: `id` (auto), `model_type` (string), `lookup_hash` (`char(64)`, `NOT NULL`, SHA-256 digest
+of `model_type`), `model_id` (string, D-18), `object_type` (string, 64), `hubspot_id` (string),
+`synced_at` (nullable timestamp), `is_stale` (boolean, default `false`), `stale_at` (nullable
+timestamp), `created_at`/`updated_at`.
 
-Indexes: `unique(['model_type', 'model_id', 'object_type'])` and `index(['object_type', 'hubspot_id'])`.
-No `lookup_hash` column — see Key Decisions.
+Indexes: `unique(['lookup_hash', 'model_id', 'object_type'])` and
+`index(['object_type', 'hubspot_id'])`.
+
+**This section was wrong when first written and is now correct.** It originally specified a raw
+`unique(['model_type', 'model_id', 'object_type'])` and *no* `lookup_hash`, on the stated grounds
+that `model_type` is a package-controlled FQCN. This same plan then changed the link write to
+`getMorphClass()`, which returns a user-defined morph-map alias — so `Lead` and `lead` collide under
+MySQL's case-insensitive default collation. Codex found it on PR #39; it is the same defect it
+raised as a P1 on PR #27 for the association-types table.
+
+Assert the shape above, not the one this plan shipped first.
 
 ## Exact `ConfigurationException` messages (later plans assert these verbatim)
 
@@ -482,12 +492,10 @@ to close. No file outside `database/migrations/sync/`, `src/Sync/HubspotObjectLi
 `src/Sync/ModelBindings.php`, `src/Sync/SyncHubspotObjectJob.php`, `src/Sync/SyncsToHubspot.php`
 and the two new test files was touched.
 
-### Exact `hubspot_object_links` shape, corrected (supersedes the table above)
+### Exact `hubspot_object_links` shape, corrected
 
-Columns: `id` (auto), `model_type` (string), `lookup_hash` (`char(64)`, `NOT NULL`, SHA-256 digest
-of `model_type`), `model_id` (string, D-18), `object_type` (string, 64), `hubspot_id` (string),
-`synced_at` (nullable timestamp), `is_stale` (boolean, default `false`), `stale_at` (nullable
-timestamp), `created_at`/`updated_at`.
-
-Indexes: `unique(['lookup_hash', 'model_id', 'object_type'])` and
-`index(['object_type', 'hubspot_id'])`.
+**Folded into the canonical "Exact `hubspot_object_links` shape" section above, and into
+`key-decisions`, rather than left here as a trailing correction.** Codex raised exactly that on
+PR #39: a later plan reads the canonical section at the top of this file, not an addendum at the
+bottom, so a superseding note down here would have let future work recreate the collation defect
+this very commit records as fixed. The two no longer disagree.
