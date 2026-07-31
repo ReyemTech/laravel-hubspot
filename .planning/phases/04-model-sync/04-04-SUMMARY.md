@@ -179,13 +179,13 @@ coverage:
       clean, architecture and vendor-namespace gates fire correctly"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (736 passed, 2803 assertions)"
+        ref: "vendor/bin/pest (739 passed, 2813 assertions)"
         status: pass
       - kind: other
         ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 74/74 tested)"
+        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 76/76 tested)"
         status: pass
     human_judgment: false
 
@@ -454,9 +454,43 @@ predicates.
   spec. All 56 `tests/Ci` tests pass; shellcheck clean; full suite 737 passed.
 - **Committed in:** `c0068a9`.
 
+**5. [Review — Bug] The cross-connection branch read the link table at scope-call time**
+- **Found by:** Codex on PR #44 (P2), against head `d98b29a`, i.e. against the fix for finding 3.
+- **Issue:** `hubspotLinkedKeys()` ran the moment a scope was CALLED, not when the builder was
+  executed. Two problems, and the second is why it warranted code rather than a docblock. First,
+  every other Eloquent scope is lazy, so a builder that has already hit the database on
+  construction breaks the only mental model a caller has for one. Second, it widened the staleness
+  window from "between two adjacent statements" — which no two-statement strategy can avoid — to
+  "between construction and execution", which the caller controls and can hold open indefinitely.
+  A link row written inside that window was invisible, so `pendingHubspotSync()` kept reporting
+  work that was already done.
+- **Fix:** `whereHubspotLinkResolved()` registers the constraint through
+  `Query\Builder::beforeQuery()`, the framework's own hook for this — its callbacks run inside
+  `toSql()`, which every execution path (`get`, `count`, `paginate`, `exists`, the write paths)
+  reaches before touching the connection. All three scopes go through it.
+- **What the fix does NOT claim:** it does not make the link read atomic with the parent query.
+  Two statements means a window, always. It bounds the window to the inherent part and removes the
+  unbounded, caller-controlled part.
+- **Two consequences stated rather than left to be discovered:**
+  `applyBeforeQueryCallbacks()` clears the callback list after running and the constraint it added
+  stays on the query, so a builder executed twice resolves its links ONCE and both executions
+  agree — the behaviour to want from `->count()` followed by `->get()`. And because the constraint
+  is appended at compile time rather than where the scope sits in the chain, it lands after any
+  clause the caller chained: invisible to an AND chain (every ordinary use), and different only if
+  a caller puts a top-level `orWhere()` beside the scope, which is already ill-defined against the
+  shared-connection branch for the same reason.
+- **Files modified:** `src/Sync/SyncsToHubspot.php`,
+  `tests/Feature/Sync/ScopesAcrossConnectionsTest.php`.
+- **Verification:** RED first — the two new tests failed (a builder issued 1 statement at
+  construction instead of 0; a model linked after construction was still reported pending), the
+  four existing cross-connection tests stayed green. GREEN after the deferral. Full suite 739
+  passed / 2813 assertions; coverage 100.0%; scoped mutation 100.00% (76/76); PHPStan, phpcs, pint
+  clean.
+- **Committed in:** RED `2cab49b`, GREEN `<green-sha>`.
+
 ---
 
-**Total deviations:** 4 auto-fixed (2 Rule 1, 1 review finding, 1 CI scope extension). No scope
+**Total deviations:** 5 auto-fixed (2 Rule 1, 2 review findings, 1 CI scope extension). No scope
 creep in `src/` — `PropertyMapper.php`,
 `HubspotObserver.php`, `SyncHubspotObjectJob.php`, `HubspotObjectLink.php` and every file owned by
 a different wave-3/later plan were left untouched.

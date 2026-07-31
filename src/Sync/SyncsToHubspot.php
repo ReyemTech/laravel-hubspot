@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
 
@@ -183,7 +184,13 @@ trait SyncsToHubspot
             return $query->whereHas('hubspotLink', $constrain);
         }
 
-        return $query->whereIn($this->getQualifiedKeyName(), $this->hubspotLinkedKeys($constrain));
+        return $this->whereHubspotLinkResolved(
+            $query,
+            fn (QueryBuilder $compiled, string $key): QueryBuilder => $compiled->whereIn(
+                $key,
+                $this->hubspotLinkedKeys($constrain),
+            ),
+        );
     }
 
     /**
@@ -198,7 +205,13 @@ trait SyncsToHubspot
             return $query->whereHas('hubspotLink');
         }
 
-        return $query->whereIn($this->getQualifiedKeyName(), $this->hubspotLinkedKeys());
+        return $this->whereHubspotLinkResolved(
+            $query,
+            fn (QueryBuilder $compiled, string $key): QueryBuilder => $compiled->whereIn(
+                $key,
+                $this->hubspotLinkedKeys(),
+            ),
+        );
     }
 
     /**
@@ -242,15 +255,65 @@ trait SyncsToHubspot
             );
         }
 
-        $links = $this->hubspotLinkQuery()->get(['model_id', 'is_stale']);
-        $key = $this->getQualifiedKeyName();
+        return $this->whereHubspotLinkResolved(
+            $query,
+            function (QueryBuilder $compiled, string $key): QueryBuilder {
+                $links = $this->hubspotLinkQuery()->get(['model_id', 'is_stale']);
 
-        return $query->where(
-            static function (Builder $outerQuery) use ($key, $links): void {
-                $outerQuery->whereNotIn($key, $links->pluck('model_id'))
-                    ->orWhereIn($key, $links->where('is_stale', true)->pluck('model_id'));
+                return $compiled->where(
+                    static function (QueryBuilder $legs) use ($key, $links): void {
+                        $legs->whereNotIn($key, $links->pluck('model_id'))
+                            ->orWhereIn($key, $links->where('is_stale', true)->pluck('model_id'));
+                    },
+                );
             },
         );
+    }
+
+    /**
+     * Applies a cross-connection link constraint WHEN THE QUERY RUNS, not when the scope is called.
+     *
+     * The cross-connection branch cannot put the link lookup inside the parent statement, so it has
+     * to read the link table separately; that much is forced. When it reads is a choice, and reading
+     * at scope-call time was the wrong one (Codex, PR #44). Two reasons, and the second is the one
+     * that makes this code rather than a docblock:
+     *
+     * 1. Every other Eloquent scope is lazy. A builder that has already hit the database the moment
+     *    it was constructed breaks the only mental model a caller has for one.
+     * 2. It widens the staleness window from "between two adjacent statements", which no
+     *    two-statement strategy can avoid, to "between construction and execution" -- which the
+     *    caller controls and can hold open for as long as it likes. A link row written inside that
+     *    window is invisible, so `pendingHubspotSync()` keeps reporting work that is already done.
+     *
+     * `Query\Builder::beforeQuery()` is the framework's own hook for exactly this: the callbacks run
+     * inside `toSql()`, which every execution path (`get`, `count`, `paginate`, `exists`, the write
+     * paths) reaches before touching the connection. This does NOT make the link read atomic with
+     * the parent query and does not claim to -- it bounds the window to the part that is inherent.
+     *
+     * Two consequences worth stating rather than discovering. `applyBeforeQueryCallbacks()` clears
+     * the callback list after running it, and the constraint it added stays on the query, so a
+     * builder executed twice resolves its links ONCE and both executions agree -- which is the
+     * behaviour to want from `->count()` followed by `->get()`. And because the constraint is
+     * appended when the query is compiled rather than where the scope sits in the chain, it lands
+     * after any clause the caller chained; that is invisible to an AND chain, which is every
+     * ordinary use, and differs only if a caller puts a top-level `orWhere()` beside the scope --
+     * already ill-defined against the shared-connection branch for the same reason.
+     *
+     * @param  Builder<static>  $query
+     * @param  Closure(QueryBuilder, string): QueryBuilder  $constrain
+     * @return Builder<static>
+     */
+    private function whereHubspotLinkResolved(Builder $query, Closure $constrain): Builder
+    {
+        $key = $this->getQualifiedKeyName();
+
+        $query->getQuery()->beforeQuery(
+            static function (QueryBuilder $compiled) use ($constrain, $key): void {
+                $constrain($compiled, $key);
+            },
+        );
+
+        return $query;
     }
 
     /**
