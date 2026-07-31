@@ -59,7 +59,7 @@ final class ServiceProviderTest extends TestCase
      */
     protected function defineEnvironment($app): void
     {
-        $app->useConfigPath(self::isolatedConfigDirectory());
+        $app->useConfigPath(self::emptied(self::isolatedConfigDirectory()));
     }
 
     public function test_it_merges_config_hubspot_php_default_values_without_publishing(): void
@@ -136,6 +136,36 @@ final class ServiceProviderTest extends TestCase
     }
 
     /**
+     * A config file left behind by an interrupted run must never reach the next application boot.
+     *
+     * This is the failure Codex named on PR #45, made deterministic: the sentinel below stands in
+     * for a `hubspot.php` that a killed run published and never cleaned up, under a PID the OS has
+     * since handed to this process. Without the clearing step, Testbench loads it during
+     * bootstrapping and every `hubspot.*` assertion in this file starts reading a published file
+     * instead of `mergeConfigFrom()` -- passing for the wrong reason.
+     */
+    public function test_a_stale_published_config_never_reaches_the_next_boot(): void
+    {
+        file_put_contents(
+            self::isolatedConfigPath(),
+            '<?php return '.var_export(['store' => 'stale-sentinel'], true).';',
+        );
+
+        $this->refreshApplication();
+
+        self::assertFalse(
+            is_file(self::isolatedConfigPath()),
+            'A config file surviving into the next boot is adopted by Testbench before the '
+            .'provider runs.',
+        );
+        self::assertSame(
+            'cache',
+            config('hubspot.store'),
+            'The default must come from mergeConfigFrom(), never from a leftover published file.',
+        );
+    }
+
+    /**
      * A config directory this process owns alone.
      *
      * Keyed by PID because `pest --parallel` isolates workers as PROCESSES, not threads: two
@@ -145,9 +175,36 @@ final class ServiceProviderTest extends TestCase
      */
     private static function isolatedConfigDirectory(): string
     {
-        $directory = sys_get_temp_dir().'/laravel-hubspot-publish-'.getmypid();
+        return sys_get_temp_dir().'/laravel-hubspot-publish-'.getmypid();
+    }
 
-        File::ensureDirectoryExists($directory);
+    /**
+     * Creates the directory if absent, and empties it if not.
+     *
+     * Emptying is the part that matters (Codex, PR #45). A PID is unique among LIVE processes, not
+     * over time: a run killed between publishing and its `finally` leaves `hubspot.php` behind, and
+     * the next process to be handed that PID adopts it. Because `useConfigPath()` is installed
+     * before configuration bootstrapping, Testbench would then LOAD that stale file -- and
+     * `test_it_merges_config_hubspot_php_default_values_without_publishing()` would pass while
+     * exercising nothing, since its values would be coming from a published file rather than from
+     * `mergeConfigFrom()`. A vacuous pass is worse than a failure.
+     *
+     * Plain filesystem calls rather than the `File` facade: this runs while the application is
+     * still being created, which is exactly when depending on a resolved facade root is unwise.
+     */
+    private static function emptied(string $directory): string
+    {
+        if (! is_dir($directory)) {
+            mkdir($directory, 0o777, true);
+
+            return $directory;
+        }
+
+        foreach ((array) glob($directory.'/*') as $entry) {
+            if (is_string($entry) && is_file($entry)) {
+                unlink($entry);
+            }
+        }
 
         return $directory;
     }

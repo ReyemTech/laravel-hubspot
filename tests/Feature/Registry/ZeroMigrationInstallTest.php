@@ -54,7 +54,11 @@ final class ZeroMigrationInstallTest extends TestCase
      */
     protected function defineEnvironment($app): void
     {
-        $app->useDatabasePath(self::isolatedDatabaseDirectory());
+        $directory = self::isolatedDatabaseDirectory();
+
+        self::empty($directory.'/migrations');
+
+        $app->useDatabasePath($directory);
     }
 
     /**
@@ -66,11 +70,79 @@ final class ZeroMigrationInstallTest extends TestCase
         // The trailing `/database` segment is load-bearing: the publish-map assertion below checks
         // the target sits under `database/migrations`, which states where a published migration
         // belongs. Isolating the directory must not quietly weaken that into a different claim.
-        $directory = sys_get_temp_dir().'/laravel-hubspot-'.getmypid().'/database';
+        return sys_get_temp_dir().'/laravel-hubspot-'.getmypid().'/database';
+    }
 
-        File::ensureDirectoryExists($directory.'/migrations');
+    /**
+     * Creates the directory if absent, and empties it if not.
+     *
+     * Emptying is the part that matters (Codex, PR #45). A PID is unique among LIVE processes, not
+     * over time: a run killed between publishing and its `finally` leaves the migration behind, and
+     * the next process handed that PID adopts it as an application migration. The default-install
+     * tests above call `migrate` BEFORE the publishing test does its own cleanup, so a survivor
+     * would be discovered there -- creating the package tables in the run that exists to prove they
+     * are absent, which is a false failure at best and a false pass at worst.
+     *
+     * Plain filesystem calls rather than the `File` facade: this runs while the application is
+     * still being created, which is exactly when depending on a resolved facade root is unwise.
+     */
+    private static function empty(string $directory): void
+    {
+        if (! is_dir($directory)) {
+            mkdir($directory, 0o777, true);
 
-        return $directory;
+            return;
+        }
+
+        foreach ((array) glob($directory.'/*') as $entry) {
+            if (is_string($entry) && is_file($entry)) {
+                unlink($entry);
+            }
+        }
+    }
+
+    /**
+     * A migration left behind by an interrupted run must never reach the next application boot.
+     *
+     * The failure Codex named on PR #45, made deterministic. The sentinel below stands in for a
+     * migration a killed run published and never cleaned up, under a PID the OS has since reissued.
+     * Without the clearing step it is a perfectly ordinary application migration as far as the
+     * migrator is concerned, and `migrate` runs it -- so this asserts on the SCHEMA rather than on
+     * the file, for the same reason the rest of this file does: only the schema shows what the
+     * migrator actually did.
+     */
+    public function test_a_stale_published_migration_never_reaches_the_next_boot(): void
+    {
+        file_put_contents(
+            self::isolatedDatabaseDirectory().'/migrations/2026_07_31_000000_create_stale_sentinel.php',
+            <<<'PHP'
+                <?php
+
+                use Illuminate\Database\Migrations\Migration;
+                use Illuminate\Database\Schema\Blueprint;
+                use Illuminate\Support\Facades\Schema;
+
+                return new class extends Migration
+                {
+                    public function up(): void
+                    {
+                        Schema::create('stale_sentinel', function (Blueprint $table): void {
+                            $table->id();
+                        });
+                    }
+                };
+                PHP,
+        );
+
+        $this->refreshApplication();
+
+        Artisan::call('migrate', ['--force' => true]);
+
+        self::assertFalse(
+            Schema::hasTable('stale_sentinel'),
+            'A migration surviving into the next boot is discovered and run as if the application '
+            .'had always owned it.',
+        );
     }
 
     /**
@@ -175,6 +247,11 @@ final class ZeroMigrationInstallTest extends TestCase
                 self::assertFileExists($target);
             }
         } finally {
+            // The target now lives in this process's own temp directory rather than the Testbench
+            // skeleton (the comment that said otherwise was true before that change and was removed
+            // in 22d12e5). Cleaning up still matters: without it the published migration stays
+            // visible to every LATER test in this same worker, which is the run the
+            // default-install assertions above depend on being empty.
             File::delete($targets);
         }
     }
