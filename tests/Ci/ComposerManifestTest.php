@@ -615,3 +615,38 @@ it('admits PHP 8.3 and rejects PHP 8.2', function (): void {
 it('carries no version key, since Packagist derives the version from the git tag', function (): void {
     expect(loadComposerManifest())->not->toHaveKey('version');
 });
+
+/**
+ * Two Codex findings on PR #40, both about the ownership resolver claiming to know more than it
+ * does. They are asserted against the resolver directly rather than through the tree scan, because
+ * both need an input the installed tree does not currently produce — a synthetic map is the honest
+ * way to pin behaviour that only shows up on a future upgrade.
+ */
+it('returns no owner for a name no installed package actually ships', function (): void {
+    $entries = [
+        ['package' => 'guzzlehttp/guzzle', 'prefix' => 'GuzzleHttp\\', 'path' => dirname(__DIR__, 2).'/vendor/guzzlehttp/guzzle/src'],
+    ];
+
+    // The undeclared-dependency case this whole gate exists for: a GuzzleHttp\ name whose real
+    // owner is NOT installed. guzzlehttp/guzzle still contributes the broad `GuzzleHttp\` prefix,
+    // so a resolver that falls back to the longest-prefix match reports an already-declared
+    // package and the "must be declared" assertion passes while the actual dependency is missing.
+    expect(composerManifestOwningPackage('GuzzleHttp\\NotAThing\\Nope', $entries))->toBeNull();
+});
+
+it('keeps every path of a psr-4 prefix declared in Composer array form', function (): void {
+    $package = [
+        'name' => 'acme/multi',
+        'autoload' => ['psr-4' => ['Acme\\Multi\\' => ['src/', 'generated/']]],
+    ];
+
+    // Composer permits an array of directories per prefix and the installed tree already uses it —
+    // laravel/framework maps Illuminate\Support\ across four paths. Discarding the prefix means a
+    // reference owned by such a package resolves to a broader prefix or to nothing, and the final
+    // declaration assertion stays green while the owning package goes undeclared.
+    $entries = composerManifestPsr4EntriesForPackage($package, ['acme/multi' => '/tmp/acme']);
+
+    expect($entries)->toHaveCount(2)
+        ->and(array_column($entries, 'path'))->toBe(['/tmp/acme/src', '/tmp/acme/generated'])
+        ->and(array_unique(array_column($entries, 'prefix')))->toBe(['Acme\\Multi\\']);
+});
