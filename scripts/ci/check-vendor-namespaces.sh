@@ -395,6 +395,91 @@ PHP
         failed=1
     fi
 
+    # PHPUnit is approved only under src/Testing/ -- named from production code
+    # (src/Testing/RequestLog.php) with no backing require (declaring phpunit/phpunit would ship a
+    # test framework to every consumer's production vendor tree). The scoping itself is what makes
+    # the exception safe, so both halves are asserted: named inside src/Testing/ is accepted, named
+    # anywhere else in src/ still fails the gate exactly like an unapproved root would.
+    mkdir -p "${tmp_dir}/src/Testing" "${tmp_dir}/src/Registry"
+
+    local scratch_phpunit_scoped_ok="${tmp_dir}/src/Testing/PhpUnitScopedOk.php"
+    cat > "$scratch_phpunit_scoped_ok" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Self-test-only fixture (scripts/ci/check-vendor-namespaces.sh) -- never production code.
+ * Named under src/Testing/, exactly where the PHPUnit exception is scoped to.
+ */
+
+namespace ReyemTech\Hubspot\Testing;
+
+use PHPUnit\Framework\Assert as PHPUnitAssert;
+
+final class PhpUnitScopedOk
+{
+    public function assertSomething(mixed $actual): void
+    {
+        PHPUnitAssert::assertNotNull($actual);
+    }
+}
+PHP
+
+    local scratch_phpunit_scoped_bad="${tmp_dir}/src/Registry/PhpUnitOutsideTesting.php"
+    cat > "$scratch_phpunit_scoped_bad" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Self-test-only fixture (scripts/ci/check-vendor-namespaces.sh) -- never production code.
+ * Named OUTSIDE src/Testing/ on purpose: the PHPUnit exception must not reach here.
+ */
+
+namespace ReyemTech\Hubspot\Registry;
+
+use PHPUnit\Framework\Assert as PHPUnitAssert;
+
+final class PhpUnitOutsideTesting
+{
+    public function assertSomething(mixed $actual): void
+    {
+        PHPUnitAssert::assertNotNull($actual);
+    }
+}
+PHP
+
+    local phpunit_ok_output
+    phpunit_ok_output="$(detect_violations "$scratch_phpunit_scoped_ok" "$scratch_composer")"
+    local phpunit_ok_rejected=0
+    while IFS=$'\t' read -r direction package_or_root source_file; do
+        [ "$direction" = "DIRECTION_B" ] || continue
+        if ! is_grandfathered_root "$package_or_root"; then
+            phpunit_ok_rejected=1
+        fi
+    done <<< "$phpunit_ok_output"
+    if [ "$phpunit_ok_rejected" -ne 0 ]; then
+        echo "Self-test FAILED: PHPUnit named under src/Testing/ was rejected, but the exception is" >&2
+        echo "scoped to admit it there." >&2
+        failed=1
+    fi
+
+    local phpunit_bad_output
+    phpunit_bad_output="$(detect_violations "$scratch_phpunit_scoped_bad" "$scratch_composer")"
+    local phpunit_bad_rejected=0
+    while IFS=$'\t' read -r direction package_or_root source_file; do
+        [ "$direction" = "DIRECTION_B" ] || continue
+        if ! is_grandfathered_root "$package_or_root"; then
+            phpunit_bad_rejected=1
+        fi
+    done <<< "$phpunit_bad_output"
+    if [ "$phpunit_bad_rejected" -ne 1 ]; then
+        echo "Self-test FAILED: PHPUnit named outside src/Testing/ was accepted; the exception must" >&2
+        echo "not reach beyond the one directory it is scoped to." >&2
+        failed=1
+    fi
+
     # Group use, all three ways. The accept half proves the gate does not reject a legal
     # `use Illuminate\{Console\Command, Support\Carbon};`; the reject halves prove it did not buy
     # that by going blind, which is the failure mode that matters -- before this was handled, a

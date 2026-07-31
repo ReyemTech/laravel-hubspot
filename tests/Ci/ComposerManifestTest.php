@@ -223,6 +223,53 @@ it('backs every Illuminate root referenced under src/ with a declared require (D
     ));
 });
 
+it('declares guzzlehttp/guzzle and psr/http-message as named enumerated exceptions', function (): void {
+    // src/Gateway/HubspotClientFactory.php and src/Testing/*.php name GuzzleHttp\* and Psr\* from
+    // PRODUCTION code -- previously an undeclared, merely-transitive dependency on
+    // hubspot/api-client. Both must be admitted by exact name (composerManifestEnumeratedExceptions()),
+    // never by a `guzzlehttp/`- or `psr/`-prefix rule that an unrelated package from either vendor
+    // could slip through under.
+    $exceptions = composerManifestEnumeratedExceptions();
+
+    expect($exceptions)->toContain('guzzlehttp/guzzle');
+    expect($exceptions)->toContain('psr/http-message');
+});
+
+it('constrains guzzlehttp/guzzle to ^7.3, matching what hubspot/api-client itself requires', function (): void {
+    $require = composerManifestRequires();
+
+    expect($require)->toHaveKey('guzzlehttp/guzzle');
+    expect($require['guzzlehttp/guzzle'])->toBe('^7.3', sprintf(
+        'Expected "guzzlehttp/guzzle" to be constrained to ^7.3, matching hubspot/api-client\'s own '
+        .'requirement exactly, so this declaration never narrows what the SDK already permits. Got "%s".',
+        $require['guzzlehttp/guzzle'] ?? '(missing)',
+    ));
+});
+
+it('constrains psr/http-message to ^1.1 || ^2.0, deliberately wide', function (): void {
+    $require = composerManifestRequires();
+
+    expect($require)->toHaveKey('psr/http-message');
+    expect($require['psr/http-message'])->toBe('^1.1 || ^2.0', sprintf(
+        'Expected "psr/http-message" to be constrained to ^1.1 || ^2.0 -- deliberately wide, since '
+        .'guzzlehttp/psr7 2.x itself accepts both and narrowing to ^2.0 would force every consumer '
+        .'onto 2.x for no reason this package has. The --prefer-lowest CI leg proves 1.1 installs '
+        .'cleanly, rather than this constraint merely assuming it. Got "%s".',
+        $require['psr/http-message'] ?? '(missing)',
+    ));
+});
+
+it('never declares phpunit/phpunit as a production require', function (): void {
+    // src/Testing/RequestLog.php names PHPUnit\Framework\Assert from production code, but
+    // declaring phpunit/phpunit in "require" would ship a test framework to every consumer's
+    // production vendor tree -- worse than the undeclared reference it would fix. The fix for that
+    // root lives in the vendor-namespace gate (scripts/ci/check-vendor-namespaces.sh), scoped to
+    // src/Testing/, not in the manifest.
+    $require = composerManifestRequires();
+
+    expect($require)->not->toHaveKey('phpunit/phpunit');
+});
+
 it('admits PHP 8.3 and rejects PHP 8.2', function (): void {
     $require = composerManifestRequires();
 
