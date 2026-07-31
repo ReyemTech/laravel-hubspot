@@ -179,13 +179,13 @@ coverage:
       clean, architecture and vendor-namespace gates fire correctly"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (742 passed, 2816 assertions)"
+        ref: "vendor/bin/pest (743 passed, 2813 assertions)"
         status: pass
       - kind: other
         ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 84/84 tested)"
+        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 74/74 tested)"
         status: pass
     human_judgment: false
 
@@ -455,6 +455,8 @@ predicates.
 - **Committed in:** `c0068a9`.
 
 **5. [Review — Bug] The cross-connection branch read the link table at scope-call time**
+- **SUPERSEDED by finding 7:** the deferral described below was reverted. The behaviour it
+  objected to is the behaviour that ships, deliberately; finding 7 carries the reasoning.
 - **Found by:** Codex on PR #44 (P2), against head `d98b29a`, i.e. against the fix for finding 3.
 - **Issue:** `hubspotLinkedKeys()` ran the moment a scope was CALLED, not when the builder was
   executed. Two problems, and the second is why it warranted code rather than a docblock. First,
@@ -487,6 +489,9 @@ predicates.
 - **Committed in:** RED `2cab49b`, GREEN `95d116c`.
 
 **6. [Review — Bug] The deferral moved the constraint to the end of the query**
+- **SUPERSEDED by finding 7:** the splice described below was reverted with the deferral it
+  supported. The property it established — the constraint sits where the scope was called —
+  still holds, now because Laravel places it rather than because this code does.
 - **Found by:** Codex on PR #44 (P2), against head `7370587` — i.e. against the fix for finding 5.
 - **Issue:** deferring via `beforeQuery()` fixed WHEN the link resolved but changed WHERE the
   constraint landed. A callback that calls `$compiled->whereIn(...)` appends, so the constraint sat
@@ -513,10 +518,39 @@ predicates.
   the smallest arrangement that separates them — kills both. MSI back to 100.00% (84/84).
 - **Committed in:** RED `dc32c64`, GREEN `e840490`.
 
+**7. [Review — Bug x2, and a reversal] Deferral abandoned; links resolve through the builder API**
+- **Found by:** Codex on PR #44, two P2s against head `8f0d50c` — the fix for finding 6.
+- **Issue 1 (nested predicates):** the deferred callback was registered on whichever builder the
+  scope was called on. Inside `where(fn ($q) => $q->syncedToHubspot())` that is the NESTED builder,
+  which then has no clauses of its own, so `addNestedWhereQuery()` discarded the empty group and the
+  constraint vanished entirely. Reproduced as `select * from tenant_leads` — every unlinked model
+  returned, no error anywhere.
+- **Issue 2 (global scopes):** the recorded numeric offsets are captured before `applyScopes()`
+  regroups `$wheres`. Reproduced: `link OR ("email" = ?) and "first_name" != ?`, i.e.
+  `link OR (email AND global)` instead of `(link OR email) AND global`. For the global scope every
+  consumer actually has — `SoftDeletes` — that is the link leg returning soft-deleted rows.
+- **Decision — the deferral is reverted, not patched again.** Codex proposed a materialised
+  placeholder for both. That would be a fourth mechanism layered on an approach whose every failure
+  came from the same root: deferral has to reproduce by hand everything the query builder already
+  does for a clause added at scope-call time. Three rounds, three silent wrong-results defects, each
+  found only after the previous was fixed. Resolving through the ordinary builder API gets correct
+  composition in all three contexts for free, because Laravel does the placing — verified against
+  each before committing.
+- **What this costs, stated plainly:** the cross-connection branch is eager. `Lead::pendingHubspotSync()`
+  reads the link table when the scope is called, not when the builder runs, so a builder held across
+  time resolves against an older snapshot. That is the objection finding 5 raised and it is real. It
+  is the cheaper side of the trade: eagerness is a surprise, the three deferral defects were wrong
+  answers, and a work-queue scope is a snapshot the instant it returns regardless.
+- **Guards:** the two reproductions are now tests, and both were confirmed to FAIL against the
+  deferred implementation and pass against this one — otherwise they would be guarding nothing. A
+  third test pins the eagerness itself, so a future re-attempt announces itself rather than landing
+  quietly. `hubspotLinkedKeys()` carries the whole reasoning inline.
+- **Committed in:** `bc30d9b`.
+
 ---
 
-**Total deviations:** 6 auto-fixed (2 Rule 1, 3 review findings, 1 CI scope extension). No scope
-creep in `src/` — `PropertyMapper.php`,
+**Total deviations:** 7 auto-fixed (2 Rule 1, 5 review findings incl. one reversal, 1 CI scope
+extension). No scope creep in `src/` — `PropertyMapper.php`,
 `HubspotObserver.php`, `SyncHubspotObjectJob.php`, `HubspotObjectLink.php` and every file owned by
 a different wave-3/later plan were left untouched.
 
