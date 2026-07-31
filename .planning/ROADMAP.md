@@ -163,7 +163,7 @@ on a write path" half is held by `LabelledWriteThroughRegistryTest` and
 
 **Goal**: A developer adds one trait to any Eloquent model and it syncs to HubSpot — mapped, queued, batched, delete-safe, and suppressible when it must not run.
 **Depends on**: Phase 3
-**Requirements**: SYNC-01, SYNC-02, SYNC-03, SYNC-04, SYNC-05, **REG-01b**, **REG-04b**
+**Requirements**: SYNC-01, SYNC-02, SYNC-03a, SYNC-03b, SYNC-03c, SYNC-04, SYNC-05, **REG-01b**, **REG-04b**
 
 **Inherited from Phase 3 (2026-07-28).** Both need SYNC-01's model bindings to exist:
 **REG-01b** — `HubspotObjectType` resolves the local id column for a bound model.
