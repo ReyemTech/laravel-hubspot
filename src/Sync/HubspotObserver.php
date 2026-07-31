@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Sync;
 
 use Illuminate\Contracts\Bus\Dispatcher;
-use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Config;
 
 /**
  * The single generic Eloquent observer every bound model shares (SYNC-03).
@@ -20,10 +20,18 @@ use Illuminate\Database\Eloquent\Model;
  * invisible until a second model is bound. Every handler therefore looks the binding up by
  * `get_class($model)` at call time, against the container-resolved `ModelBindings`.
  *
- * That same re-resolution is why the dispatcher and the config repository are constructor
- * dependencies rather than facades or helpers: each event gets a fresh instance from the current
- * container, so `Bus::fake()`'s swap and any per-test config change are both picked up without this
- * class knowing either exists.
+ * That same re-resolution is why the dispatcher is a constructor dependency rather than a facade:
+ * each event gets a fresh instance from the current container, so `Bus::fake()`'s swap is picked up
+ * without this class knowing it exists.
+ *
+ * Config is read through the `Config` FACADE rather than a fourth constructor dependency, and that
+ * is a deliberate constraint rather than a preference. This class is public API of a released
+ * package, and `roave/backward-compatibility-check` -- live since 0.4.0, with no advisory opt-out
+ * by design -- counts a new required constructor argument as a breaking change. The facade resolves
+ * against the same container on every call, so a per-test `config()->set()` is picked up exactly as
+ * an injected repository would be, and `Illuminate\Support\Facades\Config` ships inside
+ * `illuminate/support`, which R3 and the vendor-namespace gate both already admit -- the same
+ * argument `SyncsToHubspot` makes for using the `App` facade.
  *
  * `created` and `updated` are wired here (04-05). `deleted`, `forceDeleted` and `restored` are
  * 04-06's, and the delete events are deliberately absent from `hubspot.auto_sync.on`'s default
@@ -34,7 +42,6 @@ final class HubspotObserver
     public function __construct(
         private readonly ModelBindings $bindings,
         private readonly Dispatcher $dispatcher,
-        private readonly ConfigRepository $config,
     ) {}
 
     public function created(Model $model): void
@@ -85,7 +92,7 @@ final class HubspotObserver
      */
     private function syncOn(string $event, Model $model): void
     {
-        if ($this->config->get('hubspot.auto_sync.enabled') !== true) {
+        if (Config::get('hubspot.auto_sync.enabled') !== true) {
             return;
         }
 
@@ -98,6 +105,21 @@ final class HubspotObserver
         // throws (Sync\ModelBindings::for()) if this observer were ever somehow invoked for a
         // class ServiceProvider::boot() had not, in fact, bound.
         $this->bindings->for(get_class($model));
+
+        // `queue => false` is the consumer explicitly asking for the API call to happen in the
+        // request, and it is honoured rather than being documentation over a hard-coded default
+        // (Codex, PR #48). It is the ONE way an outbound call reaches a request lifecycle, which is
+        // why STANDARDS 11's contract is stated of the default rather than of every configuration.
+        //
+        // afterCommit() is deliberately absent from this branch: it defers a PUSH to the queue
+        // until the transaction commits, and there is no push to defer here. A consumer running
+        // this inside a transaction gets the call before the commit -- which is inherent to asking
+        // for a synchronous sync, not something this method can paper over.
+        if (Config::get('hubspot.auto_sync.queue', true) === false) {
+            $this->dispatcher->dispatchSync(new SyncHubspotObjectJob($model));
+
+            return;
+        }
 
         // afterCommit() is load-bearing, not defensive. SerializesModels re-fetches by key on the
         // worker; a job made visible before its creating transaction commits cannot find that row,
@@ -139,7 +161,7 @@ final class HubspotObserver
             return $declared;
         }
 
-        $configured = $this->config->get('hubspot.auto_sync.on', []);
+        $configured = Config::get('hubspot.auto_sync.on', []);
 
         return is_array($configured) ? $configured : [];
     }

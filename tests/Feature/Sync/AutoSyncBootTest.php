@@ -205,6 +205,72 @@ final class AutoSyncBootTest extends SyncTestCase
     }
 
     /**
+     * `auto_sync.queue => false` is honoured, not decoration (Codex, PR #48).
+     *
+     * The option was documented in `config/hubspot.php` before it did anything, which is the same
+     * defect shape as a documented `$hubspotUpdateMap` that nothing read (Codex, PR #42): a
+     * consumer sets it, nothing changes, and the config file says otherwise.
+     *
+     * `assertDispatchedSync()` is what separates the two paths: `BusFake` records synchronous
+     * dispatches in their own bucket, so a QUEUED dispatch cannot satisfy it. Note that plain
+     * `assertNotDispatched()` is no use as a companion assertion here -- it fails if the job
+     * appears in ANY bucket, sync included -- so the queued direction is pinned by its own test
+     * below instead.
+     */
+    public function test_the_queue_switch_dispatches_synchronously_when_turned_off(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+
+        Bus::fake();
+
+        SyncedLead::create(['email' => 'sync-now@example.com', 'first_name' => 'Ada']);
+
+        Bus::assertDispatchedSync(SyncHubspotObjectJob::class);
+    }
+
+    /**
+     * The other side of the same switch: left at its default, the job goes to the queue and NOT
+     * through the synchronous path. Without this, an implementation that always dispatched
+     * synchronously would satisfy the test above and never be caught.
+     */
+    public function test_the_queue_switch_defaults_to_queueing(): void
+    {
+        Bus::fake();
+
+        SyncedLead::create(['email' => 'queued@example.com', 'first_name' => 'Ada']);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+        Bus::assertNotDispatchedSync(SyncHubspotObjectJob::class);
+    }
+
+    /**
+     * A published `config/hubspot.php` that predates the `queue` key still queues.
+     *
+     * Consumers publish the config file and then upgrade the package, so an installation whose
+     * `auto_sync` block has `enabled` and `on` but no `queue` is the ordinary upgrade path, not an
+     * edge case. The default has to be the safe one -- silently switching those installations to
+     * synchronous dispatch would put HubSpot on their request path with nothing in their diff to
+     * explain it.
+     *
+     * The whole `auto_sync` array is replaced rather than the one key unset, because that is what
+     * an older published file actually looks like.
+     */
+    public function test_an_auto_sync_block_without_the_queue_key_still_queues(): void
+    {
+        config()->set('hubspot.auto_sync', [
+            'enabled' => true,
+            'on' => ['created', 'updated'],
+        ]);
+
+        Bus::fake();
+
+        SyncedLead::create(['email' => 'legacy-config@example.com', 'first_name' => 'Ada']);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+        Bus::assertNotDispatchedSync(SyncHubspotObjectJob::class);
+    }
+
+    /**
      * D-17. `SoftDeletes::restore()` calls `save()` internally, so Eloquent fires `updated` BEFORE
      * `restored` -- an unguarded `updated` handler therefore costs a property push on every restore,
      * on top of whatever the `restored` handler (04-06) does, for two API calls where one was

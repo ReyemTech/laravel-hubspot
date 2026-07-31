@@ -30,6 +30,10 @@ tech-stack:
     - "getHubspotAutoSync() answers 'what did the model say' in three shapes -- a list, false, or
       null for said-nothing -- and deliberately does NOT fold in the config default: a reader that
       did could no longer tell `false` from silence, which is the one distinction its caller needs."
+    - "A config key that nothing reads is a defect, not a placeholder: auto_sync.queue shipped
+      documented and unread, and Codex rejected it on PR #48 the same way it rejected the
+      $hubspotUpdateMap deferral on PR #42. Either wire it in the plan that adds it, or do not add
+      it."
     - "property_exists(), never $this->prop directly, for an optional model property: reading it
       directly goes through Model::__get() and reaches the ATTRIBUTE bag, so a column of that name
       would silently pose as a declaration. Same reason getHubspotUpdateMap() uses it."
@@ -56,10 +60,14 @@ key-decisions:
   - "ServiceProvider::boot() needed NO change -- confirmed rather than assumed, as the plan asked.
     `observe()` takes a class string and registers every method the observer defines, so `updated`
     was wired the moment the method existed."
-  - "The config repository became a constructor dependency of HubspotObserver, for the identical
-    reason the dispatcher already was: Model::observe() re-resolves the observer from the container
-    on every event, so a constructor dependency picks up test-time swaps while a facade or helper
-    would bypass R3's layer rule as well."
+  - "Config is read through the Config FACADE, not a constructor dependency. Injection was the
+    first implementation and was reverted: HubspotObserver is public API of a released package, and
+    roave/backward-compatibility-check -- live since 0.4.0, with no advisory opt-out by design --
+    counts a new REQUIRED constructor argument as a break. The facade resolves against the same
+    container per call, so a per-test config()->set() is picked up exactly as an injected repository
+    would be, and Illuminate\\Support\\Facades\\Config ships in illuminate/support, which R3 and the
+    vendor-namespace gate already admit -- the argument SyncsToHubspot makes for the App facade.
+    The Dispatcher stays injected: it was there before 0.4.0, so it costs nothing."
 
 patterns-established:
   - "When a mutant survives, ask whether the code it mutates is a behaviour before writing a test to
@@ -120,13 +128,13 @@ coverage:
       architecture rules all fire"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (757 passed, 2833 assertions)"
+        ref: "vendor/bin/pest (760 passed, 2838 assertions)"
         status: pass
       - kind: other
         ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=HubspotObserver,SyncsToHubspot (100.00%, 59/59)"
+        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=HubspotObserver,SyncsToHubspot (100.00%, 65/65)"
         status: pass
       - kind: other
         ref: "bash scripts/ci/verify-arch-rules-fire.sh (10/10 rules fired)"
@@ -151,7 +159,9 @@ status: complete
    - the empty list when the model declared `false`,
    - `hubspot.auto_sync.on` when the model declared nothing.
 3. Resolve the binding by `get_class($model)` — throws `unboundSyncModel()` if somehow unbound.
-4. Dispatch `SyncHubspotObjectJob` with `afterCommit()`.
+4. Dispatch `SyncHubspotObjectJob` — via `dispatchSync()` when `auto_sync.queue` is `false`,
+   otherwise `dispatch()` with `afterCommit()`. `afterCommit()` is deliberately absent from the
+   synchronous branch: it defers a queue PUSH until commit, and there is no push to defer.
 
 `updated()` additionally returns early when `getOriginal('deleted_at') !== null`, BEFORE reaching
 the gate — a restore is not an update (D-17).
@@ -170,6 +180,28 @@ the gate — a restore is not an update (D-17).
 deliberately: archiving a HubSpot record is not reversible through the API, so a local delete
 removing CRM history has to be asked for rather than inherited from a default. 04-09's doctor
 reports the resolved values of all of these.
+
+## Review findings closed on PR #48
+
+**Codex P2 — `auto_sync.queue` was dead configuration.** The key was documented in
+`config/hubspot.php` and read by nothing, so a consumer setting `false` got no change and a config
+file that said otherwise. Same defect shape as the `$hubspotUpdateMap` deferral Codex rejected on
+PR #42. Now honoured: `false` dispatches through `Dispatcher::dispatchSync()`, and `afterCommit()`
+is deliberately absent from that branch because there is no queue push to defer. This is the ONE
+way an outbound call reaches a request lifecycle, which is why STANDARDS §11's contract is stated of
+the DEFAULT rather than of every configuration. Both directions are tested, plus the absent-key
+default -- an upgrade whose published config predates the key must keep queueing.
+
+**The backward-compatibility gate, live for the first time.** `HubspotObserver` originally took the
+config repository as a fourth constructor argument, and `roave/backward-compatibility-check` counts
+a new REQUIRED constructor argument as a break. That gate deliberately has no advisory opt-out
+(supply-chain.yml: "no unconditional success-on-failure step"), and 0.4.0 is the first release it
+had a base to compare against -- so this plan is the first change it has ever measured.
+
+Config is therefore read through the `Config` FACADE and the constructor is unchanged. An optional
+fourth argument with a container fallback would also have satisfied roave, and was rejected: the
+fallback branch is only reachable by constructing the observer by hand, so it would have been
+untestable defensive code -- the exact thing this plan already deleted two of.
 
 ## Deviations
 

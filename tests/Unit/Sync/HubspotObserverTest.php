@@ -40,7 +40,6 @@ final class HubspotObserverTest extends TestCase
         $observer = new HubspotObserver(
             new ModelBindings(app('config')),
             app(Dispatcher::class),
-            app('config'),
         );
 
         $observer->created(new SyncedLead(['email' => 'ada@example.com']));
@@ -67,7 +66,6 @@ final class HubspotObserverTest extends TestCase
         $observer = new HubspotObserver(
             new ModelBindings(app('config')),
             app(Dispatcher::class),
-            app('config'),
         );
 
         $this->expectException(ConfigurationException::class);
@@ -106,7 +104,6 @@ final class HubspotObserverTest extends TestCase
         $observer = new HubspotObserver(
             new ModelBindings(app('config')),
             app(Dispatcher::class),
-            app('config'),
         );
 
         $observer->created($model);
@@ -143,7 +140,6 @@ final class HubspotObserverTest extends TestCase
         $observer = new HubspotObserver(
             new ModelBindings(app('config')),
             app(Dispatcher::class),
-            app('config'),
         );
 
         $observer->created($lead);
@@ -190,7 +186,6 @@ final class HubspotObserverTest extends TestCase
         $observer = new HubspotObserver(
             new ModelBindings(app('config')),
             app(Dispatcher::class),
-            app('config'),
         );
 
         $observer->created($model);
