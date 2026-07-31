@@ -164,62 +164,15 @@ function composerManifestQualifiedNamesIn(string $contents): array
             continue;
         }
 
-        $cursor = $k + 1;
+        [$groupNames, $groupConsumed, $k] = composerManifestGroupUseAt($tokens, $significant, $k);
 
-        if (isset($significant[$cursor]) && in_array($tokens[$significant[$cursor]]->id, [T_FUNCTION, T_CONST], true)) {
-            $cursor++;
+        foreach ($groupNames as $name) {
+            $names[] = $name;
         }
 
-        $prefixIndex = $significant[$cursor] ?? null;
-        $separatorIndex = $significant[$cursor + 1] ?? null;
-        $braceIndex = $significant[$cursor + 2] ?? null;
-
-        if ($prefixIndex === null || $separatorIndex === null || $braceIndex === null) {
-            continue;
+        foreach ($groupConsumed as $index) {
+            $consumed[$index] = true;
         }
-
-        if (! in_array($tokens[$prefixIndex]->id, [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
-            continue;
-        }
-
-        if ($tokens[$separatorIndex]->id !== T_NS_SEPARATOR || $tokens[$braceIndex]->text !== '{') {
-            continue;
-        }
-
-        $prefix = ltrim($tokens[$prefixIndex]->text, '\\');
-        $consumed[$prefixIndex] = true;
-
-        $member = $cursor + 3;
-        $skipAlias = false;
-
-        while ($member < $count) {
-            $memberToken = $tokens[$significant[$member]];
-
-            if ($memberToken->text === '}') {
-                break;
-            }
-
-            if ($memberToken->id === T_AS) {
-                $skipAlias = true;
-                $member++;
-
-                continue;
-            }
-
-            if (in_array($memberToken->id, [T_STRING, T_NAME_QUALIFIED], true)) {
-                $consumed[$significant[$member]] = true;
-
-                if ($skipAlias) {
-                    $skipAlias = false;
-                } else {
-                    $names[] = $prefix.'\\'.$memberToken->text;
-                }
-            }
-
-            $member++;
-        }
-
-        $k = $member;
     }
 
     foreach ($tokens as $index => $token) {
@@ -235,6 +188,88 @@ function composerManifestQualifiedNamesIn(string $contents): array
     }
 
     return $names;
+}
+
+/**
+ * The names a GROUP USE beginning at significant index `$k` contributes, the token indices it
+ * consumed, and the index to resume scanning from.
+ *
+ * Extracted from composerManifestQualifiedNamesIn() because the two together exceeded phpcs's
+ * cyclomatic-complexity ceiling of 10, which CI enforces as the "code shape" gate. The split is
+ * the honest one anyway: "what does this one group-use statement contribute" is a different
+ * question from "collect every name in the file".
+ *
+ * Returns `[[], [], $k]` unchanged when the statement at `$k` is an ordinary import, which the
+ * caller's generic pass already handles correctly.
+ *
+ * @param  array<PhpToken>  $tokens
+ * @param  list<int>  $significant
+ * @return array{0: list<string>, 1: list<int>, 2: int}
+ */
+function composerManifestGroupUseAt(array $tokens, array $significant, int $k): array
+{
+    $count = count($significant);
+    $cursor = $k + 1;
+
+    // `use function Foo\{...}` and `use const Foo\{...}` put a keyword before the prefix.
+    if (isset($significant[$cursor]) && in_array($tokens[$significant[$cursor]]->id, [T_FUNCTION, T_CONST], true)) {
+        $cursor++;
+    }
+
+    $prefixIndex = $significant[$cursor] ?? null;
+    $separatorIndex = $significant[$cursor + 1] ?? null;
+    $braceIndex = $significant[$cursor + 2] ?? null;
+
+    if ($prefixIndex === null || $separatorIndex === null || $braceIndex === null) {
+        return [[], [], $k];
+    }
+
+    $isGroup = in_array($tokens[$prefixIndex]->id, [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
+        && $tokens[$separatorIndex]->id === T_NS_SEPARATOR
+        && $tokens[$braceIndex]->text === '{';
+
+    if (! $isGroup) {
+        return [[], [], $k];
+    }
+
+    $prefix = ltrim($tokens[$prefixIndex]->text, '\\');
+
+    [$names, $memberConsumed, $end] = composerManifestGroupUseMembers($tokens, $significant, $cursor + 3, $prefix);
+
+    return [$names, array_merge([$prefixIndex], $memberConsumed), $end];
+}
+
+/**
+ * The names and consumed token indices of a group-use member list, plus the index of its closing
+ * brace.
+ *
+ * @param  array<PhpToken>  $tokens
+ * @param  list<int>  $significant
+ * @return array{0: list<string>, 1: list<int>, 2: int}
+ */
+function composerManifestGroupUseMembers(array $tokens, array $significant, int $start, string $prefix): array
+{
+    $count = count($significant);
+    $names = [];
+    $consumed = [];
+    $member = $start;
+    $skipAlias = false;
+
+    while ($member < $count && $tokens[$significant[$member]]->text !== '}') {
+        $token = $tokens[$significant[$member]];
+
+        if ($token->id === T_AS) {
+            // The identifier that follows is a local alias, not a namespace segment.
+            $skipAlias = true;
+        } elseif (in_array($token->id, [T_STRING, T_NAME_QUALIFIED], true)) {
+            $consumed[] = $significant[$member];
+            $skipAlias ? $skipAlias = false : $names[] = $prefix.'\\'.$token->text;
+        }
+
+        $member++;
+    }
+
+    return [$names, $consumed, $member];
 }
 
 /**
@@ -384,6 +419,64 @@ function composerManifestInstalledPsr4Prefixes(): array
 }
 
 /**
+ * The absolute source directories one PSR-4 prefix maps to, given Composer's string OR array form.
+ *
+ * Split out of composerManifestPsr4EntriesForPackage() to stay under the code-shape gate's
+ * cyclomatic-complexity ceiling, and because normalising one prefix's paths is its own concern.
+ *
+ * @param  mixed  $relativeSrc
+ * @return list<string>
+ */
+function composerManifestPsr4Paths($relativeSrc, string $packagePath): array
+{
+    /** @var list<mixed> $candidates */
+    $candidates = is_array($relativeSrc) ? array_values($relativeSrc) : [$relativeSrc];
+
+    $paths = [];
+
+    foreach ($candidates as $relative) {
+        // Guards the ARRAY branch, where Composer permits any scalar shape; the string branch is
+        // already narrow. Keeping one guard for both is why it reads as redundant on one path.
+        if (is_string($relative)) {
+            $paths[] = rtrim($packagePath, '/').'/'.trim($relative, '/');
+        }
+    }
+
+    return $paths;
+}
+
+/**
+ * One installed package's `[name, psr-4 map, absolute path]`, or null when it declares nothing
+ * usable.
+ *
+ * Split from composerManifestPsr4EntriesForPackage() purely to stay under the code-shape gate's
+ * cyclomatic-complexity ceiling: the shape guards and the mapping loop are each simple, and only
+ * their sum was over. Validation and iteration are separate concerns regardless.
+ *
+ * @param  array<string, mixed>  $package
+ * @param  array<string, string>  $paths
+ * @return array{0: string, 1: array<mixed, mixed>, 2: string}|null
+ */
+function composerManifestPsr4MapFor(array $package, array $paths): ?array
+{
+    $name = $package['name'] ?? null;
+    $autoload = $package['autoload'] ?? null;
+
+    if (! is_string($name) || ! is_array($autoload)) {
+        return null;
+    }
+
+    $psr4 = $autoload['psr-4'] ?? null;
+    $packagePath = $paths[$name] ?? null;
+
+    if (! is_array($psr4) || ! is_string($packagePath)) {
+        return null;
+    }
+
+    return [$name, $psr4, $packagePath];
+}
+
+/**
  * The PSR-4 entries of ONE installed package, or none if it declares no usable ones.
  *
  * Extracted from composerManifestInstalledPsr4Prefixes() rather than inlined: together the two
@@ -398,19 +491,13 @@ function composerManifestInstalledPsr4Prefixes(): array
  */
 function composerManifestPsr4EntriesForPackage(array $package, array $paths): array
 {
-    $name = $package['name'] ?? null;
-    $autoload = $package['autoload'] ?? null;
-    $psr4 = is_array($autoload) ? ($autoload['psr-4'] ?? null) : null;
+    $unpacked = composerManifestPsr4MapFor($package, $paths);
 
-    if (! is_string($name) || ! is_array($psr4)) {
+    if ($unpacked === null) {
         return [];
     }
 
-    $packagePath = $paths[$name] ?? null;
-
-    if ($packagePath === null) {
-        return [];
-    }
+    [$name, $psr4, $packagePath] = $unpacked;
 
     $entries = [];
 
@@ -423,18 +510,8 @@ function composerManifestPsr4EntriesForPackage(array $package, array $paths): ar
         // tree already uses both -- laravel/framework maps Illuminate\Support\ across four paths.
         // Discarding the array form would drop the prefix entirely, so a reference owned by such a
         // package resolves to a broader prefix or to nothing at all. Codex, PR #40.
-        $paths = is_array($relativeSrc) ? array_values($relativeSrc) : [$relativeSrc];
-
-        foreach ($paths as $relative) {
-            if (! is_string($relative)) {
-                continue;
-            }
-
-            $entries[] = [
-                'package' => $name,
-                'prefix' => $prefix,
-                'path' => rtrim($packagePath, '/').'/'.trim($relative, '/'),
-            ];
+        foreach (composerManifestPsr4Paths($relativeSrc, $packagePath) as $path) {
+            $entries[] = ['package' => $name, 'prefix' => $prefix, 'path' => $path];
         }
     }
 
