@@ -25,6 +25,9 @@ final class MappedDeal extends Model
 
     protected $guarded = [];
 
+    /**
+     * @return BelongsTo<MappedStage, $this>
+     */
     public function stage(): BelongsTo
     {
         return $this->belongsTo(MappedStage::class);
