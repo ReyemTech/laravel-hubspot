@@ -38,6 +38,30 @@ final class ServiceProviderTest extends TestCase
         return [ServiceProvider::class];
     }
 
+    /**
+     * Points the application's config directory at one this process owns, BEFORE any provider
+     * boots.
+     *
+     * The timing is the whole trick. `ServiceProvider::boot()` computes its publish target once,
+     * as `$this->app->configPath('hubspot.php')`, and hands it to `publishes()`, which stores it in
+     * a STATIC array -- so redirecting the path afterwards moves nothing, and `vendor:publish` would
+     * still write into the skeleton. `defineEnvironment()` runs while the application is being
+     * created, which is the last moment the target is still open to change.
+     *
+     * Losing the skeleton's own config files costs nothing here: Testbench merges the framework
+     * defaults from `getFrameworkDefaultConfigurations()`, which is independent of this path, and
+     * `hubspot.*` reaches config through the provider's own `mergeConfigFrom()` rather than through
+     * any published file -- which is exactly what
+     * `test_it_merges_config_hubspot_php_default_values_without_publishing` asserts, and it still
+     * passes.
+     *
+     * @param  Application  $app
+     */
+    protected function defineEnvironment($app): void
+    {
+        $app->useConfigPath(self::emptied(self::isolatedConfigDirectory()));
+    }
+
     public function test_it_merges_config_hubspot_php_default_values_without_publishing(): void
     {
         self::assertNull(config('hubspot.token'));
@@ -48,9 +72,36 @@ final class ServiceProviderTest extends TestCase
         self::assertSame(300, config('hubspot.webhooks.tolerance'));
     }
 
+    /**
+     * The publish target must live outside the Testbench skeleton, and this asserts it rather than
+     * assuming it -- the invariant is the whole point of `useConfigPath()` below.
+     *
+     * `config_path()` under Testbench resolves into
+     * `vendor/orchestra/testbench-core/laravel/config`, which is ONE directory on disk shared by
+     * every parallel worker. Publishing there and deleting it in a `finally` opens a window in
+     * which another worker's `LoadConfiguration` globs the directory, sees `hubspot.php`, and then
+     * `require`s a path this test has since removed:
+     *
+     *     Failed opening required '.../testbench-core/laravel/config/hubspot.php'
+     *     at vendor/orchestra/testbench-core/src/Bootstrap/LoadConfiguration.php:89
+     *
+     * That is a real CI failure, not a hypothetical: it took down the `mutation` job on `main` at
+     * both `8d9a247` and `8b3f64c`, and the victim is whichever unrelated test happened to be
+     * booting at the time, never this one. It reproduces only under `--parallel`, which is why the
+     * gate that runs parallel found it and the ordinary suite never did.
+     */
+    public function test_the_config_publish_target_is_not_inside_the_shared_testbench_skeleton(): void
+    {
+        self::assertStringNotContainsString(
+            'testbench-core',
+            str_replace('\\', '/', self::isolatedConfigPath()),
+            'Publishing into the Testbench skeleton mutates state every parallel worker shares.',
+        );
+    }
+
     public function test_it_publishes_config_hubspot_php_under_the_hubspot_config_tag(): void
     {
-        $published = config_path('hubspot.php');
+        $published = self::isolatedConfigPath();
 
         self::removePublished($published);
 
@@ -82,6 +133,85 @@ final class ServiceProviderTest extends TestCase
         } finally {
             self::removePublished($published);
         }
+    }
+
+    /**
+     * A config file left behind by an interrupted run must never reach the next application boot.
+     *
+     * This is the failure Codex named on PR #45, made deterministic: the sentinel below stands in
+     * for a `hubspot.php` that a killed run published and never cleaned up, under a PID the OS has
+     * since handed to this process. Without the clearing step, Testbench loads it during
+     * bootstrapping and every `hubspot.*` assertion in this file starts reading a published file
+     * instead of `mergeConfigFrom()` -- passing for the wrong reason.
+     */
+    public function test_a_stale_published_config_never_reaches_the_next_boot(): void
+    {
+        file_put_contents(
+            self::isolatedConfigPath(),
+            '<?php return '.var_export(['store' => 'stale-sentinel'], true).';',
+        );
+
+        $this->refreshApplication();
+
+        self::assertFalse(
+            is_file(self::isolatedConfigPath()),
+            'A config file surviving into the next boot is adopted by Testbench before the '
+            .'provider runs.',
+        );
+        self::assertSame(
+            'cache',
+            config('hubspot.store'),
+            'The default must come from mergeConfigFrom(), never from a leftover published file.',
+        );
+    }
+
+    /**
+     * A config directory this process owns alone.
+     *
+     * Keyed by PID because `pest --parallel` isolates workers as PROCESSES, not threads: two
+     * workers running this file concurrently would otherwise share a directory and race each other
+     * exactly the way the skeleton race worked. `sys_get_temp_dir()` rather than anywhere in the
+     * repository, so nothing a failed run leaves behind can be picked up by a later one as source.
+     */
+    private static function isolatedConfigDirectory(): string
+    {
+        return sys_get_temp_dir().'/laravel-hubspot-publish-'.getmypid();
+    }
+
+    /**
+     * Creates the directory if absent, and empties it if not.
+     *
+     * Emptying is the part that matters (Codex, PR #45). A PID is unique among LIVE processes, not
+     * over time: a run killed between publishing and its `finally` leaves `hubspot.php` behind, and
+     * the next process to be handed that PID adopts it. Because `useConfigPath()` is installed
+     * before configuration bootstrapping, Testbench would then LOAD that stale file -- and
+     * `test_it_merges_config_hubspot_php_default_values_without_publishing()` would pass while
+     * exercising nothing, since its values would be coming from a published file rather than from
+     * `mergeConfigFrom()`. A vacuous pass is worse than a failure.
+     *
+     * Plain filesystem calls rather than the `File` facade: this runs while the application is
+     * still being created, which is exactly when depending on a resolved facade root is unwise.
+     */
+    private static function emptied(string $directory): string
+    {
+        if (! is_dir($directory)) {
+            mkdir($directory, 0o777, true);
+
+            return $directory;
+        }
+
+        foreach ((array) glob($directory.'/*') as $entry) {
+            if (is_string($entry) && is_file($entry)) {
+                unlink($entry);
+            }
+        }
+
+        return $directory;
+    }
+
+    private static function isolatedConfigPath(): string
+    {
+        return self::isolatedConfigDirectory().'/hubspot.php';
     }
 
     /**
