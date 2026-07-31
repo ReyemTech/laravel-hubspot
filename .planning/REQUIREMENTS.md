@@ -398,25 +398,33 @@ REL-02.
     traverses a relation; `'close_date' => fn (Deal $d) => ...` computes. `$hubspotUpdateMap` narrows
     what is sent on update.
 
-- [ ] **SYNC-03**: One model trait, one observer, one queued job
+- **SYNC-03**: One model trait, one observer, one queued job
   — `REQ-model-sync-trait` (core spec §3, §7, §13 Phase 3)
 
-  - **Not a single-plan requirement — listed in three plans' frontmatter (04-02, 04-05, 04-08)
-    without a lettered split.** 04-02 (2026-07-30) ships the trait/observer/job WIRING this
-    acceptance describes (`SyncsToHubspot`, `HubspotObserver`, `SyncHubspotObjectJob`, the
-    service provider attaching the observer at boot with nothing required in the consumer's
-    `AppServiceProvider`) and proves it end to end in `TracerSyncTest.php`. It does **not** prove
-    "queued by default; no API call in a request lifecycle" under `Bus::fake()` (04-05's own
-    `AutoSyncBootTest.php`), the per-model `$hubspotAutoSync` override (04-05), or "syncing a
-    collection issues one batch request" (04-08). Do not tick until all three land — flagged here
-    rather than silently ticked by 04-02, since `requirements mark-complete` has no way to express
-    a three-plan requirement without this note.
+  **Split into SYNC-03a/b/c on 2026-07-31**, matching the REG-01a/b, REG-04a/b and SYNC-01a/b
+  precedent. The original single requirement was listed in the `requirements:` frontmatter of THREE
+  plans (04-02, 04-05, 04-08), so no plan could honestly tick it and `requirements mark-complete`
+  had no way to express that. 04-02 reverted a premature tick rather than accept it; this split is
+  the fix. **SYNC-03 itself is never ticked — its three parts are.**
 
-  - Acceptance: `SyncsToHubspot` replaces per-object traits entirely, backed by one queued job and one
-    generic observer with the object type carried as data. The service provider reads `models` at boot
-    and attaches the generic observer — nothing is required in the consumer's `AppServiceProvider`.
-    Per-model override via `protected array $hubspotAutoSync = ['created'];` or `false`. Sync is queued
-    by default; no API call occurs in a request lifecycle unless explicitly told otherwise.
+  - [x] **SYNC-03a**: the trait, the generic observer and the queued job, wired at boot — **04-02**
+    - Acceptance: `SyncsToHubspot` replaces per-object traits entirely, backed by one queued job and
+      one generic observer with the object type carried as data. The service provider reads `models`
+      at boot and attaches the generic observer — nothing is required in the consumer's
+      `AppServiceProvider`.
+    - Shipped 2026-07-30, proven end to end in `tests/Feature/Sync/TracerSyncTest.php`.
+
+  - [ ] **SYNC-03b**: queued by default, and the per-model override — **04-05**
+    - Acceptance: sync is queued by default and **no API call occurs in a request lifecycle** unless
+      explicitly told otherwise, asserted under `Bus::fake()`. Per-model override via
+      `protected array $hubspotAutoSync = ['created'];` or `false`.
+    - `tests/Feature/Sync/AutoSyncBootTest.php`.
+
+  - [ ] **SYNC-03c**: a collection issues one batch request, not N — **04-08**
+    - Acceptance: `Model::syncManyToHubspot(iterable $models)` (D-16) resolves to one queued job and
+      one `ObjectGateway::upsertMany()` call, and the test asserting the **exact** request count
+      passes. An N+1 here is a test failure, not a code smell.
+    - `tests/Feature/Sync/BatchSyncTest.php`.
 
 - [ ] **SYNC-04**: Delete policy derived from the model, guarded by default
   — `REQ-delete-policy` (core spec §7)
@@ -809,7 +817,9 @@ Deferred. Tracked but not in the current roadmap.
 | REG-04 | Phase 3 + 4 | **OPEN at the end of Phase 3, deliberately.** Split 2026-07-28 into REG-04a / REG-04b; raised by Codex on PR #22. **REG-04a DONE 2026-07-29 (03-03):** `hubspot:doctor` reports the store per concern, the bound resolver, reconciliation state, and rows across directions; `hubspot:associations:doctor` ships in full, searching every reported association type for the expected directional id and recording a pairing only when both directions were observed. **REG-04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — needs SYNC-01a. `hubspot:doctor` NAMES that section as not built rather than omitting it, and a test holds that; printing "not available yet" is not an implementation, so do not tick until 04b lands |
 | SYNC-01 | Phase 4 + 9 | **Split 2026-07-30 (D-15).** SYNC-01's acceptance text named all three binding modes (Attached, API-only, Generated), but Generated — scaffolding a model plus migration — is an installer function and the installer is SHIP-01. **SYNC-01a (Phase 4):** bindings keyed by model, `Model::class => ['object' => ..., 'id_property' => ...]`; Attached and API-only modes both work; three local models binding to `contacts` simultaneously is expressible, each resolving its own link row. **SYNC-01b (Phase 9, with SHIP-01):** Generated mode. Do not tick SYNC-01 until both halves land |
 | SYNC-02 | Phase 4 | Pending |
-| SYNC-03 | Phase 4 | Pending -- 04-02 ships the trait/observer/job wiring (2026-07-30); queued-by-default (04-05) and batch dispatch (04-08) still owed |
+| SYNC-03a | Phase 4 | **Complete** -- trait, observer and queued job wired at boot (04-02, 2026-07-30) |
+| SYNC-03b | Phase 4 | Pending -- queued by default under Bus::fake(), and the per-model override (04-05) |
+| SYNC-03c | Phase 4 | Pending -- one collection, one batch request (04-08) |
 | SYNC-04 | Phase 4 | Pending |
 | SYNC-05 | Phase 4 | Pending |
 | HOOK-01 | Phase 5 | Pending |
