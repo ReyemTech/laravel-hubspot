@@ -13,10 +13,10 @@
 #
 #   Direction B -- no vendor namespace root other than HubSpot (R1 already governs where that may
 #   appear) or Illuminate (Direction A governs it) may appear in src/, unless it is on the
-#   enumerated grandfather list below. D-02 inverted the original shape of this check (from
-#   "block Illuminate roots with no backing require" to "block non-Illuminate vendor roots"); this
-#   script ships BOTH directions, because D-19 is exactly the live defect the original direction
-#   would have caught, and neither direction is a substitute for the other.
+#   enumerated approved-vendor-root list below. D-02 inverted the original shape of this check
+#   (from "block Illuminate roots with no backing require" to "block non-Illuminate vendor
+#   roots"); this script ships BOTH directions, because D-19 is exactly the live defect the
+#   original direction would have caught, and neither direction is a substitute for the other.
 #
 # LIMITATION, stated rather than discovered: this check reads `use` imports and fully-qualified
 # class references via a regex, not a full parser. It cannot see a call to a global helper
@@ -35,34 +35,63 @@ cd "$ROOT"
 
 FIXTURES_DIR="$ROOT/tests/Ci/Fixtures/VendorNamespaces"
 
-# Each entry below is a third-party vendor root grandfathered onto this allow-list, with its own
-# written reason. Being listed is a DEFERRAL, not an approval: this gate exists so a FOURTH root
-# cannot arrive in src/ unnoticed, not to bless these three forever. Fixing any of them means
-# either a STANDARDS.md Sec.2 third-party declaration or a dependency inversion, and neither is
-# this plan's to make.
-GRANDFATHERED_VENDOR_ROOTS=(
-    # src/Gateway/HubspotClientFactory.php and four files under src/Testing/. Arrives
-    # transitively through hubspot/api-client, a declared require; declaring it directly would be
-    # a third-party addition under STANDARDS.md Sec.2.
+# Vendor roots approved WITHOUT restriction, because a declared `require` backs every reference --
+# not because they are deferred. Each entry carries its own written reason; each is also admitted
+# in composer.json by exact name (tests/Ci/ComposerManifestTest.php's
+# composerManifestEnumeratedExceptions()), never by a `guzzlehttp/`- or `psr/`-prefix rule.
+APPROVED_VENDOR_ROOTS=(
+    # src/Gateway/HubspotClientFactory.php and four files under src/Testing/. Declared directly as
+    # `guzzlehttp/guzzle` (^7.3, matching hubspot/api-client's own requirement) under
+    # STANDARDS.md Sec.2 -- previously only a transitive dependency of hubspot/api-client, which
+    # STANDARDS.md Sec.2 is explicit would "work in practice -- and would still be an undeclared
+    # dependency."
     "GuzzleHttp"
     # src/Testing/RecordedRequest.php and src/Testing/RequestLog.php -- PSR-7 message interfaces,
-    # transitive through the same SDK.
+    # used only as type hints, never implemented. Declared directly as `psr/http-message`
+    # (^1.1 || ^2.0) under STANDARDS.md Sec.2.
     "Psr"
-    # src/Testing/HubspotFake.php and its collaborator RequestLog.php use
-    # PHPUnit\Framework\Assert, so a require-dev package is named from production code. This is
-    # the same shape Laravel's own Illuminate\Support\Testing\Fakes has, and it is recorded here
-    # rather than fixed here.
-    "PHPUnit"
 )
 
-is_grandfathered_root() {
-    local root="$1"
-    local entry
+# Vendor roots approved ONLY under one path prefix inside src/, with no backing `require` at all.
+# Format: "<root>:<path-prefix>" -- the path check is a literal prefix match against the file path
+# as it is passed to this gate (repo-relative for the real scan, and constructed to contain the
+# same prefix for --self-test's scratch fixtures).
+PATH_SCOPED_VENDOR_ROOTS=(
+    # src/Testing/RequestLog.php names PHPUnit\Framework\Assert from production code. Declaring
+    # `phpunit/phpunit` in "require" would ship a test framework to every consumer's production
+    # vendor tree -- a worse defect than the one being fixed. This is src/Testing/: test-support
+    # code loaded only from a consumer's own test suite, where PHPUnit is present by definition --
+    # the same shape Laravel's own Illuminate\Support\Testing\Fakes has. The exception is scoped
+    # to this one directory on purpose: PHPUnit named anywhere else in src/ still fails the gate.
+    "PHPUnit:src/Testing/"
+)
 
-    for entry in "${GRANDFATHERED_VENDOR_ROOTS[@]}"; do
+is_approved_vendor_root() {
+    local root="$1"
+    local file="$2"
+    local entry
+    local scoped_root
+    local scoped_prefix
+
+    for entry in "${APPROVED_VENDOR_ROOTS[@]}"; do
         if [ "$root" = "$entry" ]; then
             return 0
         fi
+    done
+
+    for entry in "${PATH_SCOPED_VENDOR_ROOTS[@]}"; do
+        scoped_root="${entry%%:*}"
+        scoped_prefix="${entry#*:}"
+
+        if [ "$root" != "$scoped_root" ]; then
+            continue
+        fi
+
+        case "$file" in
+            "${scoped_prefix}"* | *"/${scoped_prefix}"*)
+                return 0
+                ;;
+        esac
     done
 
     return 1
@@ -255,8 +284,8 @@ foreach (array_unique($illuminateSegments) as $segment) {
 }
 
 // Direction B: every other vendor namespace root with at least two segments. Filtering against
-// the grandfather list happens in the caller, not here, so both the real scan and --self-test
-// apply the identical, single filtering step.
+// the approved-vendor-root list happens in the caller, not here, so both the real scan and
+// --self-test apply the identical, single filtering step.
 foreach (array_unique($vendorRoots) as $root) {
     echo "DIRECTION_B\t{$root}\t{$file}\n";
 }
@@ -264,7 +293,7 @@ PHP
 
 # The atomic per-file detection primitive, shared by the real scan and --self-test: given one PHP
 # file and one composer.json, print every raw finding for BOTH directions (Direction B is not yet
-# filtered against the grandfather list -- callers do that, identically, in both paths).
+# filtered against the approved-vendor-root list -- callers do that, identically, in both paths).
 detect_violations() {
     local file="$1"
     local composer_json="$2"
@@ -289,8 +318,8 @@ scan_tree() {
 
             if [ "$direction" = "DIRECTION_A" ]; then
                 violations_a+=("${source_file}: imports an Illuminate root with no backing require -- add \"${package_or_root}\" to composer.json's require block")
-            elif [ "$direction" = "DIRECTION_B" ] && ! is_grandfathered_root "$package_or_root"; then
-                violations_b+=("${source_file}: imports vendor root \"${package_or_root}\", which is neither package-owned, HubSpot, Illuminate, nor on the enumerated grandfather list")
+            elif [ "$direction" = "DIRECTION_B" ] && ! is_approved_vendor_root "$package_or_root" "$source_file"; then
+                violations_b+=("${source_file}: imports vendor root \"${package_or_root}\", which is neither package-owned, HubSpot, Illuminate, nor an approved vendor root")
             fi
         done < <(detect_violations "$file" "$composer_json")
     done < <(git ls-files -- 'src/*.php')
@@ -378,7 +407,7 @@ PHP
     local direction_b_rejected=0
     while IFS=$'\t' read -r direction package_or_root source_file; do
         [ "$direction" = "DIRECTION_B" ] || continue
-        if ! is_grandfathered_root "$package_or_root"; then
+        if ! is_approved_vendor_root "$package_or_root" "$source_file"; then
             direction_b_rejected=1
         fi
     done <<< "$direction_b_output"
@@ -392,6 +421,47 @@ PHP
     if [ -n "$clean_output" ]; then
         echo "Self-test FAILED: a clean file with no vendor-namespace reference at all was rejected:" >&2
         echo "$clean_output" >&2
+        failed=1
+    fi
+
+    # GuzzleHttp and Psr are approved WITHOUT restriction, because guzzlehttp/guzzle and
+    # psr/http-message are now declared requires (scratch_composer above does not include them,
+    # deliberately: the unconditional half of is_approved_vendor_root() does not consult
+    # composer.json at all -- that is Direction A's job for Illuminate, not Direction B's for
+    # these two -- so acceptance here proves the vendor-root list itself, not a require lookup).
+    local scratch_approved_unconditional="${tmp_dir}/ApprovedUnconditional.php"
+    cat > "$scratch_approved_unconditional" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Self-test-only fixture (scripts/ci/check-vendor-namespaces.sh) -- never production code.
+ * Names an unconditionally-approved root (GuzzleHttp) with no path restriction.
+ */
+
+namespace ReyemTech\Hubspot\Gateway;
+
+use GuzzleHttp\ClientInterface;
+
+final class ApprovedUnconditional
+{
+    public function __construct(private ClientInterface $client) {}
+}
+PHP
+
+    local approved_unconditional_output
+    approved_unconditional_output="$(detect_violations "$scratch_approved_unconditional" "$scratch_composer")"
+    local approved_unconditional_rejected=0
+    while IFS=$'\t' read -r direction package_or_root source_file; do
+        [ "$direction" = "DIRECTION_B" ] || continue
+        if ! is_approved_vendor_root "$package_or_root" "$source_file"; then
+            approved_unconditional_rejected=1
+        fi
+    done <<< "$approved_unconditional_output"
+    if [ "$approved_unconditional_rejected" -ne 0 ]; then
+        echo "Self-test FAILED: GuzzleHttp was rejected, but it is an unconditionally approved" >&2
+        echo "vendor root (guzzlehttp/guzzle is a declared require)." >&2
         failed=1
     fi
 
@@ -455,7 +525,7 @@ PHP
     local phpunit_ok_rejected=0
     while IFS=$'\t' read -r direction package_or_root source_file; do
         [ "$direction" = "DIRECTION_B" ] || continue
-        if ! is_grandfathered_root "$package_or_root"; then
+        if ! is_approved_vendor_root "$package_or_root" "$source_file"; then
             phpunit_ok_rejected=1
         fi
     done <<< "$phpunit_ok_output"
@@ -470,7 +540,7 @@ PHP
     local phpunit_bad_rejected=0
     while IFS=$'\t' read -r direction package_or_root source_file; do
         [ "$direction" = "DIRECTION_B" ] || continue
-        if ! is_grandfathered_root "$package_or_root"; then
+        if ! is_approved_vendor_root "$package_or_root" "$source_file"; then
             phpunit_bad_rejected=1
         fi
     done <<< "$phpunit_bad_output"
@@ -592,7 +662,7 @@ PHP
         return 1
     fi
 
-    echo "Self-test passed: Direction A rejects an undeclared Illuminate root, Direction B rejects an unapproved third-party vendor root, a clean file is accepted by both, and group use is handled in all three ways -- legal imports accepted, and violations hidden inside a group still rejected in both directions."
+    echo "Self-test passed: Direction A rejects an undeclared Illuminate root, Direction B rejects an unapproved third-party vendor root and accepts an unconditionally-approved one, the PHPUnit exception admits src/Testing/ and rejects everywhere else, a clean file is accepted by both, and group use is handled in all three ways -- legal imports accepted, and violations hidden inside a group still rejected in both directions."
 
     return 0
 }

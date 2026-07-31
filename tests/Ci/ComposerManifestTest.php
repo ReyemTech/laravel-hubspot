@@ -92,6 +92,20 @@ function composerManifestEnumeratedExceptions(): array
         // phase's own dependency ceiling (D-02/D-03) -- admitted by name so a future third-party
         // `laravel/*` package is never admitted alongside it under a prefix rule.
         'laravel/prompts',
+        // src/Gateway/HubspotClientFactory.php names GuzzleHttp\Client, ClientInterface and
+        // HandlerStack from PRODUCTION code, and four files under src/Testing/ name it too.
+        // Previously only a transitive dependency of hubspot/api-client (`^7.3`); STANDARDS.md
+        // Sec.2 is explicit that relying on a transitive package "would work in practice -- and
+        // would still be an undeclared dependency." Constrained to ^7.3, matching the SDK's own
+        // requirement exactly, so this declaration never narrows what the SDK already permits.
+        'guzzlehttp/guzzle',
+        // PSR-7 message interfaces (RequestInterface, ResponseInterface), used only as type hints
+        // across src/Testing/ -- never implemented -- and arrives transitively through the same
+        // SDK. Constrained to ^1.1 || ^2.0, deliberately wide: guzzlehttp/psr7 2.x itself accepts
+        // both, and narrowing to ^2.0 would force every consumer onto 2.x for no reason this
+        // package has. The --prefer-lowest CI leg proves 1.1 installs cleanly, rather than this
+        // constraint merely assuming it.
+        'psr/http-message',
     ];
 }
 
