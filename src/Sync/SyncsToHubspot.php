@@ -290,14 +290,27 @@ trait SyncsToHubspot
      * paths) reaches before touching the connection. This does NOT make the link read atomic with
      * the parent query and does not claim to -- it bounds the window to the part that is inherent.
      *
-     * Two consequences worth stating rather than discovering. `applyBeforeQueryCallbacks()` clears
-     * the callback list after running it, and the constraint it added stays on the query, so a
-     * builder executed twice resolves its links ONCE and both executions agree -- which is the
-     * behaviour to want from `->count()` followed by `->get()`. And because the constraint is
-     * appended when the query is compiled rather than where the scope sits in the chain, it lands
-     * after any clause the caller chained; that is invisible to an AND chain, which is every
-     * ordinary use, and differs only if a caller puts a top-level `orWhere()` beside the scope --
-     * already ill-defined against the shared-connection branch for the same reason.
+     * Deferring must not also MOVE the constraint, which is the second half of this (Codex, PR #44).
+     * A callback that simply calls `$compiled->whereIn(...)` appends, so the constraint lands after
+     * everything the caller chained afterwards, and
+     * `syncedToHubspot()->orWhere('email', $address)` degrades from `(link exists) OR email = ?` to
+     * `email = ? AND id IN (...)`: the OR leg stops being an alternative and becomes a filter,
+     * silently dropping the unlinked row it was written to find. Laravel places a scope's clauses
+     * where the scope was called, so the shared-connection branch keeps the caller's meaning; a
+     * cross-connection branch that did not would make the two answer differently, which is the one
+     * thing this pair of branches may never do.
+     *
+     * So the insertion POSITIONS are recorded here, while the scope still sits where the caller put
+     * it, and the callback splices into them rather than appending. The constraint is built on a
+     * scratch builder so its clauses and its bindings can be spliced in together, at offsets that
+     * shift by the same amount -- which is what keeps every `?` matched to its own value.
+     * `$wheres` and `$bindings` are public builder state, not reached-into internals, and the pair
+     * of position tests on both connections is what holds this to the shared branch's answer.
+     *
+     * One consequence worth stating rather than discovering: `applyBeforeQueryCallbacks()` clears
+     * the callback list after running it, and the spliced constraint stays on the query, so a
+     * builder executed twice resolves its links ONCE and both executions agree -- the behaviour to
+     * want from `->count()` followed by `->get()`.
      *
      * @param  Builder<static>  $query
      * @param  Closure(QueryBuilder, string): QueryBuilder  $constrain
@@ -306,10 +319,24 @@ trait SyncsToHubspot
     private function whereHubspotLinkResolved(Builder $query, Closure $constrain): Builder
     {
         $key = $this->getQualifiedKeyName();
+        $compiled = $query->getQuery();
 
-        $query->getQuery()->beforeQuery(
-            static function (QueryBuilder $compiled) use ($constrain, $key): void {
-                $constrain($compiled, $key);
+        $whereOffset = count($compiled->wheres);
+        $bindingOffset = count($compiled->getRawBindings()['where']);
+
+        $compiled->beforeQuery(
+            static function (QueryBuilder $running) use ($constrain, $key, $whereOffset, $bindingOffset): void {
+                $scratch = $running->newQuery();
+
+                $constrain($scratch, $key);
+
+                array_splice($running->wheres, $whereOffset, 0, $scratch->wheres);
+                array_splice(
+                    $running->bindings['where'],
+                    $bindingOffset,
+                    0,
+                    $scratch->getRawBindings()['where'],
+                );
             },
         );
 
