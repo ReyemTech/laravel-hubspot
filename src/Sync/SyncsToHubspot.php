@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Sync;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Support\Facades\App;
@@ -21,7 +22,8 @@ use Illuminate\Support\Facades\App;
  * `$lead->hubspotLink` is a relation, not a column (D-06, REG-01b): no consumer schema is ever
  * altered by applying this trait, and three distinct local models can bind to the same HubSpot
  * object type simultaneously because each resolves its OWN row in the package-owned
- * `hubspot_object_links` table, keyed by `(model_type, model_id, object_type)`.
+ * `hubspot_object_links` table, keyed by `(lookup_hash, model_id, object_type)` -- the digest of
+ * `model_type`, not the raw column itself (see the next paragraph for why).
  *
  * `@phpstan-require-extends Model` tells PHPStan (checkModelProperties: true) that `$this` inside
  * this trait is always an Eloquent `Model` -- true by construction, since `morphOne()` and
@@ -34,7 +36,7 @@ use Illuminate\Support\Facades\App;
  * own `getMorphClass()` (Codex, PR #39). Two distinct defects, closed by the same two predicates:
  *
  * 1. `SyncHubspotObjectJob::handle()` keys its `updateOrCreate()` on
- *    `(model_type, model_id, object_type)`. If a model's binding changes object type after it has
+ *    `(lookup_hash, model_id, object_type)`. If a model's binding changes object type after it has
  *    already synced, a SECOND row is written under the new object type and the FIRST is left
  *    behind -- an unscoped `morphOne()` cannot tell them apart and may resolve whichever one the
  *    query happens to return, so `hubspotId()` could keep answering with an obsolete id forever.
@@ -45,9 +47,12 @@ use Illuminate\Support\Facades\App;
  *    the built-in `model_type` predicate `morphOne()` already applies is not, and ANDing the two
  *    only narrows a match, never widens one.
  *
- * The query scopes (`whereHubspotId()`, `syncedToHubspot()`, `pendingHubspotSync()`) and the
- * static `syncManyToHubspot()` collection entry point are deliberately NOT here -- 04-04 and 04-08
- * add them respectively. This plan proves one relation and one read path end to end.
+ * The query scopes (`whereHubspotId()`, `syncedToHubspot()`, `pendingHubspotSync()`, 04-04) all
+ * resolve through `hubspotLink()` itself -- via `whereHas()`/`whereDoesntHave()` on the relation
+ * name, never a second hand-built query against `HubspotObjectLink` -- so every fix the relation
+ * carries (the object-type scope, the collation-proof digest) automatically covers every scope
+ * built on top of it. The static `syncManyToHubspot()` collection entry point is deliberately NOT
+ * here -- 04-08 adds it.
  *
  * `$hubspotMap` is deliberately NOT declared as a property here, even an empty-array default:
  * PHP fatal-errors composing a class that redeclares a trait's TYPED property with a different
@@ -142,5 +147,79 @@ trait SyncsToHubspot
         $map = $this->hubspotUpdateMap;
 
         return $map;
+    }
+
+    /**
+     * Only models linked to the given HubSpot id (D-06, D-13). A `whereHas()` across the morph
+     * relation, never a column predicate: there is no HubSpot id column on the consumer's table,
+     * so a scope written as a column comparison would silently match nothing rather than throw.
+     *
+     * `whereHas()` builds its existence query by calling `hubspotLink()` itself, so the relation's
+     * own `object_type`/`lookup_hash` constraints apply here too -- a `Contact` linked to the same
+     * HubSpot id a `Lead` is linked to is never returned by `Lead::whereHubspotId()` (T-04-17).
+     *
+     * Larastan resolves `whereHas()`'s closure parameter against the RELATION NAME STRING, and
+     * `hubspotLink()` here lives on a trait rather than a concrete model, so it types the closure
+     * argument as the base `Model` rather than `HubspotObjectLink` -- confirmed by testing an
+     * inline `@param Builder<HubspotObjectLink>` docblock directly above the closure, which
+     * Larastan's own relation-aware extension overrides rather than honours. `hubspot_id` is a
+     * real column on `HubspotObjectLink` (see its own `@property` docblock); the error is a type
+     * inference gap in the tool, not a real one.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeWhereHubspotId(Builder $query, string $hubspotId): Builder
+    {
+        return $query->whereHas(
+            'hubspotLink',
+            static function (Builder $linkQuery) use ($hubspotId): void {
+                $linkQuery->where('hubspot_id', $hubspotId); // @phpstan-ignore-line argument.type
+            },
+        );
+    }
+
+    /**
+     * Only models that have a link row at all, regardless of its staleness (D-06).
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeSyncedToHubspot(Builder $query): Builder
+    {
+        return $query->whereHas('hubspotLink');
+    }
+
+    /**
+     * Only models with sync work outstanding (D-06): never linked at all, OR linked but flagged
+     * stale. The stale leg is not optional -- SYNC-04's restore path (04-06) sets `is_stale` rather
+     * than nulling the stored id, and a scope missing this leg would silently under-report every
+     * model a restore just re-queued, forever, since nothing else ever clears the flag but a
+     * successful re-sync.
+     *
+     * Wrapped in one outer `where()` closure so this scope composes safely with any other
+     * constraint a caller chains alongside it -- an `orWhereHas()` at the top level would OR
+     * against the ENTIRE query built so far, not just this scope's own two legs.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopePendingHubspotSync(Builder $query): Builder
+    {
+        return $query->where(
+            static function (Builder $outerQuery): void {
+                $outerQuery->whereDoesntHave('hubspotLink')
+                    ->orWhereHas(
+                        'hubspotLink',
+                        static function (Builder $linkQuery): void {
+                            // See scopeWhereHubspotId()'s docblock: Larastan types this closure's
+                            // $linkQuery as the base Model rather than HubspotObjectLink because
+                            // hubspotLink() lives on a trait, not a concrete model. is_stale is a
+                            // real, cast column on HubspotObjectLink.
+                            $linkQuery->where('is_stale', true); // @phpstan-ignore-line argument.type
+                        },
+                    );
+            },
+        );
     }
 }

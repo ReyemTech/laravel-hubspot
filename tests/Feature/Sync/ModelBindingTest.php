@@ -100,7 +100,7 @@ final class ModelBindingTest extends MultiBindingTestCase
         // No binding, no model, no table for line_items: this case's own hubspot.models config
         // names only the three contact-bound classes above.
         /** @var ConfigRepository $config */
-        $config = $this->app->make('config');
+        $config = app('config');
 
         /** @var array<class-string, array<string, string>> $models */
         $models = $config->get('hubspot.models', []);
