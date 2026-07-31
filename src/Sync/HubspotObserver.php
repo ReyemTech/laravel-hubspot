@@ -118,7 +118,12 @@ final class HubspotObserver
      * A model that declared `false` yields an empty list, so the membership check above refuses
      * every event without needing a second branch of its own.
      *
-     * @return list<mixed>
+     * Returned exactly as declared or configured, with no normalising pass. `in_array()` ignores
+     * keys entirely, so running `array_values()` over either source changes no answer this method
+     * can produce -- it only looks like care. Mutation testing is what surfaced that: both
+     * `array_values()` calls survived every mutant, because deleting them is not observable.
+     *
+     * @return array<array-key, mixed>
      */
     private function eventsFor(Model $model): array
     {
@@ -131,11 +136,11 @@ final class HubspotObserver
         }
 
         if (is_array($declared)) {
-            return array_values($declared);
+            return $declared;
         }
 
         $configured = $this->config->get('hubspot.auto_sync.on', []);
 
-        return array_values(is_array($configured) ? $configured : []);
+        return is_array($configured) ? $configured : [];
     }
 }

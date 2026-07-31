@@ -115,6 +115,43 @@ final class HubspotObserverTest extends TestCase
     }
 
     /**
+     * An ATTRIBUTE named `hubspotAutoSync` is not a declaration.
+     *
+     * `getHubspotAutoSync()` asks `property_exists()`, which sees only real declared properties.
+     * Reading `$this->hubspotAutoSync` directly would instead go through `Model::__get()` and hit
+     * the attribute bag, so a column or a filled attribute of that name would silently pose as an
+     * opt-out and stop the model syncing -- with nothing anywhere saying why. The two are
+     * indistinguishable on a model that has neither, which is why this test gives it one.
+     */
+    public function test_an_attribute_named_hubspot_auto_sync_is_not_read_as_a_declaration(): void
+    {
+        Bus::fake();
+
+        $lead = new SyncedLead(['email' => 'ada@example.com']);
+        $lead->setAttribute('hubspotAutoSync', false);
+
+        self::assertNull(
+            $lead->getHubspotAutoSync(),
+            'The model declares no $hubspotAutoSync property, so it has declared nothing -- '
+            .'whatever its attribute bag happens to contain.'
+        );
+
+        config(['hubspot.models' => [
+            SyncedLead::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]]);
+
+        $observer = new HubspotObserver(
+            new ModelBindings(app('config')),
+            app(Dispatcher::class),
+            app('config'),
+        );
+
+        $observer->created($lead);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
      * `$hubspotAutoSync = true` is not one of the two documented forms (a narrowing array, or
      * `false`). It collapses to "declared nothing", because "sync on everything in `auto_sync.on`"
      * is precisely what declaring nothing already means -- treating it as a third shape would put
