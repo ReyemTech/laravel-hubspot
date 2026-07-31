@@ -391,7 +391,7 @@ REL-02.
   - **SYNC-01b (Phase 9, with SHIP-01):** Generated mode — scaffolding a model plus migration for an
     object type with no local mirror. Deferred; not this phase's acceptance criteria.
 
-- [ ] **SYNC-02**: `PropertyMapper` resolves `$hubspotMap`
+- [x] **SYNC-02**: `PropertyMapper` resolves `$hubspotMap`
   — `REQ-property-mapping` (core spec §5, §13 Phase 3)
 
   - Acceptance: `'dealname' => 'title'` resolves an attribute; `'dealstage' => 'stage.hubspot_id'`
@@ -816,7 +816,7 @@ Deferred. Tracked but not in the current roadmap.
 | REG-03 | Phase 3 | **Complete 2026-07-29 (03-02).** `composer require` alone loads no migration; `loadMigrationsFrom()` fires only for an active group, publishing is ungated, the migration is executable PHP where it sits, and a missing table raises `ConfigurationException::missingRegistryTable()` rather than `SQLSTATE[42S02]`. Asserted against the schema in both directions, never against registered paths |
 | REG-04 | Phase 3 + 4 | **OPEN at the end of Phase 3, deliberately.** Split 2026-07-28 into REG-04a / REG-04b; raised by Codex on PR #22. **REG-04a DONE 2026-07-29 (03-03):** `hubspot:doctor` reports the store per concern, the bound resolver, reconciliation state, and rows across directions; `hubspot:associations:doctor` ships in full, searching every reported association type for the expected directional id and recording a pairing only when both directions were observed. **REG-04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — needs SYNC-01a. `hubspot:doctor` NAMES that section as not built rather than omitting it, and a test holds that; printing "not available yet" is not an implementation, so do not tick until 04b lands |
 | SYNC-01 | Phase 4 + 9 | **Split 2026-07-30 (D-15).** SYNC-01's acceptance text named all three binding modes (Attached, API-only, Generated), but Generated — scaffolding a model plus migration — is an installer function and the installer is SHIP-01. **SYNC-01a (Phase 4):** bindings keyed by model, `Model::class => ['object' => ..., 'id_property' => ...]`; Attached and API-only modes both work; three local models binding to `contacts` simultaneously is expressible, each resolving its own link row. **SYNC-01b (Phase 9, with SHIP-01):** Generated mode. Do not tick SYNC-01 until both halves land |
-| SYNC-02 | Phase 4 | Pending |
+| SYNC-02 | Phase 4 | **Complete 2026-07-31 (04-03).** `$hubspotMap` resolves all three forms — literal attribute, dot-notation across a relation, and closure — with a null relation OMITTING its key rather than sending null or fatalling. `$hubspotUpdateMap` narrows what an update sends, read from the model through `SyncsToHubspot::getHubspotUpdateMap()`. **That accessor was initially deferred and the deferral was wrong:** without it the job passed `[]`, which `PropertyMapper::mapForUpdate()` reads as "the model declares none" and falls back to the full create map — so a consumer's update map was silently ignored and every update overwrote exactly the properties it existed to protect. Codex raised it as a P1 on PR #42; do not re-introduce that fallback |
 | SYNC-03a | Phase 4 | **Complete** -- trait, observer and queued job wired at boot (04-02, 2026-07-30) |
 | SYNC-03b | Phase 4 | Pending -- queued by default under Bus::fake(), and the per-model override (04-05) |
 | SYNC-03c | Phase 4 | Pending -- one collection, one batch request (04-08) |
