@@ -43,7 +43,8 @@ jobs:
       # no lock at all.
       - name: Install dependencies
         run: >
-          composer update
+          bash scripts/ci/composer-retry.sh
+          update
           --with illuminate/contracts:${{ matrix.laravel }}
           --with illuminate/support:${{ matrix.laravel }}
           --with illuminate/database:${{ matrix.laravel }}
@@ -88,7 +89,7 @@ jobs:
           php-version: '8.3'
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Run manifest test
         run: vendor/bin/pest tests/Ci/ComposerManifestTest.php

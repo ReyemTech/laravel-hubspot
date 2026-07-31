@@ -26,7 +26,7 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Run composer audit
         run: composer audit
@@ -155,7 +155,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.previous-release.outputs.exists == 'true'
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       # --with-all-dependencies is required here: this project's own lockfile pins
       # symfony/console to a major roave/backward-compatibility-check's own require doesn't

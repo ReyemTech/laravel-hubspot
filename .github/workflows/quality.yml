@@ -23,7 +23,7 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Run PHPStan
         run: vendor/bin/phpstan analyse --no-progress
@@ -42,7 +42,7 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Run Pint
         run: vendor/bin/pint --test
@@ -61,7 +61,7 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Run PHPCS
         run: vendor/bin/phpcs --standard=phpcs.xml -q
@@ -80,6 +80,13 @@ jobs:
 
       - name: Prove the scan rejects both markers
         run: bash scripts/ci/check-source-hygiene.sh --self-test
+
+      # Lives in THIS job because this is the one that installs no dependencies: the retry wrapper
+      # now stands in front of every `composer install`/`composer update` in the repository, so
+      # proving it works must not itself depend on the thing it protects. During the outage that
+      # motivated it, this step would still have run.
+      - name: Prove the composer retry wrapper retries a transient failure and still fails a permanent one
+        run: bash scripts/ci/composer-retry.sh --self-test
 
   vendor-namespaces:
     name: vendor namespaces (Illuminate backed, no unapproved third party)
@@ -116,7 +123,7 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Prove PHPStan and the code-shape gate each reject a deliberate violation
         run: bash scripts/ci/verify-quality-gates-fire.sh
@@ -159,7 +166,7 @@ jobs:
           coverage: pcov
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
       - name: Prove the scope resolver maps every src/ file to a class that autoloads
         run: bash scripts/ci/mutation-scope.sh --self-test
