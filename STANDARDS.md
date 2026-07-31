@@ -74,14 +74,25 @@ The rule as it now stands: **any `illuminate/*` component may be declared** as a
 require, the moment `src/` needs it, with no ceremony beyond `composer require` and its own
 one-line purpose recorded below. **Any non-`illuminate/*` third-party package still needs written
 justification in the PR description**, and the reviewer's default answer is still no. Production
-`require` currently stands at eleven entries; that count is not the rule and will drift as the
+`require` currently stands at fifteen entries; that count is not the rule and will drift as the
 package grows — the **vendor-allow-list CI gate** (`manifest shape (vendor allow-list)`,
 `tests/Ci/ComposerManifestTest.php`) is authoritative on what is admitted:
 
 - `php` and `hubspot/api-client` by exact key — this package's own surface.
 - Any `illuminate/*` package, by prefix.
-- `laravel/prompts` via its own enumerated exception, carrying its own reason (below), never via a
-  `laravel/`-prefix rule that a third-party `laravel/*` package could slip through under.
+- `laravel/prompts`, `guzzlehttp/guzzle`, `guzzlehttp/promises`, `guzzlehttp/psr7` and
+  `psr/http-message`, each via its own enumerated exception, carrying its own reason (below),
+  never via a vendor-prefix rule that an unrelated package from the same vendor could slip through
+  under.
+
+`GuzzleHttp` and `Psr` are namespace **roots**, each shared by more than one Composer package —
+declaring `guzzlehttp/guzzle` does not, by itself, declare `guzzlehttp/promises` or
+`guzzlehttp/psr7`, and the vendor-namespace CI gate's Direction B
+(`scripts/ci/check-vendor-namespaces.sh`) approves at that root granularity on purpose (see its own
+comments). The finer-grained check that resolves every `GuzzleHttp`/`Psr` name actually referenced
+in `src/` to the specific package that owns it — from the installed tree, never a hand-written map
+— lives in `tests/Ci/ComposerManifestTest.php`'s
+`composerManifestGuzzleAndPsrPackagesUsedInSrc()`.
 
 Current production requires and their one-line purpose:
 
@@ -102,6 +113,42 @@ Current production requires and their one-line purpose:
   (which is why the design spec calls it "no new dependency" — true of the vendor tree, not true of
   this package's `composer.json`), and is this section's one enumerated exception because it is
   admitted by name rather than by any `laravel/`-prefix rule.
+- `guzzlehttp/guzzle` (`^7.3`, matching `hubspot/api-client`'s own requirement) —
+  `src/Gateway/HubspotClientFactory.php` names `Client`, `ClientInterface` and `HandlerStack` from
+  production code; four files under `src/Testing/` name it too. Previously only a transitive
+  dependency of `hubspot/api-client`, which this section's own opening paragraph already forbids
+  relying on. Added resolving one of the three vendor roots enumerated as deferred, not approved,
+  on PR #37.
+- `guzzlehttp/promises` (`^1.4 || ^2.0` — what the **declared** `guzzlehttp/guzzle:^7.3` range
+  permits across its whole span, NOT what the currently installed guzzle happens to pin. Guzzle 7.3
+  allows promises 1.x, so pinning to the installed guzzle's `^2.5.1` would make this package
+  unsatisfiable for a consumer legitimately on that combination and force an unrelated upgrade.
+  `src/` uses only `Create` (promises 1.4+) and `PromiseInterface`, so 1.4 is the real floor.
+  Codex raised this on PR #40) —
+  `src/Testing/HubspotFake.php` names `GuzzleHttp\Promise\Create` and `PromiseInterface` from
+  production code. Previously only a transitive dependency of `guzzlehttp/guzzle`; declaring
+  `guzzlehttp/guzzle` does not declare this, because `GuzzleHttp` is a namespace root shared by
+  three separate packages (see above). Added closing a Codex P2 finding on PR #40: the
+  vendor-namespace gate had approved the shared `GuzzleHttp` root, hiding that this package was
+  still undeclared one level down.
+- `guzzlehttp/psr7` (`^1.7 || ^2.0`, matching `hubspot/api-client`'s own requirement) —
+  `src/Testing/DefaultResponses.php` names `GuzzleHttp\Psr7\Response` from production code. Same
+  "root is not a package" defect and the same PR #40 finding as `guzzlehttp/promises` above.
+- `psr/http-message` (`^1.1 || ^2.0`, deliberately wide) — PSR-7 `RequestInterface` /
+  `ResponseInterface`, used only as type hints across `src/Testing/`, never implemented. Arrives
+  transitively through the same SDK. The `^1.1` floor is proven, not assumed: the CI matrix runs
+  `--prefer-lowest`, and `psr/http-message:1.1` installs cleanly against every other declared
+  require. Added alongside `guzzlehttp/guzzle`, resolving a second of the three PR #37 roots.
+
+The third root PR #37 enumerated, `PHPUnit`, is deliberately **not** declared here.
+`src/Testing/RequestLog.php` names `PHPUnit\Framework\Assert` from production code, but declaring
+`phpunit/phpunit` in `require` would ship a test framework to every consumer's production vendor
+tree — a worse defect than the undeclared reference it would fix. `src/Testing/` is test-support
+code, loaded only from a consumer's own test suite, where PHPUnit is present by definition; this is
+the same shape Laravel's own `Illuminate\Support\Testing\Fakes` has. The fix lives in the
+vendor-namespace CI gate (`scripts/ci/check-vendor-namespaces.sh`) instead: `PHPUnit` is an
+approved exception scoped to `src/Testing/` only, and still fails the gate if named anywhere else
+in `src/`.
 
 Notably excluded — still third-party, still needs the justification above:
 
