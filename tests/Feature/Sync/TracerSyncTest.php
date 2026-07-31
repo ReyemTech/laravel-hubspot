@@ -167,8 +167,13 @@ final class TracerSyncTest extends SyncTestCase
 
             self::fail('Expected an empty-string id_property value to throw.');
         } catch (ConfigurationException $exception) {
+            // The literal message, for the same mutation-coverage reason
+            // UnmappedIdPropertyThrowsTest's own assertion was changed in 04-04.
             self::assertSame(
-                ConfigurationException::idPropertyNotMapped(SyncedLead::class, 'email')->getMessage(),
+                SyncedLead::class.' is bound to HubSpot with id_property "email", but its '
+                .'$hubspotMap does not produce that key. Add an entry to $hubspotMap that maps '
+                .'"email" to one of the model\'s own attributes, so the upsert has a value to '
+                .'converge on.',
                 $exception->getMessage(),
             );
         }

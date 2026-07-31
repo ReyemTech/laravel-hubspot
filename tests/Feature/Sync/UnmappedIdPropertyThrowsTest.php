@@ -49,8 +49,14 @@ final class UnmappedIdPropertyThrowsTest extends SyncTestCase
 
             self::fail('Expected a map that does not produce the bound id_property to throw.');
         } catch (ConfigurationException $exception) {
+            // The literal message, not `idPropertyNotMapped()->getMessage()` compared against
+            // itself -- a mutated internal sprintf would still equal whatever the SAME mutated
+            // code produced a second time (04-04, Codex-equivalent finding).
             self::assertSame(
-                ConfigurationException::idPropertyNotMapped(SyncedLead::class, 'phone')->getMessage(),
+                SyncedLead::class.' is bound to HubSpot with id_property "phone", but its '
+                .'$hubspotMap does not produce that key. Add an entry to $hubspotMap that maps '
+                .'"phone" to one of the model\'s own attributes, so the upsert has a value to '
+                .'converge on.',
                 $exception->getMessage(),
             );
         }

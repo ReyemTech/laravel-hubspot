@@ -44,11 +44,20 @@ final class SyncsToHubspotTraitTest extends MultiBindingTestCase
         self::assertNull($lead->hubspotId());
     }
 
+    /**
+     * A second `SyncedLead` with a DIFFERENT hubspot id is created alongside the target one --
+     * without it, `sole()` would still resolve the single row this test cares about even if the
+     * scope's `hubspot_id` predicate were removed entirely (`whereHas('hubspotLink')` alone would
+     * already narrow to "has synced at all", which happens to be true for only one row here).
+     * With two synced leads present, dropping the id predicate would make this query match BOTH,
+     * and `sole()` would throw.
+     */
     public function test_where_hubspot_id_returns_only_the_model_linked_to_that_id(): void
     {
         Hubspot::fake();
 
         $lead = SyncedLead::create(['email' => 'lead@example.com', 'first_name' => 'Ada']);
+        SyncedLead::create(['email' => 'other@example.com', 'first_name' => 'Bea']);
         SyncedContact::create(['email' => 'contact@example.com', 'last_name' => 'Lovelace']);
 
         $match = SyncedLead::query()->whereHubspotId('lead@example.com')->sole();

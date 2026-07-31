@@ -67,8 +67,10 @@ final class ModelBindingsTest extends TestCase
     /**
      * The full message, not a substring: `expectExceptionMessage()` only checks a `str_contains()`
      * match, which would still pass with the sprintf's own trailing text mutated away or
-     * rearranged. Caught here the same way this codebase asserts every other directed error --
-     * verbatim, against the factory's own real output rather than a copied literal.
+     * rearranged. Asserted against a hardcoded literal, not
+     * `unboundSyncModel(...)->getMessage()` called a second time -- comparing a factory's output
+     * against itself never catches a mutated internal concatenation, since both calls run the
+     * same, possibly mutated, code and therefore always agree with each other.
      *
      * `ConfigurationException`, not the internal-invariant `RuntimeException` this test asserted
      * before 04-04: `ConfigurationException::unboundSyncModel()` is now the one exception `for()`
@@ -83,7 +85,11 @@ final class ModelBindingsTest extends TestCase
             self::fail('Expected for() to throw for a class that was never bound.');
         } catch (ConfigurationException $exception) {
             self::assertSame(
-                ConfigurationException::unboundSyncModel(self::class)->getMessage(),
+                self::class.' uses ReyemTech\Hubspot\Sync\SyncsToHubspot but has no entry in '
+                .'hubspot.models. Add one naming the HubSpot object it syncs to and the '
+                .'property it upserts on, for example \''.self::class.'\' => [\'object\' => '
+                .'\'contacts\', \'id_property\' => \'email\']. This package never guesses which '
+                .'object type an unbound model belongs to.',
                 $exception->getMessage(),
             );
         }

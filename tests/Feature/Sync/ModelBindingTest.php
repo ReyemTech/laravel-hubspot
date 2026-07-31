@@ -121,8 +121,15 @@ final class ModelBindingTest extends MultiBindingTestCase
 
             self::fail('Expected an unbound trait-using model to throw.');
         } catch (ConfigurationException $exception) {
+            // The literal message, not `unboundSyncModel(...)->getMessage()` compared against
+            // itself -- see ModelBindingsTest's own equivalent assertion for why that never
+            // catches a mutated internal concatenation.
             self::assertSame(
-                ConfigurationException::unboundSyncModel(NarrowedLead::class)->getMessage(),
+                NarrowedLead::class.' uses ReyemTech\Hubspot\Sync\SyncsToHubspot but has no '
+                .'entry in hubspot.models. Add one naming the HubSpot object it syncs to and '
+                .'the property it upserts on, for example \''.NarrowedLead::class.'\' => '
+                .'[\'object\' => \'contacts\', \'id_property\' => \'email\']. This package '
+                .'never guesses which object type an unbound model belongs to.',
                 $exception->getMessage(),
             );
         }
