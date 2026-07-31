@@ -308,6 +308,32 @@ final class AutoSyncBootTest extends SyncTestCase
     }
 
     /**
+     * Editing a model while it is STILL soft-deleted is an ordinary update, and must sync.
+     *
+     * D-17 suppresses a restore, not "any save on a trashed row" (Codex, PR #48). The original
+     * delete column is non-null for both, so a guard that asks only "was it deleted?" silently
+     * drops a configured `updated` sync every time a consumer edits a trashed record -- and a
+     * dropped sync looks exactly like a model that was not meant to sync.
+     *
+     * What separates them is the TRANSITION: a restore sets the column to null while its original
+     * is the delete timestamp. An edit-while-trashed leaves it non-null on both sides.
+     */
+    public function test_editing_a_still_deleted_model_is_an_ordinary_update(): void
+    {
+        Hubspot::fake();
+
+        $lead = SoftDeletingLead::create(['email' => 'trashed@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        Bus::fake();
+
+        $lead->first_name = 'Grace';
+        $lead->save();
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
      * The same guard, on a model whose delete column is NOT `deleted_at` (Codex, PR #48).
      *
      * `SoftDeletes::getDeletedAtColumn()` returns `static::DELETED_AT` when the constant is

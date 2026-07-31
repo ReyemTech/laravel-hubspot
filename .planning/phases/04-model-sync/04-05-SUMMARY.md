@@ -129,13 +129,13 @@ coverage:
       architecture rules all fire"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (763 passed, 2841 assertions)"
+        ref: "vendor/bin/pest (766 passed, 2844 assertions)"
         status: pass
       - kind: other
         ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=HubspotObserver,SyncsToHubspot (100.00%, 67/67)"
+        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=HubspotObserver,SyncsToHubspot (100.00%, 71/71)"
         status: pass
       - kind: other
         ref: "bash scripts/ci/verify-arch-rules-fire.sh (10/10 rules fired)"
@@ -217,6 +217,22 @@ registers and nothing else does. Chosen over `class_uses_recursive()` because it
 R3's allow-list — `SoftDeletingScope` is a namespaced `Illuminate` class already admitted, while the
 helper is a bare global function that would need its own entry the way `data_get` did — and it holds
 for a model inheriting the trait from a parent, since booting registers the scope.
+
+**Codex P2 — the restore guard suppressed any save on a trashed row.** D-17 suppresses a RESTORE,
+not "any update while soft-deleted", and both have a non-null ORIGINAL delete column. Editing a
+trashed record therefore dropped its configured `updated` sync silently. What separates them is the
+TRANSITION: a restore nulls the current column while its original holds the delete timestamp. The
+guard now requires both.
+
+**Codex P2 — `method_exists()` again, on the other contract.** The `getDeletedAtColumn()` fix left
+the identical name-only check on `getHubspotAutoSync()`. Both now go through one
+`modelUses($model, $trait)` helper over `class_uses_recursive()`, which asks the actual question.
+That required adding the bare function to R3's allow-list, on the same footing as `data_get` in
+04-03. An earlier revision used `hasGlobalScope(SoftDeletingScope::class)` for the SoftDeletes half
+specifically to AVOID that widening; once the second finding forced it anyway, one mechanism
+answering one question for both traits beats two answering it differently — and `class_uses()` alone
+was not an option, since it ignores parent classes and a model inheriting either trait from an
+abstract base is ordinary.
 
 **The backward-compatibility gate, live for the first time.** `HubspotObserver` originally took the
 config repository as a fourth constructor argument, and `roave/backward-compatibility-check` counts

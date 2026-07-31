@@ -6,7 +6,7 @@ namespace ReyemTech\Hubspot\Sync;
 
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Config;
 
 /**
@@ -93,15 +93,21 @@ final class HubspotObserver
      */
     public function updated(Model $model): void
     {
-        // Narrowed to a string before use: getOriginal(null) returns the WHOLE original attribute
-        // array, which is never null, so an unnarrowed value would make this guard swallow every
-        // update on every model.
-        $deletedAtColumn = $model->hasGlobalScope(SoftDeletingScope::class)
-            // @phpstan-ignore-next-line method.notFound (see this method's docblock for the reason)
-            ? $model->getDeletedAtColumn()
-            : null;
+        if (! $this->modelUses($model, SoftDeletes::class)) {
+            $this->syncOn('updated', $model);
 
-        if (is_string($deletedAtColumn) && $model->getOriginal($deletedAtColumn) !== null) {
+            return;
+        }
+
+        $deletedAtColumn = $this->deletedAtColumnOf($model);
+
+        // The TRANSITION is what identifies a restore, not the mere fact of having been deleted.
+        // Both a restore and an edit-while-still-trashed have a non-null ORIGINAL delete column;
+        // only a restore has nulled the current one. Asking the weaker question silently drops a
+        // configured `updated` sync every time a consumer edits a trashed record, and a dropped
+        // sync is indistinguishable from a model that was never meant to sync (Codex, PR #48).
+        if ($model->getAttribute($deletedAtColumn) === null
+            && $model->getOriginal($deletedAtColumn) !== null) {
             return;
         }
 
@@ -170,11 +176,63 @@ final class HubspotObserver
     }
 
     /**
+     * The soft-delete column of a model already known to use `SoftDeletes`.
+     *
+     * The suppression lives here, in one place with one reason, rather than at each use: PHPStan
+     * cannot express "uses SoftDeletes, therefore declares getDeletedAtColumn(): string", because
+     * the method belongs to the trait rather than to `Model`. The caller guarantees the precondition
+     * by checking `modelUses($model, SoftDeletes::class)` first, and D-04 forbids a baseline, not a
+     * justified per-line ignore.
+     *
+     * Deliberately NOT an `is_string()` guard instead: `SoftDeletes::getDeletedAtColumn()` returns
+     * `static::DELETED_AT` or the literal `'deleted_at'`, so the branch would be unreachable in any
+     * sane model -- and unreachable branches are what this plan has already deleted twice.
+     */
+    private function deletedAtColumnOf(Model $model): string
+    {
+        // @phpstan-ignore-next-line method.notFound, return.type
+        return $model->getDeletedAtColumn();
+    }
+
+    /**
+     * Whether the model actually applies a trait, rather than merely having a method whose name
+     * looks like one of that trait's (Codex, PR #48, twice -- once for `getDeletedAtColumn()` and
+     * again for `getHubspotAutoSync()`, which the first fix left behind).
+     *
+     * `method_exists()` is a name check and was wrong in both directions. A model defining such a
+     * method for unrelated reasons had its behaviour silently changed -- updates suppressed, or its
+     * configured event list replaced -- and a NON-PUBLIC method of that name is reached through
+     * `Model::__call()`, since Eloquent defines it and PHP routes inaccessible calls there rather
+     * than raising a visibility error, which Eloquent forwards to the query builder as a
+     * `BadMethodCallException` from inside an event handler.
+     *
+     * `class_uses_recursive()` rather than PHP's own `class_uses()`, which does not look at parent
+     * classes: a model inheriting either trait from an abstract base is ordinary, and would
+     * otherwise read as not using it. R3's allow-list gains the bare function name for this, on the
+     * same footing and for the same reason `data_get` was admitted in 04-03 -- it is pure class
+     * introspection and installs no layer dependency. An earlier revision used
+     * `hasGlobalScope(SoftDeletingScope::class)` for the SoftDeletes half specifically to avoid
+     * that widening; once the second finding forced the widening anyway, ONE mechanism answering
+     * one question for both traits beats two mechanisms answering it differently.
+     *
+     * @param  class-string  $trait
+     */
+    private function modelUses(Model $model, string $trait): bool
+    {
+        return in_array($trait, class_uses_recursive($model), true);
+    }
+
+    /**
      * The event list that applies to this model: its own declaration when it makes one, otherwise
      * the application-wide `hubspot.auto_sync.on`.
      *
      * A model that declared `false` yields an empty list, so the membership check above refuses
      * every event without needing a second branch of its own.
+     *
+     * The call to `getHubspotAutoSync()` carries a per-line suppression for the same reason
+     * {@see deletedAtColumnOf()} does: the method is declared by `SyncsToHubspot`, not by `Model`,
+     * and `modelUses()` above is a precondition PHPStan cannot express. D-04 forbids a baseline,
+     * not a justified per-line ignore.
      *
      * Returned exactly as declared or configured, with no normalising pass. `in_array()` ignores
      * keys entirely, so running `array_values()` over either source changes no answer this method
@@ -185,7 +243,8 @@ final class HubspotObserver
      */
     private function eventsFor(Model $model): array
     {
-        $declared = method_exists($model, 'getHubspotAutoSync')
+        $declared = $this->modelUses($model, SyncsToHubspot::class)
+            // @phpstan-ignore-next-line method.notFound (see declaredAutoSyncOf's sibling reason)
             ? $model->getHubspotAutoSync()
             : null;
 

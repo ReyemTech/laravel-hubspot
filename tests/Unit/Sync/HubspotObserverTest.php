@@ -112,6 +112,82 @@ final class HubspotObserverTest extends TestCase
     }
 
     /**
+     * The same name-only flaw, on the OTHER contract: a method named `getHubspotAutoSync()` is not
+     * proof the model applies `SyncsToHubspot` (Codex, PR #48, after the `getDeletedAtColumn()`
+     * fix left this one behind).
+     *
+     * A bound model without the trait that happens to define this name would have its configured
+     * event list REPLACED by whatever that method returned -- here, an empty list, which disables
+     * auto-sync entirely for a model nothing has opted out.
+     */
+    public function test_a_lookalike_auto_sync_method_does_not_replace_the_configured_events(): void
+    {
+        Bus::fake();
+
+        $model = new class extends Model
+        {
+            protected $table = 'auto_sync_lookalikes';
+
+            /**
+             * @return array<int, string>
+             */
+            public function getHubspotAutoSync(): array
+            {
+                return [];
+            }
+        };
+
+        config(['hubspot.models' => [
+            $model::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]]);
+
+        $observer = new HubspotObserver(
+            new ModelBindings(app('config')),
+            app(Dispatcher::class),
+        );
+
+        $observer->created($model);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
+     * And its throwing form, for the same reason as the delete-column one: `method_exists()` is
+     * true for a non-public method, and calling it reaches `Model::__call()`, which Eloquent
+     * forwards to the query builder -- `BadMethodCallException`, on every observed event.
+     */
+    public function test_a_non_public_auto_sync_method_does_not_break_an_event(): void
+    {
+        Bus::fake();
+
+        $model = new class extends Model
+        {
+            protected $table = 'hidden_auto_sync_lookalikes';
+
+            /**
+             * @return array<int, string>
+             */
+            protected function getHubspotAutoSync(): array
+            {
+                return [];
+            }
+        };
+
+        config(['hubspot.models' => [
+            $model::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]]);
+
+        $observer = new HubspotObserver(
+            new ModelBindings(app('config')),
+            app(Dispatcher::class),
+        );
+
+        $observer->created($model);
+
+        Bus::assertDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
      * A method NAMED `getDeletedAtColumn()` is not proof the model soft-deletes.
      *
      * `method_exists()` is a name check, and D-17's guard used to treat it as the whole contract.
