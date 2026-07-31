@@ -2,9 +2,9 @@
 schema_version: 1
 open_count: 3
 waived_count: 0
-fixed_count: 0
-total_count: 3
-last_updated: 2026-07-26T20:36:32.666Z
+fixed_count: 1
+total_count: 4
+last_updated: 2026-07-31T02:25:33.228Z
 ---
 
 # Broken Windows Ledger
@@ -18,6 +18,7 @@ last_updated: 2026-07-26T20:36:32.666Z
 | 1 | 01 | unrun-verify | .github/workflows/ci.yml |  | vendor/bin/pest --coverage --min=95 fails on the empty src/ (PHPUnit runner warning, not a coverage-percentage evaluation); resolves automatically once Phase 2 adds the first src/ file. See 01-01-SUMMARY.md Decisions Made #3. | open |  | 2026-07-26T20:02:20.332Z |  |
 | 2 | 01 | unrun-verify | .github/workflows/quality.yml |  | mutation job (pest --mutate --min=80) cannot compute a real MSI over the deliberately-empty src/; WARN+exit1 via failOnPhpunitWarning, resolves once Phase 2 adds source files (mirrors plan 01's coverage-floor finding) | open |  | 2026-07-26T20:36:32.352Z |  |
 | 3 | 01 | deviation | tests/Arch/LayerBoundariesTest.php |  | Concurrent git staging in a shared working directory caused commit 022b9e6 (plan 05) to accidentally include three of plan 04's task-2 files; content correct, but plan 04 lacks its own dedicated GREEN commit for the ten rules in git history | open |  | 2026-07-26T20:36:32.666Z |  |
+| 4 | 04 | deviation | src/Sync/SyncHubspotObjectJob.php |  | getHubspotUpdateMap() added to SyncsToHubspot and wired into SyncHubspotObjectJob, so $hubspotUpdateMap is honoured end to end. Codex raised the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the full create map, silently overwriting the properties a consumer declared the update map to protect | fixed | Closed in 04-03 rather than deferred to 04-04; shipping a documented option that does nothing is worse than the small scope extension. | 2026-07-31T02:25:33.228Z | 2026-07-31T04:10:00.000Z |
 
 ````json
 [
@@ -56,6 +57,18 @@ last_updated: 2026-07-26T20:36:32.666Z
     "reason": "",
     "recorded_at": "2026-07-26T20:36:32.666Z",
     "resolved_at": null
+  },
+  {
+    "id": 4,
+    "kind": "deviation",
+    "phase": "04",
+    "file": "src/Sync/SyncHubspotObjectJob.php",
+    "line": null,
+    "description": "getHubspotUpdateMap() added to SyncsToHubspot and wired into SyncHubspotObjectJob, so $hubspotUpdateMap is honoured end to end. The deferral was raised as a P1 by Codex on PR #42: passing [] made mapForUpdate() fall back to the full create map, silently overwriting the properties the update map existed to protect.",
+    "status": "fixed",
+    "reason": "Closed in 04-03 rather than deferred to 04-04; shipping a documented option that does nothing is worse than the small scope extension.",
+    "recorded_at": "2026-07-31T02:25:33.228Z",
+    "resolved_at": "2026-07-31T04:10:00.000Z"
   }
 ]
 ````

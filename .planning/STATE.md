@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 3
-current_phase_name: Registry & Stores
-status: complete
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-07-30T23:00:17.872Z"
-last_activity: 2026-07-29
-last_activity_desc: "executed 03-03-PLAN.md. `Gateway\\\\AssociationDefinitionsGateway` wraps `Schema\\\\Api\\\\DefinitionsApi` (the phase's only new `HubSpot\\\\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%."
+current_phase: 4
+current_phase_name: Model Sync
+status: executing
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-07-31T03:00:07.209Z"
+last_activity: 2026-07-31
+last_activity_desc: "executed 04-03-PLAN.md. PropertyMapper::map() resolves all three $hubspotMap forms (literal, dot-notation, closure) through one data_get()/Closure dispatch with null-omits-the-key as the shared filter step; mapForUpdate() adds the $hubspotUpdateMap selection rule; SyncHubspotObjectJob::handle() updates an already-linked model by its stored hubspot_id instead of re-upserting it. Fixed R3 (architecture rule) to admit the bare global function data_get, which pest-plugin-arch's existing 'Illuminate' allow-list entry never covered since the function is declared with no namespace statement. 709 tests, 2724 assertions, 100.0% coverage. MSI 95.24% measured over the three classes this plan changed (PropertyMapper, SyncHubspotObjectJob, SyncsToHubspot) — a SCOPED figure, not comparable to a whole-tree MSI, and stated that way rather than swapped in as if it were. $hubspotUpdateMap IS honoured end to end: SyncsToHubspot::getHubspotUpdateMap() reads it and the job passes it. This was first deferred to 04-04 and Codex rejected the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the FULL create map, so a consumer's update map was silently ignored and every update overwrote the properties it existed to protect. WINDOWS.md entry 4 is fixed."
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 18
+  completed_plans: 19
 ---
 
 # Project State
@@ -27,16 +27,27 @@ HubSpot CRM object type — with no per-type code, no migration step, and no cha
 association backwards. Extended 2026-07-26: …and records intent signals against an anonymous visitor
 that become attributed contact properties the moment an email appears, with no API call in the
 request lifecycle.
-**Current focus:** Phase 3 — Registry & Stores
+**Current focus:** Phase 4 — Model Sync
 
 ## Current Position
 
-Phase: 3 of 9 (Registry & Stores) — **all three plans executed**
-Plan: 3 of 3 in current phase; 03-01, 03-02 and 03-03 all merged (PRs #24, #27, #28). Phase 3 is complete
-Status: **Phase 3's work is done, and two of its four requirements deliberately do not close.** 03-01 shipped object-type normalisation, the seeded HubSpot-defined baseline and the store seam (array + cache) with `AssociationTypeRegistry` bound on the Phase 2 resolver key; 03-02 the database store, its dated migration and the directed missing-table error, with the unique key corrected to a collation-proof `lookup_hash`; 03-03 the Gateway-owned association-definitions read, `hubspot:associations:sync`, `hubspot:doctor` and `hubspot:associations:doctor`. **REG-02 and REG-03 tick. REG-01 and REG-04 stay OPEN** — their local-id-resolution and bound-model halves need model binding (SYNC-01) and are Phase 4's as REG-01b and REG-04b. `hubspot:doctor` NAMES its absent model section rather than omitting it, and a test holds that, precisely so nobody reads the command's existence as the requirement being met.
-Last activity: 2026-07-29 — executed 03-03-PLAN.md. `Gateway\AssociationDefinitionsGateway` wraps `Schema\Api\DefinitionsApi` (the phase's only new `HubSpot\*` reference, and a third namespace for `ExceptionTranslator`); the sync reads both directions of each configured pair and leaves `inverse_type_id` null; the associations doctor searches every reported association type rather than taking the first, and records a pairing only when both directions were observed. Codex raised three P2s on #28, all real: a verified `inverse_type_id` is now carried across an unchanged re-read rather than discarded, the associations doctor names the 500-association first-page limit rather than reporting a confident false negative, and the sync now REPORTS rows the portal no longer returns without removing them — real pruning needs a sixth store operation plus a decision on the baseline read-through, and is Phase 4's. 641 tests, 2506 assertions, 100.0% coverage, MSI 99.38%.
+Phase: 4 of 9 (Model Sync) — 3 of 9 plans executed (04-01, 04-02, 04-03)
+Plan: 3 of 9 in current phase; 04-03 just landed on branch `feat/04-03-property-map` (not yet
+merged). 04-04 shares 04-03's wave and runs independently against the same base.
+Status: **PropertyMapper's three `$hubspotMap` forms and the job's update-by-stored-id leg are
+done.** `map()` dispatches on the map value's own shape (`Closure` vs. a `data_get()` path) with
+null-omits-the-key as the one shared filter; `mapForUpdate()` adds the `$hubspotUpdateMap`
+selection rule; `SyncHubspotObjectJob::handle()` now updates an already-linked model by its stored
+`hubspot_id` rather than re-upserting it. **`$hubspotUpdateMap` is honoured end to end**
+via `SyncsToHubspot::getHubspotUpdateMap()`, which 04-03 added after Codex rejected the deferral as
+a P1 on PR #42 — passing `[]` made `mapForUpdate()` fall back to the FULL create map, so a
+consumer's update map was silently ignored and every update overwrote the properties it existed to
+protect. `WINDOWS.md` entry 4 is fixed. Also fixed R3's architecture rule to admit the bare global function
+`data_get`, which the existing `'Illuminate'` allow-list entry never covered since the function is
+declared with no namespace statement in `Illuminate\Collections\helpers.php`.
+Last activity: 2026-07-31 — executed 04-03-PLAN.md. PropertyMapper::map() resolves all three $hubspotMap forms (literal, dot-notation, closure) through one data_get()/Closure dispatch with null-omits-the-key as the shared filter step; mapForUpdate() adds the $hubspotUpdateMap selection rule; SyncHubspotObjectJob::handle() updates an already-linked model by its stored hubspot_id instead of re-upserting it. Fixed R3 (architecture rule) to admit the bare global function data_get, which pest-plugin-arch's existing 'Illuminate' allow-list entry never covered since the function is declared with no namespace statement. 709 tests, 2724 assertions, 100.0% coverage. MSI 95.24% measured over the three classes this plan changed (PropertyMapper, SyncHubspotObjectJob, SyncsToHubspot) — a SCOPED figure, not comparable to a whole-tree MSI, and stated that way rather than swapped in as if it were. $hubspotUpdateMap IS honoured end to end: SyncsToHubspot::getHubspotUpdateMap() reads it and the job passes it. This was first deferred to 04-04 and Codex rejected the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the FULL create map, so a consumer's update map was silently ignored and every update overwrote the properties it existed to protect. WINDOWS.md entry 4 is fixed.
 
-Progress: [███████░░░] 72%
+Progress: [████████░░] 76%
 
 ## Performance Metrics
 
@@ -77,6 +88,7 @@ Progress: [███████░░░] 72%
 | Phase 03 P03 | ~110min | 3 tasks | 20 files |
 | Phase 04 P01 | 1h15m | 3 tasks | 17 files |
 | Phase 04-model-sync P02 | ~135min | 2 tasks | 20 files |
+| Phase 04 P03 | ~1h | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -159,6 +171,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: 04-02: hubspot_object_links' composite (model_type, model_id) index is satisfied by the leftmost prefix of its own unique (model_type, model_id, object_type) index -- no second, standalone index
 - [Phase ?]: 04-02: SyncsToHubspot cannot declare $hubspotMap as a trait property (PHP fatal-errors a class redeclaring a trait's typed property with a different default) -- each consuming model declares it; getHubspotMap() reads it dynamically
 - [Phase ?]: 04-02: HubspotObjectLink's $casts became a casts() method and SyncHubspotObjectJob's deleteWhenMissingModels moved into the constructor body -- both purely so pest --mutate can attribute a covering test to an executed line, extending ServiceProvider::supportedStores()'s existing method-not-constant precedent
+- [Phase 4]: 04-03: $hubspotUpdateMap is read from the model via SyncsToHubspot::getHubspotUpdateMap(), declared OPTIONAL behind a property_exists() guard unlike getHubspotMap(). The accessor was initially deferred to 04-04 on file-ownership grounds and Codex rejected that as a P1 on PR #42: mapForUpdate() reads an empty update map as 'declares none' and applies the full create map, so the deferral would have shipped a documented option that silently overwrote exactly the properties it protects. Plan boundaries do not outrank the shipped artifact
+- [Phase ?]: [Phase 4] 04-03: R3's architecture rule widened to admit the bare global function data_get by literal name -- it is declared unnamespaced in Illuminate\\Collections\\helpers.php, so the existing 'Illuminate' allow-list entry never matched it; pest-plugin-arch resolves a bare resolvable function name as its own first-class dependency shape
 
 ### Pending Todos
 
@@ -242,8 +256,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-30T23:00:17.847Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-07-31T03:00:07.095Z
+Stopped at: Completed 04-03-PLAN.md
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**
