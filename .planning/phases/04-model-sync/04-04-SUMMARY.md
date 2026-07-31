@@ -179,13 +179,13 @@ coverage:
       clean, architecture and vendor-namespace gates fire correctly"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (739 passed, 2813 assertions)"
+        ref: "vendor/bin/pest (742 passed, 2816 assertions)"
         status: pass
       - kind: other
         ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 76/76 tested)"
+        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=ConfigurationException,ModelBindings,SyncsToHubspot (100.00%, 84/84 tested)"
         status: pass
     human_judgment: false
 
@@ -475,10 +475,8 @@ predicates.
   `applyBeforeQueryCallbacks()` clears the callback list after running and the constraint it added
   stays on the query, so a builder executed twice resolves its links ONCE and both executions
   agree — the behaviour to want from `->count()` followed by `->get()`. And because the constraint
-  is appended at compile time rather than where the scope sits in the chain, it lands after any
-  clause the caller chained: invisible to an AND chain (every ordinary use), and different only if
-  a caller puts a top-level `orWhere()` beside the scope, which is already ill-defined against the
-  shared-connection branch for the same reason.
+  was initially appended at compile time rather than at the scope's position — corrected in
+  finding 6 below, which is where that caveat went.
 - **Files modified:** `src/Sync/SyncsToHubspot.php`,
   `tests/Feature/Sync/ScopesAcrossConnectionsTest.php`.
 - **Verification:** RED first — the two new tests failed (a builder issued 1 statement at
@@ -488,9 +486,36 @@ predicates.
   clean.
 - **Committed in:** RED `2cab49b`, GREEN `95d116c`.
 
+**6. [Review — Bug] The deferral moved the constraint to the end of the query**
+- **Found by:** Codex on PR #44 (P2), against head `7370587` — i.e. against the fix for finding 5.
+- **Issue:** deferring via `beforeQuery()` fixed WHEN the link resolved but changed WHERE the
+  constraint landed. A callback that calls `$compiled->whereIn(...)` appends, so the constraint sat
+  after everything the caller chained afterwards, and
+  `syncedToHubspot()->orWhere('email', $address)` degraded from `(link) OR email = ?` to
+  `email = ? AND id IN (...)`: the OR leg stopped being an alternative and became a filter, silently
+  dropping the unlinked row it was written to find. Laravel places a scope's clauses where the scope
+  was called, so the SHARED-connection branch kept the caller's meaning and the cross-connection one
+  did not — the two branches answering differently, which is the one thing this pair may never do.
+  Deviation 5 had documented this as an acceptable caveat. That was the wrong call: it is a silent
+  wrong-results divergence, not a nuance.
+- **Fix:** `whereHubspotLinkResolved()` records the insertion positions while the scope still sits
+  where the caller put it, and the callback splices into them rather than appending. The constraint
+  is built on a scratch builder so its clauses and its bindings splice in together, at offsets that
+  shift by the same amount — which is what keeps every `?` matched to its own value. `$wheres` and
+  `$bindings` are public builder state, not reached-into internals.
+- **Tests, deliberately from both sides:** the shared-connection test states the REFERENCE meaning
+  so the cross-connection branch has something to be equal to, rather than each side asserting its
+  own behaviour and drifting together unnoticed.
+- **Mutation note:** two `DecrementInteger` mutants on the two splice lengths survived the first
+  attempt. `array_splice()`'s negative length removes up to that many elements from the END, so with
+  only ONE clause after the insertion point `-1` still removes nothing and the first position test
+  could not tell inserting from inserting-and-consuming. A test with TWO clauses after the scope —
+  the smallest arrangement that separates them — kills both. MSI back to 100.00% (84/84).
+- **Committed in:** RED `dc32c64`, GREEN `e840490`.
+
 ---
 
-**Total deviations:** 5 auto-fixed (2 Rule 1, 2 review findings, 1 CI scope extension). No scope
+**Total deviations:** 6 auto-fixed (2 Rule 1, 3 review findings, 1 CI scope extension). No scope
 creep in `src/` — `PropertyMapper.php`,
 `HubspotObserver.php`, `SyncHubspotObjectJob.php`, `HubspotObjectLink.php` and every file owned by
 a different wave-3/later plan were left untouched.

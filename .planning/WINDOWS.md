@@ -2,9 +2,9 @@
 schema_version: 1
 open_count: 3
 waived_count: 0
-fixed_count: 4
-total_count: 7
-last_updated: 2026-07-31T16:20:00.000Z
+fixed_count: 5
+total_count: 8
+last_updated: 2026-07-31T17:10:00.000Z
 ---
 
 # Broken Windows Ledger
@@ -22,6 +22,7 @@ last_updated: 2026-07-31T16:20:00.000Z
 | 5 | 04 | deviation | src/Sync/SyncsToHubspot.php |  | The three SyncsToHubspot query scopes could not see hubspot_object_links when the bound model was on another connection: whereHas() compiles its existence subquery into the PARENT statement, so the parent's connection resolved an unqualified hubspot_object_links in its own database and raised a missing-table error -- while hubspotLink/hubspotId(), pinned to the link connection by PR #39, kept answering correctly. Codex raised it as a P2 on PR #44. Each scope now branches: shared connection keeps whereHas() unchanged, different connections resolve the same relation on the link table's own connection via Relation::noConstraints() and constrain the parent by key. | fixed | Fixed in 04-04 rather than deferred or documented as a limitation: PR #39 already committed the read surface to surviving the connection split this package itself creates, and leaving the scopes out would make that surface half-working by design. | 2026-07-31T14:30:00.000Z | 2026-07-31T14:30:00.000Z |
 | 6 | 04 | deviation | scripts/ci/composer-retry.sh |  | Eight PR #44 checks failed at once in their Install dependencies step on a single packagist HTTP 502 for symfony/clock.json, and a plain re-run reproduced it. composer.lock is gitignored (correct for a library), so every job resolves from packagist with no offline path -- a packagist wobble takes out the whole board. scripts/ci/composer-retry.sh now fronts all ELEVEN dependency invocations (2 in ci.yml -- one install, one matrix update -- 5 in quality.yml, 2 in arch.yml, 2 in supply-chain.yml) with four attempts and doubling backoff, self-tested in the one job that installs no dependencies. Corrected from 'ten' after Codex flagged the miscount as a P3 on PR #44. | fixed | Fixed rather than waited out: STANDARDS.md Sec.12's merge rule is green or it does not merge, and 'not our code' does not make a branch mergeable. | 2026-07-31T15:05:00.000Z | 2026-07-31T15:05:00.000Z |
 | 7 | 04 | deviation | src/Sync/SyncsToHubspot.php |  | The cross-connection scope branch read the link table when the scope was CALLED, not when the builder ran, so a builder that looked lazy had already queried on construction and a link row written between construction and execution was invisible -- pendingHubspotSync() kept reporting work already done. Codex raised it as a P2 on PR #44 against the fix for entry 5. All three scopes now register their constraint through Query\\Builder::beforeQuery(), whose callbacks run inside toSql() on every execution path. Two statements still leave an inherent window; what is removed is the unbounded, caller-controlled part. | fixed | Fixed rather than documented: a scope that queries on construction breaks the laziness every other Eloquent scope has, and the widened window is caller-controlled. | 2026-07-31T16:20:00.000Z | 2026-07-31T16:20:00.000Z |
+| 8 | 04 | deviation | src/Sync/SyncsToHubspot.php |  | Deferring the cross-connection link resolution (entry 7) fixed WHEN it ran but moved WHERE the constraint landed: beforeQuery() appends, so syncedToHubspot()->orWhere('email', ...) became email = ? AND id IN (...) instead of (link) OR email = ?, silently dropping the unlinked row. The shared-connection branch kept the caller's meaning and the cross-connection one did not -- the two branches answering differently. Codex raised it as a P2 on PR #44. The constraint is now spliced in at the position recorded when the scope was called, clauses and bindings together, pinned by position tests on BOTH connections. | fixed | Fixed rather than kept as the documented caveat entry 7 left it: a silent wrong-results divergence between the two branches is not a nuance. | 2026-07-31T17:10:00.000Z | 2026-07-31T17:10:00.000Z |
 
 ````json
 [
@@ -108,6 +109,18 @@ last_updated: 2026-07-31T16:20:00.000Z
     "reason": "Fixed rather than documented: a scope that queries on construction breaks the laziness every other Eloquent scope has, and the widened window is caller-controlled.",
     "recorded_at": "2026-07-31T16:20:00.000Z",
     "resolved_at": "2026-07-31T16:20:00.000Z"
+  },
+  {
+    "id": 8,
+    "kind": "deviation",
+    "phase": "04",
+    "file": "src/Sync/SyncsToHubspot.php",
+    "line": null,
+    "description": "Deferring the cross-connection link resolution (entry 7) fixed WHEN it ran but moved WHERE the constraint landed: beforeQuery() appends, so syncedToHubspot()->orWhere('email', ...) became email = ? AND id IN (...) instead of (link) OR email = ?, silently dropping the unlinked row. The shared-connection branch kept the caller's meaning and the cross-connection one did not -- the two branches answering differently. Codex raised it as a P2 on PR #44. The constraint is now spliced in at the position recorded when the scope was called, clauses and bindings together, pinned by position tests on BOTH connections.",
+    "status": "fixed",
+    "reason": "Fixed rather than kept as the documented caveat entry 7 left it: a silent wrong-results divergence between the two branches is not a nuance.",
+    "recorded_at": "2026-07-31T17:10:00.000Z",
+    "resolved_at": "2026-07-31T17:10:00.000Z"
   }
 ]
 ````
