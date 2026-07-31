@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Schema;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
+use ReyemTech\Hubspot\Tests\Support\Sync\ArchivedLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\DisabledAutoSyncLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\NarrowedAutoSyncLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SoftDeletingLead;
@@ -62,6 +63,7 @@ final class AutoSyncBootTest extends SyncTestCase
             SoftDeletingLead::class => ['object' => 'contacts', 'id_property' => 'email'],
             NarrowedAutoSyncLead::class => ['object' => 'contacts', 'id_property' => 'email'],
             DisabledAutoSyncLead::class => ['object' => 'contacts', 'id_property' => 'email'],
+            ArchivedLead::class => ['object' => 'contacts', 'id_property' => 'email'],
         ]);
     }
 
@@ -74,6 +76,14 @@ final class AutoSyncBootTest extends SyncTestCase
             $table->string('email');
             $table->string('first_name')->nullable();
             $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('archived_leads', function (Blueprint $table): void {
+            $table->id();
+            $table->string('email');
+            $table->string('first_name')->nullable();
+            $table->softDeletes('archived_at');
             $table->timestamps();
         });
 
@@ -288,6 +298,29 @@ final class AutoSyncBootTest extends SyncTestCase
         Hubspot::fake();
 
         $lead = SoftDeletingLead::create(['email' => 'restored@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        Bus::fake();
+
+        $lead->restore();
+
+        Bus::assertNotDispatched(SyncHubspotObjectJob::class);
+    }
+
+    /**
+     * The same guard, on a model whose delete column is NOT `deleted_at` (Codex, PR #48).
+     *
+     * `SoftDeletes::getDeletedAtColumn()` returns `static::DELETED_AT` when the constant is
+     * defined, so `archived_at` is a supported Laravel configuration rather than an exotic one. A
+     * guard hardcoding `deleted_at` reads null for this model, falls through, and pushes properties
+     * on every restore -- the exact failure D-17 exists to prevent, just invisible to a fixture
+     * that happens to use the default column.
+     */
+    public function test_the_restore_guard_uses_the_models_own_soft_delete_column(): void
+    {
+        Hubspot::fake();
+
+        $lead = ArchivedLead::create(['email' => 'archived@example.com', 'first_name' => 'Ada']);
         $lead->delete();
 
         Bus::fake();

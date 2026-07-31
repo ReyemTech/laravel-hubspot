@@ -44,6 +44,7 @@ key-files:
     - tests/Support/Sync/SoftDeletingLead.php
     - tests/Support/Sync/NarrowedAutoSyncLead.php
     - tests/Support/Sync/DisabledAutoSyncLead.php
+    - tests/Support/Sync/ArchivedLead.php
   modified:
     - src/Sync/HubspotObserver.php
     - src/Sync/SyncsToHubspot.php
@@ -128,13 +129,13 @@ coverage:
       architecture rules all fire"
     verification:
       - kind: other
-        ref: "vendor/bin/pest (760 passed, 2838 assertions)"
+        ref: "vendor/bin/pest (761 passed, 2839 assertions)"
         status: pass
       - kind: other
         ref: "vendor/bin/pest --coverage --min=100 (100.0%)"
         status: pass
       - kind: other
-        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=HubspotObserver,SyncsToHubspot (100.00%, 65/65)"
+        ref: "vendor/bin/pest --mutate --parallel --min=80 --class=HubspotObserver,SyncsToHubspot (100.00%, 67/67)"
         status: pass
       - kind: other
         ref: "bash scripts/ci/verify-arch-rules-fire.sh (10/10 rules fired)"
@@ -191,6 +192,16 @@ is deliberately absent from that branch because there is no queue push to defer.
 way an outbound call reaches a request lifecycle, which is why STANDARDS §11's contract is stated of
 the DEFAULT rather than of every configuration. Both directions are tested, plus the absent-key
 default -- an upgrade whose published config predates the key must keep queueing.
+
+**Codex P2 — D-17's guard hardcoded `deleted_at`.** `SoftDeletes::getDeletedAtColumn()` returns
+`static::DELETED_AT` when the model defines the constant, so a model soft-deleting on `archived_at`
+is ordinary supported configuration. Against one, the guard read null, fell through, and pushed
+properties on every restore — the exact failure D-17 exists to prevent, made invisible by testing
+only against the default column. The column is now resolved through `getDeletedAtColumn()`, narrowed
+to a string first (`getOriginal(null)` returns the whole original attribute array, which is never
+null, so an unnarrowed value would make the guard swallow every update on every model). `ArchivedLead`
+is the fixture; `SoftDeletingLead` stays on the default column, because the guard has to hold for
+both and one fixture can only be one of them.
 
 **The backward-compatibility gate, live for the first time.** `HubspotObserver` originally took the
 config repository as a fourth constructor argument, and `roave/backward-compatibility-check` counts

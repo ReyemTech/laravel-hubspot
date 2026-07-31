@@ -57,15 +57,30 @@ final class HubspotObserver
      * made. 04-06 owns the entire response to a restore; this handler's job is to stay out of it,
      * so a restore costs one response rather than two.
      *
-     * `getOriginal('deleted_at')` is the only signal stock Eloquent exposes: during the restoring
-     * save the attribute is already null while its ORIGINAL value is still the delete timestamp,
-     * which is what separates this save from every ordinary update. A model with no `deleted_at`
-     * attribute at all -- any model not using `SoftDeletes` -- reads as null here and is therefore
-     * untouched by this guard.
+     * `getOriginal()` on the delete column is the only signal stock Eloquent exposes: during the
+     * restoring save the attribute is already null while its ORIGINAL value is still the delete
+     * timestamp, which is what separates this save from every ordinary update.
+     *
+     * The column is resolved through `getDeletedAtColumn()`, never hardcoded as `deleted_at`
+     * (Codex, PR #48). `SoftDeletes::getDeletedAtColumn()` returns `static::DELETED_AT` when the
+     * model defines that constant, so a model soft-deleting on `archived_at` is ordinary supported
+     * configuration -- and a hardcoded column reads null for it, falls through, and pushes
+     * properties on every restore. That is the exact failure this guard exists to prevent, made
+     * invisible by testing only against the default column.
+     *
+     * A model that does not use `SoftDeletes` has no such method and no restore to speak of, so it
+     * skips the guard entirely rather than being asked about a column it does not have.
      */
     public function updated(Model $model): void
     {
-        if ($model->getOriginal('deleted_at') !== null) {
+        // Narrowed to a string before use: getOriginal(null) returns the WHOLE original attribute
+        // array, which is never null, so an unnarrowed value would make this guard swallow every
+        // update on every model.
+        $deletedAtColumn = method_exists($model, 'getDeletedAtColumn')
+            ? $model->getDeletedAtColumn()
+            : null;
+
+        if (is_string($deletedAtColumn) && $model->getOriginal($deletedAtColumn) !== null) {
             return;
         }
 
