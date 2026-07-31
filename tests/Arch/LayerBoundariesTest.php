@@ -105,10 +105,29 @@ arch('R2: Registry may depend only on Gateway, the package exceptions and the fr
  * `tests/Arch/Fixtures/R3/SyncDependsOnWebhooks.php`, is reused unchanged and still makes the rule
  * go red under `scripts/ci/verify-arch-rules-fire.sh`, because the boundary it violates — `Sync`
  * reaching into `Webhooks` — is the boundary R3 is actually for, and is untouched.
+ *
+ * R3 additionally allows the bare function `data_get`, added 2026-07-31 (04-03).
+ *
+ * `data_get()` is `PropertyMapper`'s dot-path walker (04-RESEARCH.md's "Don't Hand-Roll" verdict:
+ * a custom relation-path walker is exactly the kind of code this package's whole design argument
+ * is against) and lives in `illuminate/collections`, already a declared production `require`
+ * (D-16). But it is declared UNNAMESPACED in `Illuminate\Collections\helpers.php` — `function
+ * data_get(...)`, no `namespace` statement above it — so `pest-plugin-arch`'s dependency scan
+ * records the call as the bare string `'data_get'`, which the `'Illuminate'` entry above does not
+ * match: `expectToOnlyUse()` allow-lists concrete FQCNs and functions it can resolve BY NAME, and
+ * `'Illuminate'` only expands to classes under that namespace prefix, never to unnamespaced global
+ * helpers the framework happens to ship. `Pest\Arch\Repositories\ObjectsRepository::allByNamespace()`
+ * has a dedicated branch for exactly this shape — `function_exists($namespace) &&
+ * (new ReflectionFunction($namespace))->getName() === $namespace` — which is what makes a bare
+ * function name a valid, first-class entry in a `toOnlyUse()` array rather than a workaround.
+ *
+ * This still widens no LAYER boundary: `data_get()` is a pure array/object accessor, not a
+ * dependency on any of `Webhooks`, `Signals` or `Gateway` internals, and R3's own violation
+ * fixture is untouched and still fires.
  */
 
 // @phpstan-ignore method.notFound, method.nonObject
-arch('R3: Sync may depend only on Registry, Gateway, the package exceptions and the framework')->expect('ReyemTech\Hubspot\Sync')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions', 'Illuminate']);
+arch('R3: Sync may depend only on Registry, Gateway, the package exceptions and the framework')->expect('ReyemTech\Hubspot\Sync')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions', 'Illuminate', 'data_get']);
 
 // @phpstan-ignore method.notFound, method.nonObject
 arch('R4: Webhooks may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Webhooks')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
