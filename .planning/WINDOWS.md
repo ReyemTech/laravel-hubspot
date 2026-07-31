@@ -2,9 +2,9 @@
 schema_version: 1
 open_count: 3
 waived_count: 0
-fixed_count: 2
-total_count: 5
-last_updated: 2026-07-31T14:30:00.000Z
+fixed_count: 3
+total_count: 6
+last_updated: 2026-07-31T15:05:00.000Z
 ---
 
 # Broken Windows Ledger
@@ -20,6 +20,7 @@ last_updated: 2026-07-31T14:30:00.000Z
 | 3 | 01 | deviation | tests/Arch/LayerBoundariesTest.php |  | Concurrent git staging in a shared working directory caused commit 022b9e6 (plan 05) to accidentally include three of plan 04's task-2 files; content correct, but plan 04 lacks its own dedicated GREEN commit for the ten rules in git history | open |  | 2026-07-26T20:36:32.666Z |  |
 | 4 | 04 | deviation | src/Sync/SyncHubspotObjectJob.php |  | getHubspotUpdateMap() added to SyncsToHubspot and wired into SyncHubspotObjectJob, so $hubspotUpdateMap is honoured end to end. Codex raised the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the full create map, silently overwriting the properties a consumer declared the update map to protect | fixed | Closed in 04-03 rather than deferred to 04-04; shipping a documented option that does nothing is worse than the small scope extension. | 2026-07-31T02:25:33.228Z | 2026-07-31T04:10:00.000Z |
 | 5 | 04 | deviation | src/Sync/SyncsToHubspot.php |  | The three SyncsToHubspot query scopes could not see hubspot_object_links when the bound model was on another connection: whereHas() compiles its existence subquery into the PARENT statement, so the parent's connection resolved an unqualified hubspot_object_links in its own database and raised a missing-table error -- while hubspotLink/hubspotId(), pinned to the link connection by PR #39, kept answering correctly. Codex raised it as a P2 on PR #44. Each scope now branches: shared connection keeps whereHas() unchanged, different connections resolve the same relation on the link table's own connection via Relation::noConstraints() and constrain the parent by key. | fixed | Fixed in 04-04 rather than deferred or documented as a limitation: PR #39 already committed the read surface to surviving the connection split this package itself creates, and leaving the scopes out would make that surface half-working by design. | 2026-07-31T14:30:00.000Z | 2026-07-31T14:30:00.000Z |
+| 6 | 04 | deviation | scripts/ci/composer-retry.sh |  | Eight PR #44 checks failed at once in their Install dependencies step on a single packagist HTTP 502 for symfony/clock.json, and a plain re-run reproduced it. composer.lock is gitignored (correct for a library), so every job resolves from packagist with no offline path -- a packagist wobble takes out the whole board. scripts/ci/composer-retry.sh now fronts all ten composer install/update call sites with four attempts and doubling backoff, self-tested in the one job that installs no dependencies. | fixed | Fixed rather than waited out: STANDARDS.md Sec.12's merge rule is green or it does not merge, and 'not our code' does not make a branch mergeable. | 2026-07-31T15:05:00.000Z | 2026-07-31T15:05:00.000Z |
 
 ````json
 [
@@ -82,6 +83,18 @@ last_updated: 2026-07-31T14:30:00.000Z
     "reason": "Fixed in 04-04 rather than deferred or documented as a limitation: PR #39 already committed the read surface to surviving the connection split this package itself creates, and leaving the scopes out would make that surface half-working by design.",
     "recorded_at": "2026-07-31T14:30:00.000Z",
     "resolved_at": "2026-07-31T14:30:00.000Z"
+  },
+  {
+    "id": 6,
+    "kind": "deviation",
+    "phase": "04",
+    "file": "scripts/ci/composer-retry.sh",
+    "line": null,
+    "description": "Eight PR #44 checks failed at once in their Install dependencies step on a single packagist HTTP 502 for symfony/clock.json, and a plain re-run reproduced it. composer.lock is gitignored (correct for a library), so every job resolves from packagist with no offline path -- a packagist wobble takes out the whole board. scripts/ci/composer-retry.sh now fronts all ten composer install/update call sites with four attempts and doubling backoff, self-tested in the one job that installs no dependencies.",
+    "status": "fixed",
+    "reason": "Fixed rather than waited out: STANDARDS.md Sec.12's merge rule is green or it does not merge, and 'not our code' does not make a branch mergeable.",
+    "recorded_at": "2026-07-31T15:05:00.000Z",
+    "resolved_at": "2026-07-31T15:05:00.000Z"
   }
 ]
 ````

@@ -424,9 +424,35 @@ predicates.
   every correctness test while silently doubling round trips and reading every link row of the
   class into memory.
 
+**4. [Scope extension — CI] Every `composer install` in the repository now retries**
+- **Found during:** pushing the fix for finding 3. Eight checks on PR #44 failed at once, all in
+  their `Install dependencies` step, all on the same packagist `HTTP/2 502` for
+  `symfony/clock.json`. None reached this project's code. A plain re-run of the failed jobs hit the
+  same 502 again, so waiting it out was not a strategy.
+- **Why it is this plan's problem:** `composer.lock` is gitignored by owner decision (correct for a
+  library), so every job resolves from packagist on every run with no lock to install from and no
+  offline path. A packagist wobble is therefore not one flaky job, it is all of them — and
+  STANDARDS.md §12's merge rule is "green or it does not merge". "It is not our code" does not
+  make the branch mergeable.
+- **Fix:** `scripts/ci/composer-retry.sh`, four attempts with doubling backoff, in front of all ten
+  `composer install`/`composer update` call sites across `ci.yml`, `quality.yml`, `arch.yml` and
+  `supply-chain.yml`. It cannot hide a real failure — an unsatisfiable constraint fails on the last
+  attempt exactly as on the first, only later. Deliberately NOT narrowed to network-shaped error
+  text: that would have to track composer's wording, and being wrong in that direction means
+  failing to retry an outage, which is the failure it exists to prevent.
+- **Self-test:** proves both directions (a command failing twice still succeeds overall; one
+  failing always still fails overall), and runs in the `source-hygiene` job — the one job that
+  installs no dependencies, so proving the wrapper does not depend on the thing it protects.
+  During the outage that motivated it, that step would still have run.
+- **Verification:** `tests/Ci/MatrixInstallStepTest.php` still green — the matrix step keeps its
+  lockless-safe `--with` shape, and the wrapper's path is not mistaken for a positional package
+  spec. All 56 `tests/Ci` tests pass; shellcheck clean; full suite 737 passed.
+- **Committed in:** `c0068a9`.
+
 ---
 
-**Total deviations:** 3 auto-fixed (2 Rule 1, 1 review finding). No scope creep — `PropertyMapper.php`,
+**Total deviations:** 4 auto-fixed (2 Rule 1, 1 review finding, 1 CI scope extension). No scope
+creep in `src/` — `PropertyMapper.php`,
 `HubspotObserver.php`, `SyncHubspotObjectJob.php`, `HubspotObjectLink.php` and every file owned by
 a different wave-3/later plan were left untouched.
 
