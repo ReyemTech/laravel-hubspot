@@ -176,7 +176,17 @@ jobs:
           # No `|| true` on either line. A fetch or diff that fails means the checkout is
           # broken, and a broken checkout must fail this required check rather than resolve to
           # an empty scope that reads as "nothing to mutate" (Codex, PR #43).
-          git fetch --no-tags --depth=0 origin "${{ github.base_ref }}"
+          #
+          # `--depth=0` is NOT valid here. `fetch-depth: 0` is an actions/checkout convention
+          # meaning "full history"; git fetch's own --depth takes a POSITIVE integer and rejects
+          # zero with `fatal: depth 0 is not a positive number`. It was in the first draft of this
+          # step and `|| true` hid it — so removing the suppression is what made the real bug
+          # visible, which is the whole argument for failing closed (Codex, PR #43).
+          #
+          # An explicit refspec, because actions/checkout leaves a PR at the merge ref without
+          # necessarily creating a remote-tracking ref for the base branch.
+          git fetch --no-tags origin \
+            "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
           classes="$(bash scripts/ci/mutation-scope.sh "origin/${{ github.base_ref }}")"
 
           if [ -z "$classes" ]; then
