@@ -154,6 +154,57 @@ trait SyncsToHubspot
     }
 
     /**
+     * This model's own auto-sync declaration, or null when it makes none (SYNC-03b).
+     *
+     * Three return shapes, matching the two documented forms plus their absence:
+     *
+     * - a `list<string>` of event names — auto-sync narrowed to exactly these
+     * - `false` — this model never auto-syncs, whatever `hubspot.auto_sync.on` says
+     * - `null` — the model declares nothing, so the application-wide setting applies
+     *
+     * `HubspotObserver` asks this rather than reading `$hubspotAutoSync` itself, so the
+     * "did the model declare one?" question is answered in ONE place instead of at every event
+     * handler that needs it. The property-existence check is the same shape `getHubspotUpdateMap()`
+     * uses, and for the same reason: a model that never narrows its auto-sync should not have to
+     * declare a property to say so.
+     *
+     * Deliberately NOT resolving the config default here. The observer holds an injected config
+     * repository and this trait would have to reach for a facade to get one, and — more to the
+     * point — a reader that folded the default in could no longer distinguish "declared `false`"
+     * from "declared nothing", which is exactly the distinction its caller needs.
+     *
+     * @return array<array-key, mixed>|false|null
+     */
+    public function getHubspotAutoSync(): array|false|null
+    {
+        if (! property_exists($this, 'hubspotAutoSync')) {
+            return null;
+        }
+
+        // @phpstan-ignore-next-line declared by the consuming model, never by this trait -- the
+        // same contract $hubspotMap and $hubspotUpdateMap above already carry.
+        $declared = $this->hubspotAutoSync;
+
+        if ($declared === false) {
+            return false;
+        }
+
+        // `true` is not one of the two documented forms, and treating it as "everything in `on`"
+        // is the same answer as declaring nothing at all -- so it collapses to null rather than
+        // becoming a third, undocumented shape every caller would have to handle. Anything else
+        // non-array lands here too, and defers to the application-wide setting rather than
+        // guessing what was meant.
+        if (! is_array($declared)) {
+            return null;
+        }
+
+        // Returned as declared, keys and all. Normalising to a list is the CALLER's job
+        // (HubspotObserver::eventsFor()), because this reader's contract is "what did the model
+        // say", and a reader that also reshaped it would be answering a different question.
+        return $declared;
+    }
+
+    /**
      * Only models linked to the given HubSpot id (D-06, D-13). Resolved through the morph
      * relation, never a column predicate: there is no HubSpot id column on the consumer's table,
      * so a scope written as a column comparison would silently match nothing rather than throw.
