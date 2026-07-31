@@ -65,7 +65,9 @@ final class UpdateSyncTest extends SyncTestCase
 
         $fake = Hubspot::fake();
 
-        app(Dispatcher::class)->dispatch(new SyncHubspotObjectJob($lead->fresh()));
+        $freshLead = SyncedLead::query()->findOrFail($lead->id);
+
+        app(Dispatcher::class)->dispatch(new SyncHubspotObjectJob($freshLead));
 
         Hubspot::assertRequestCount(1);
 

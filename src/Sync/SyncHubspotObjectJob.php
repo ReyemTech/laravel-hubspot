@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Sync;
 
+use Closure;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -83,8 +84,43 @@ final class SyncHubspotObjectJob implements ShouldQueue
         // job accepts a plain Model because binding is generic across model classes, so the
         // method is real on every model that reaches here but not statically visible on the base
         // Eloquent type.
-        /** @var array<string, mixed> $map */
+        /** @var array<string, string|Closure> $map */
         $map = $this->model->getHubspotMap(); // @phpstan-ignore-line method.notFound
+
+        // hubspotLink() is the same trait accessor SyncsToHubspot::hubspotLink() exposes,
+        // already scoped to this binding's object type and to the digest of the model's own
+        // morph class (see the trait's own docblock). Called here, not cached anywhere on this
+        // job, for the identical per-call reason every other Sync collaborator resolves fresh:
+        // the model handed to this method is whatever SerializesModels re-fetched (D-09), and
+        // its link row -- if any -- is read against that same freshly-fetched state.
+        /** @var HubspotObjectLink|null $link */
+        $link = $this->model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
+
+        if ($link !== null) {
+            // An existing link means this record's HubSpot id is already known, so the write
+            // addresses it DIRECTLY and never re-derives it from a mapped property -- re-deriving
+            // would let a changed id_property value (e.g. a changed email) repoint the write at a
+            // different HubSpot record than the one this model has always synced to.
+            //
+            // $hubspotUpdateMap has no model-facing accessor yet: SyncsToHubspot exposes
+            // getHubspotMap() only (04-02), and a getHubspotUpdateMap() companion belongs beside
+            // the query scopes 04-04 adds to that same trait -- this plan does not touch it. Every
+            // model narrows to the empty array until that accessor exists, and mapForUpdate()
+            // already treats an empty update map as "the model declares none": the full $map
+            // applies unnarrowed. The SELECTION rule itself lives in exactly one place --
+            // PropertyMapper::mapForUpdate() -- proven directly against explicit map/update-map
+            // arguments in PropertyMapperTest.
+            $properties = $mapper->mapForUpdate($this->model, $map, []);
+
+            $gateway->update($binding->objectType, $link->hubspot_id, $properties);
+
+            // Only synced_at moves. hubspot_id is never rewritten here from the update response --
+            // it is already the address this call just wrote to, and reassigning it from the
+            // response would be re-deriving the very value this branch exists to avoid re-deriving.
+            $link->update(['synced_at' => Carbon::now()]);
+
+            return;
+        }
 
         $properties = $mapper->map($this->model, $map);
 
@@ -96,9 +132,7 @@ final class SyncHubspotObjectJob implements ShouldQueue
         }
 
         // D-11: with no local link yet, this upserts on the declared id_property rather than
-        // creating, so a create whose response was lost converges instead of duplicating. The
-        // "a link already exists, update by HubSpot id instead" branch is deliberately NOT here --
-        // it belongs with $hubspotUpdateMap in 04-03.
+        // creating, so a create whose response was lost converges instead of duplicating.
         $object = $gateway->upsert($binding->objectType, $binding->idProperty, $idValue, $properties);
 
         // Model::getKey() is declared `@return mixed` in the framework itself -- every primary
