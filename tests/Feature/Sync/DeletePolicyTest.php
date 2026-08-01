@@ -9,6 +9,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Mockery;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
@@ -191,13 +192,20 @@ final class DeletePolicyTest extends SyncTestCase
         $idBefore = HubspotObjectLink::query()->value('hubspot_id');
 
         Hubspot::fake();
+        $log = Log::spy();
         $lead->restore();
 
         Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info');
 
         $link = HubspotObjectLink::query()->sole();
 
         self::assertTrue($link->is_stale, 'A restore must flag the link stale.');
+        self::assertNotNull(
+            $link->stale_at,
+            'The flag carries a timestamp. `is_stale` alone says a link went stale but never when, '
+            .'which is the first question anybody reading the row afterwards asks.'
+        );
         self::assertSame(
             $idBefore,
             $link->hubspot_id,
@@ -229,9 +237,15 @@ final class DeletePolicyTest extends SyncTestCase
 
         Hubspot::fake();
 
+        $log = Log::spy();
+
         app()->call([new SyncHubspotObjectJob($lead), 'handle']);
 
         Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info', [
+            Mockery::type('string'),
+            ['model' => SoftDeletingLead::class, 'model_id' => $lead->getKey()],
+        ]);
     }
 
     /**
@@ -249,7 +263,18 @@ final class DeletePolicyTest extends SyncTestCase
 
         $lead->forceDelete();
 
-        $log->shouldHaveReceived('info');
+        // The CONTEXT is asserted whole, not merely the level: a log line that says an archive was
+        // skipped without saying which record it was skipped for is not actionable, and every key
+        // here is what makes the local row and its CRM counterpart findable afterwards.
+        $log->shouldHaveReceived('info', [
+            Mockery::type('string'),
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'forceDeleted',
+                'action' => 'skip-quietly',
+            ],
+        ]);
         $log->shouldNotHaveReceived('warning');
     }
 
@@ -287,9 +312,11 @@ final class DeletePolicyTest extends SyncTestCase
         $linkRowIdBefore = HubspotObjectLink::query()->value('id');
 
         Hubspot::fake();
+        $log = Log::spy();
         $lead->restore();
 
         Hubspot::assertRequestCount(1);
+        $log->shouldHaveReceived('warning');
 
         $link = HubspotObjectLink::query()->sole();
 
@@ -318,9 +345,11 @@ final class DeletePolicyTest extends SyncTestCase
         Hubspot::assertRequestCount(0);
         self::assertNull(HubspotObjectLink::query()->value('id'));
 
+        $log = Log::spy();
         $lead->delete();
 
         Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info');
     }
 
     /**
