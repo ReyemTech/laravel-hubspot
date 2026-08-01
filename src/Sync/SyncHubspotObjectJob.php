@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
@@ -198,6 +199,58 @@ final class SyncHubspotObjectJob implements ShouldQueue
                 'synced_at' => Carbon::now(),
             ],
         );
+
+        $this->archiveIfTheModelWasDeletedMeanwhile();
+    }
+
+    /**
+     * Converges on a delete that raced this write (Codex, PR #49).
+     *
+     * The guard at the top of `handle()` is a check-before-act on an in-memory model, and the
+     * window between it and the `updateOrCreate()` above is real: a soft delete landing there finds
+     * NO link, because this job had not written one yet, so `HubspotObserver::trashed()` has nothing
+     * to archive and schedules nothing. This job then records a link for a model that is already
+     * deleted, and no later event revisits it.
+     *
+     * The response is to replay the event that could not act, now that the link it needed exists.
+     * `HubspotObserver::trashed()` is called rather than the archive being reproduced here, so the
+     * whole gate applies unchanged -- `auto_sync.enabled`, the `'deleted'` opt-in, the per-model
+     * override, the `hard_delete` policy and the `archived_at` evidence. A delete this application
+     * does not mirror stays unmirrored, which is the correct answer and one a hand-rolled archive
+     * here would have got wrong.
+     *
+     * The observer is resolved from the container rather than taken as a fourth parameter of
+     * `handle()`: this job is public API of a released package, and
+     * `roave/backward-compatibility-check` counts a new required parameter on a public method as a
+     * break. The `App` facade is the same seam `SyncsToHubspot` uses, for the same reason.
+     *
+     * Like every convergence in this package this narrows the window rather than closing it -- a
+     * delete landing after the re-read below simply converges on its own next pass.
+     */
+    private function archiveIfTheModelWasDeletedMeanwhile(): void
+    {
+        if (! in_array(SoftDeletes::class, class_uses_recursive($this->model), true)) {
+            return;
+        }
+
+        $fresh = $this->model->newQueryWithoutScopes()->find($this->model->getKey());
+
+        // A missing row is a raced HARD delete, and it counts: `deleteWhenMissingModels` only
+        // discards a job before `handle()` runs, never one already in flight.
+        if ($fresh instanceof Model && $fresh->trashed() !== true) { // @phpstan-ignore-line method.notFound
+            return;
+        }
+
+        Log::info(
+            'A model was deleted while its HubSpot sync was in flight, so the delete policy is '
+            .'being applied now that the link it needed exists.',
+            ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+        );
+
+        /** @var HubspotObserver $observer */
+        $observer = App::make(HubspotObserver::class);
+
+        $observer->trashed($fresh instanceof Model ? $fresh : $this->model);
     }
 
     /**

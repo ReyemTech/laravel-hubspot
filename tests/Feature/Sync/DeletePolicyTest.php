@@ -359,6 +359,64 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
+     * A soft delete landing between the sync job's trashed guard and its link write finds NO link
+     * -- the job has not written one yet -- so `trashed` has nothing to archive and schedules
+     * nothing. The job then records a link for a model that is already deleted, and no later event
+     * revisits it (Codex, PR #49).
+     *
+     * The response is to replay the event that could not act, once the link exists. The race is
+     * reproduced deterministically by deleting the row underneath an in-memory model that still
+     * believes it is live, which is exactly what the worker would be holding.
+     */
+    public function test_a_sync_that_raced_a_delete_applies_the_delete_policy_afterwards(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'racedsync@example.com', 'first_name' => 'Ada']);
+        HubspotObjectLink::query()->delete();
+
+        // The delete lands in another request while this job holds a live in-memory model.
+        SoftDeletingLead::query()->whereKey($lead->id)->update(['deleted_at' => now()]);
+
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectJob($lead), 'handle']);
+
+        // The upsert this job came to make, then the archive the delete policy owed once the link
+        // it needed existed.
+        Hubspot::assertRequestCount(2);
+        self::assertNotNull(
+            HubspotObjectLink::query()->sole()->archived_at,
+            'The replayed delete policy must leave its own evidence, or the next delete archives '
+            .'an already-archived record.'
+        );
+    }
+
+    /**
+     * The same race under the SHIPPED DEFAULT, where `deleted` is not mirrored: the delete policy
+     * is replayed and correctly decides to do nothing. Reproducing the archive by hand here rather
+     * than replaying the observer would have got this backwards.
+     */
+    public function test_a_sync_that_raced_a_delete_mirrors_nothing_when_deletes_are_not_mirrored(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['created', 'updated']);
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'racedquiet@example.com', 'first_name' => 'Ada']);
+        HubspotObjectLink::query()->delete();
+
+        SoftDeletingLead::query()->whereKey($lead->id)->update(['deleted_at' => now()]);
+
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectJob($lead), 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        self::assertNull(HubspotObjectLink::query()->sole()->archived_at);
+    }
+
+    /**
      * A record HubSpot no longer has is a record that is archived. The redundant archive a purge
      * issues must not become a failed job for saying so, which is `04-06-PLAN.md`'s own rule for a
      * missing link row applied to the record instead of the row.
