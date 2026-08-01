@@ -45,9 +45,25 @@ use Illuminate\Support\Facades\Log;
  *
  * `deleted` is the obvious hook and it is the wrong one on its own, because it does not distinguish
  * the rows of the table it would have to drive: Eloquent fires it identically for a `SoftDeletes`
- * model's ordinary `delete()` and for its `forceDelete()`, and branching inside it on
- * `$model->trashed()` misclassifies the hard delete -- `forceDelete()` calls `delete()` internally,
- * and the in-memory `deleted_at` is already set by the time the handler runs. So:
+ * model's ordinary `delete()` and for its `forceDelete()`, since `forceDelete()` calls `delete()`
+ * internally.
+ *
+ * Branching inside it on `$model->trashed()` does not rescue it, and the reason is not the one
+ * `04-RESEARCH.md` Pitfall 2 gives. That document says the in-memory delete column is already set
+ * by the time `deleted` runs during a force delete; **it is not.**
+ * `SoftDeletes::performDeleteOnModel()` skips `runSoftDelete()` entirely while `forceDeleting` is
+ * true, so nothing sets it. Verified against the framework source and against the events themselves:
+ *
+ * | scenario | `deleted` fires | `trashed()` inside it |
+ * |---|---|---|
+ * | soft delete | once | true |
+ * | direct `forceDelete()` | once | **false** |
+ * | purge (soft delete, then `forceDelete()`) | **twice** | true |
+ *
+ * So a `deleted`-plus-`trashed()` implementation reads a direct force delete correctly and
+ * misclassifies a PURGE as a soft delete -- archiving it even under `hard_delete => 'guard'`, the
+ * setting that exists to prevent exactly that, and doing it twice because `deleted` fires twice
+ * there. The conclusion the research reached is right; the mechanism it named is not. So:
  *
  * | handler | fires | drives |
  * |---|---|---|
@@ -220,6 +236,28 @@ final class HubspotObserver
             return;
         }
 
+        // A PURGE -- forceDelete() on a row that was already soft-deleted -- has already archived,
+        // from trashed(), and archiving the same record twice is at best a wasted request and at
+        // worst a job that retries and fails against a record HubSpot has already archived (Codex,
+        // PR #49). `trashed()` is a sound discriminator HERE and only here: verified against the
+        // framework, `SoftDeletes::performDeleteOnModel()` skips `runSoftDelete()` entirely while
+        // `forceDeleting` is true, so a DIRECT force delete never sets the in-memory delete column
+        // and reads false, while a purge reads true from the soft delete that preceded it.
+        //
+        // This lives after the gate rather than in forceDeleted(), so a purge under a disabled
+        // auto-sync stays silent, and it is keyed on the event rather than applied generally --
+        // `trashed()` is true during `restored` handling too, and there it means the opposite.
+        if ($event === 'forceDeleted' && $this->modelIsTrashed($model)) {
+            Log::info(
+                'A purged model was NOT archived a second time. Its HubSpot record was already '
+                .'archived when the soft delete fired `trashed`, and HubSpot has no unarchive '
+                .'endpoint for the first archive to have been undone by.',
+                $this->logContext($event, $model, 'already-archived'),
+            );
+
+            return;
+        }
+
         $action = DeletePolicy::resolve(
             $this->modelUses($model, SoftDeletes::class),
             $event,
@@ -340,6 +378,23 @@ final class HubspotObserver
      * the row is reachable from the model at all; see {@see ArchiveHubspotObjectJob} for what
      * deferring it to the worker would cost.
      */
+    /**
+     * Whether the model is currently soft-deleted.
+     *
+     * No `modelUses()` guard in front of it, and that is an invariant rather than an oversight:
+     * `forceDeleted` is dispatched from exactly one place in the entire framework --
+     * `SoftDeletes::forceDelete()` (`SoftDeletes.php:63`) -- so a model reaching the only call site
+     * of this method applies the trait by construction. A guard would be an unreachable branch, and
+     * this phase has deleted three of those already.
+     */
+    private function modelIsTrashed(Model $model): bool
+    {
+        // trashed() is declared by SoftDeletes, not by Model, and the invariant above is the
+        // precondition PHPStan cannot express. D-04 forbids a baseline, not a justified per-line
+        // ignore.
+        return $model->trashed() === true; // @phpstan-ignore-line method.notFound
+    }
+
     private function linkOf(Model $model): ?HubspotObjectLink
     {
         /** @var HubspotObjectLink|null $link */

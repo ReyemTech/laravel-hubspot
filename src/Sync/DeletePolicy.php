@@ -45,8 +45,9 @@ use ReyemTech\Hubspot\Exceptions\ConfigurationException;
  * ## Why `deleted` on a `SoftDeletes` model answers "nothing to do"
  *
  * That row is the one Eloquent event that distinguishes nothing: `deleted` fires identically for a
- * soft delete and for a `forceDelete()`, and by the time it runs the in-memory `deleted_at` is
- * already set either way. `trashed` and `forceDeleted` own both of those outcomes, so this
+ * soft delete and for a `forceDelete()`, and in a PURGE -- a soft delete followed later by a
+ * `forceDelete()` -- it fires twice, once per delete, with `trashed()` reading true both times.
+ * `trashed` and `forceDeleted` own both of those outcomes, so this
  * resolver answers `skip-quietly` rather than guessing which one it was. {@see HubspotObserver}
  * never asks the question -- its `deleted()` handler returns before reaching here for a model that
  * soft-deletes -- but this function is total over its inputs, so a caller that does ask gets the

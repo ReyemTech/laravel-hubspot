@@ -24,9 +24,15 @@ use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
  *
  * SYNC-04. Three DISTINCT Eloquent events drive this table, because the obvious one does not
  * distinguish the rows: `deleted` fires identically for a `SoftDeletes` model's ordinary `delete()`
- * and for its `forceDelete()`, and branching inside a `deleted` handler on `$model->trashed()`
- * misclassifies a hard delete -- the in-memory `deleted_at` is already set by the time it runs
- * (04-RESEARCH.md, Common Pitfall 2, verified against the framework source).
+ * and for its `forceDelete()`, since `forceDelete()` calls `delete()` internally.
+ *
+ * Branching inside a `deleted` handler on `$model->trashed()` does not rescue it, though NOT for
+ * the reason 04-RESEARCH.md Pitfall 2 gives -- the in-memory delete column is NOT set during a
+ * direct force delete, because `performDeleteOnModel()` skips `runSoftDelete()` while
+ * `forceDeleting` is true. Measured, not recalled: a direct force delete reads `trashed()` FALSE,
+ * while a PURGE (soft delete, then `forceDelete()`) fires `deleted` TWICE and reads true both
+ * times. So such an implementation misclassifies the purge, archiving it twice even under
+ * `hard_delete => 'guard'`.
  *
  * So: `trashed` fires if and only if a genuine soft delete happened, `forceDeleted` only after a
  * hard delete, and plain `deleted` is gated on the model not using `SoftDeletes` at all.
@@ -119,6 +125,65 @@ final class DeletePolicyTest extends SyncTestCase
         $lead->forceDelete();
 
         Hubspot::assertRequestCount(0);
+    }
+
+    /**
+     * A PURGE -- soft-delete now, `forceDelete()` later -- archives ONCE in total, not twice.
+     *
+     * `trashed` already dispatched the archive on the way down, and HubSpot has no unarchive
+     * endpoint for that first archive to have been undone by, so the record `forceDeleted` would
+     * address is one HubSpot has already archived. The second request is at best wasted and at
+     * worst a job that retries and fails (Codex, PR #49).
+     *
+     * Under `allow` on purpose: `guard` would issue nothing anyway, so it could not tell a fixed
+     * implementation from a broken one.
+     */
+    public function test_purging_an_already_trashed_model_does_not_archive_a_second_time(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'purged@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake();
+        $lead->delete();
+        Hubspot::assertRequestCount(1);
+
+        Hubspot::fake();
+        $log = Log::spy();
+        $lead->forceDelete();
+
+        Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info', [
+            Mockery::type('string'),
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'forceDeleted',
+                'action' => 'already-archived',
+            ],
+        ]);
+    }
+
+    /**
+     * The same purge with `deleted` not opted in issues nothing and says nothing. A skip is only
+     * worth logging once the consumer has asked for deletes to mirror at all.
+     */
+    public function test_purging_while_deleted_is_not_opted_in_stays_silent(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'quietpurge@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        config()->set('hubspot.auto_sync.on', ['created', 'updated']);
+
+        Hubspot::fake();
+        $log = Log::spy();
+        $lead->forceDelete();
+
+        Hubspot::assertRequestCount(0);
+        $log->shouldNotHaveReceived('info');
+        $log->shouldNotHaveReceived('warning');
     }
 
     /**
