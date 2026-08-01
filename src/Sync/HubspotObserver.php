@@ -223,7 +223,7 @@ final class HubspotObserver
         // stale flag was never set). Nothing local would ever mention it again.
         //
         // `auto_sync.enabled` still applies. It is a statement about the package as a whole rather
-        // than about which events mirror, and `recreate` reaches the API.
+        // than about which events mirror.
         if (Config::get('hubspot.auto_sync.enabled') !== true) {
             return;
         }
@@ -231,31 +231,23 @@ final class HubspotObserver
         // The per-model opt-out is NOT the event list and is not bypassed with it (Codex, PR #49).
         // `$hubspotAutoSync = false` is documented as "never auto-sync this model" -- a statement
         // about the model itself rather than about which events an application mirrors -- so it
-        // outranks the evidence an archived link carries. An operator who opted a model out after
-        // it was archived must not have a new CRM object created for it by a restore.
+        // outranks the evidence an archived link carries.
         if ($this->declaredAutoSyncOf($model) === false) {
             return;
         }
 
-        $link = $this->linkOf($model);
-
-        // `resolve()` answers exactly `flag-stale` or `recreate` for this event -- the unit table
-        // pins both rows and no others -- so this is a two-valued choice rather than a match whose
-        // remaining arms could never run.
-        $action = DeletePolicy::resolve(
+        // `on_restore` is READ rather than assumed, so an unsupported value still throws where an
+        // operator can see it. {@see DeletePolicy} answers `flag-stale` for every value it accepts,
+        // which is why there is nothing to branch on here: `recreate` is not implemented in this
+        // release and is refused by the resolver rather than silently treated as `flag`.
+        DeletePolicy::resolve(
             $this->modelUses($model, SoftDeletes::class),
             'restored',
             $this->policyValue('hard_delete', 'guard'),
             $this->policyValue('on_restore', 'flag'),
         );
 
-        if ($action === 'recreate') {
-            $this->recreate($link, $model);
-
-            return;
-        }
-
-        $this->flagStale($link, $model);
+        $this->flagStale($this->linkOf($model), $model);
     }
 
     /**
@@ -384,58 +376,6 @@ final class HubspotObserver
             .'endpoint, so its link row is now flagged stale and the stored id is kept.',
             $this->logContext('restored', $model, 'flag-stale'),
         );
-    }
-
-    /**
-     * `on_restore => 'recreate'`, the opt-in that forks CRM history.
-     *
-     * Dispatches {@see RecreateHubspotObjectJob}, which CREATES, rather than the ordinary sync job,
-     * which upserts (Codex, PR #49). The distinction is the whole of what `recreate` means. The sync
-     * job's no-link branch upserts on the model's `id_property` for D-11's reason -- a create whose
-     * response was lost must converge rather than duplicate -- and here duplication is precisely
-     * what was asked for, so converging onto whatever HubSpot matches is the wrong answer.
-     *
-     * What that buys is honesty, not a guarantee. HubSpot retains a unique property value on an
-     * archived record, so a create can still be REJECTED for conflicting with the object this
-     * restore is forking away from. That surfaces as this package's own `ApiException` naming
-     * HubSpot's own reason. What it can no longer do is silently match the archived record and go
-     * on writing to it, which is what an upsert here risked.
-     *
-     * Dropping the link row is the other half: the old HubSpot record stays archived and
-     * unreferenced -- that is the fork, and why this can never be a default.
-     *
-     * The link is nullable because the absence of one is not a reason to skip: it is the state this
-     * action produces anyway. A model restored without ever having linked gets its fresh sync, and
-     * nothing was forked because nothing was archived.
-     */
-    private function recreate(?HubspotObjectLink $link, Model $model): void
-    {
-        // There is nothing to fork AWAY from (Codex, PR #49). A link this package never archived
-        // points at a live HubSpot record, and dropping it to create a second object would turn a
-        // correct link into a duplicate -- the most expensive possible answer to a restore that
-        // needed no answer at all. A null link is different and does recreate: nothing was ever
-        // synced, so a fresh create is exactly what `recreate` promises.
-        if ($link !== null && $link->archived_at === null) {
-            Log::info(
-                'A restored model was not recreated, because this package never archived its '
-                .'HubSpot record. Its existing link still points at a live record, and forking it '
-                .'would create a duplicate.',
-                $this->logContext('restored', $model, 'recreate'),
-            );
-
-            return;
-        }
-
-        Log::warning(
-            'A restored model is being recreated in HubSpot under hubspot.auto_sync.on_restore = '
-            .'"recreate". The previously archived record is left archived and its id is dropped, '
-            .'which forks this record\'s CRM history.',
-            $this->logContext('restored', $model, 'recreate'),
-        );
-
-        $link?->delete();
-
-        $this->dispatchJob(new RecreateHubspotObjectJob($model));
     }
 
     /**
@@ -574,7 +514,7 @@ final class HubspotObserver
      * running this inside a transaction gets the call before the commit -- which is inherent to
      * asking for a synchronous sync, not something this method can paper over.
      */
-    private function dispatchJob(ArchiveHubspotObjectJob|RecreateHubspotObjectJob|SyncHubspotObjectJob $job): void
+    private function dispatchJob(ArchiveHubspotObjectJob|SyncHubspotObjectJob $job): void
     {
         if (Config::get('hubspot.auto_sync.queue', true) === false) {
             $this->dispatcher->dispatchSync($job);

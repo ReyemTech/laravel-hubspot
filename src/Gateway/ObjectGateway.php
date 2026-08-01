@@ -32,7 +32,6 @@ use HubSpot\Client\Crm\Objects\Model\SimplePublicObjectInputForCreate;
 use HubSpot\Client\Crm\Objects\Model\SimplePublicObjectWithAssociations;
 use HubSpot\Client\Crm\Objects\Model\SimplePublicUpsertObject;
 use HubSpot\Client\Crm\Objects\Model\StandardError;
-use ReyemTech\Hubspot\Gateway\Contracts\NonRetryingObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use RuntimeException;
 
@@ -42,7 +41,7 @@ use RuntimeException;
  * keyed on the object type value anywhere in this class, and `tests/Arch/NoPerTypeServiceTest.php`
  * fails the build if a per-type class appears alongside it.
  */
-final class ObjectGateway implements NonRetryingObjectGatewayContract, ObjectGatewayContract
+final class ObjectGateway implements ObjectGatewayContract
 {
     public function __construct(
         private readonly HubspotClientFactory $clientFactory,

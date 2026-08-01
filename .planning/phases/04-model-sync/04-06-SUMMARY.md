@@ -12,11 +12,10 @@ requires:
 provides:
   - "Sync\\DeletePolicy -- design spec §7's table as a pure static function over four primitives"
   - "Sync\\ArchiveHubspotObjectJob -- carries objectType + hubspotId as SCALARS, never the model;\n    treats a 404 as a completed archive"
-  - "Sync\\RecreateHubspotObjectJob -- the on_restore => recreate path, which CREATES, never upserts"
   - "Sync\\HubspotObserver::trashed(), ::forceDeleted(), ::deleted(), ::restored()"
   - "Sync\\HubspotObserver::passesGate(), ::dispatchJob() and ::applyToLink(), factored out of syncOn()"
   - "SyncHubspotObjectJob's trashed-model early return"
-  - "config/hubspot.php auto_sync.hard_delete ('guard') and auto_sync.on_restore ('flag')"
+  - "config/hubspot.php auto_sync.hard_delete ('guard') and auto_sync.on_restore ('flag');\n    on_restore accepts 'flag' ONLY -- 'recreate' was built during review and withdrawn"
   - "ConfigurationException::unknownHardDeletePolicy(), ::unknownRestorePolicy(), ::unknownDeleteEvent()"
   - "illuminate/log as a declared production require -- the package's first log calls"
   - "hubspot_object_links.archived_at -- durable evidence that THIS PACKAGE archived a link"
@@ -52,8 +51,6 @@ key-files:
   created:
     - src/Sync/DeletePolicy.php
     - src/Sync/ArchiveHubspotObjectJob.php
-    - src/Sync/RecreateHubspotObjectJob.php
-    - src/Gateway/Contracts/NonRetryingObjectGatewayContract.php
     - database/migrations/sync/0001_01_01_000001_add_archived_at_to_hubspot_object_links_table.php
     - tests/Unit/Sync/DeletePolicyTest.php
     - tests/Feature/Sync/DeletePolicyTest.php
@@ -346,6 +343,38 @@ archived state.
    them exist because the branches they cover would otherwise have been uncovered lines; the rest
    because mutation testing showed the assertions were free.
 
+## `on_restore => 'recreate'` was built and WITHDRAWN
+
+**Read this before the finding log below.** `recreate` is not in this release. It was implemented
+during review, drew eight of the seventeen findings on PR #49 on its own, and was withdrawn rather
+than shipped. Everything the log says about `RecreateHubspotObjectJob`,
+`NonRetryingObjectGatewayContract` and the split retry middlewares is a record of work that is **no
+longer in the branch** — kept because the reasoning is what justifies the withdrawal, not because
+the code survives.
+
+What finally settled it: `archived_at` is stamped when an archive is DISPATCHED, so a restore can
+race an archive that is still in flight. Creating the replacement before that archive confirms leaves
+two active records with only one linked, and if the create is instead rejected for a uniqueness
+conflict the restored model is left unlinked once the archive completes. Ordering the recreate after
+*confirmed* completion needs a state machine on the link row and job chaining — a design 04-06 does
+not own and should not invent under review pressure.
+
+The value is **refused by name**, not approximated. `DeletePolicy` throws
+`ConfigurationException::unknownRestorePolicy()` for it, naming why. Quietly treating it as `flag`
+would be the worst of the three options: an operator would believe CRM history had been forked when
+it had not.
+
+`flag` — the default, and the only value this release accepts — has drawn no findings.
+
+### What went with it
+
+`Gateway\Contracts\NonRetryingObjectGatewayContract`, the `retryInternalErrors` split on
+`HubspotClientFactory`, and their bindings and tests were all reverted. They existed solely so the
+recreate's create could avoid the SDK's 5xx retry middleware; with no consumer they would be unused
+public API on a released layer. **The underlying observation stands and is worth carrying into the
+recreate plan:** `ObjectGateway::create()` and `createMany()` retry 5xx for every caller, and a
+retried create is never safe — that is a Gateway-layer question that predates this phase.
+
 ## Review findings closed on PR #49
 
 Codex raised two P2s against `215e110df4`, both real, both fixed in `ecbeaed`:
@@ -568,7 +597,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **88.50% MSI** (477 tested, 62 untested), floor 80. Every
+Scoped run over the changed classes: **MSI reported below**, floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both

@@ -24,7 +24,6 @@ use ReyemTech\Hubspot\Exceptions\ConfigurationException;
  * | `skip-quietly` | do not archive; log at info |
  * | `skip-loudly` | do not archive; log at warning |
  * | `flag-stale` | mark the stored link stale, keep the id |
- * | `recreate` | drop the link and sync afresh, forking CRM history |
  *
  * Actions are strings rather than a backed enum, which is a deviation from `04-06-PLAN.md` with a
  * reason: the RED contract this class was written against asserts them as strings
@@ -60,7 +59,7 @@ final class DeletePolicy
      * @param  string  $event  one of `trashed`, `forceDeleted`, `deleted`, `restored`
      * @param  string  $hardDelete  the configured `hubspot.auto_sync.hard_delete`
      * @param  string  $onRestore  the configured `hubspot.auto_sync.on_restore`
-     * @return 'archive'|'flag-stale'|'recreate'|'skip-loudly'|'skip-quietly'
+     * @return 'archive'|'flag-stale'|'skip-loudly'|'skip-quietly'
      */
     public static function resolve(
         bool $usesSoftDeletes,
@@ -110,16 +109,22 @@ final class DeletePolicy
     /**
      * A restore can never be mirrored: there is no unarchive endpoint, so the archive this package
      * issued on the way down cannot be walked back on the way up. `flag` says so honestly and keeps
-     * the stored id; `recreate` is the opt-in that forks CRM history, and is therefore never a
-     * default.
+     * the stored id.
      *
-     * @return 'flag-stale'|'recreate'
+     * **`recreate` is not implemented in this release, and is refused rather than approximated.**
+     * It was built and withdrawn during review: creating a replacement object has to be ordered
+     * after the earlier archive has CONFIRMED completion, or a restore racing an in-flight archive
+     * leaves two active records with only one linked -- and confirming completion needs a state
+     * machine on the link row that `04-06` does not own. Accepting the value and quietly doing what
+     * `flag` does would be the worst of the three options: an operator would believe CRM history had
+     * been forked when it had not.
+     *
+     * @return 'flag-stale'
      */
     private static function restoreAction(string $onRestore): string
     {
         return match ($onRestore) {
             'flag' => 'flag-stale',
-            'recreate' => 'recreate',
             default => throw ConfigurationException::unknownRestorePolicy(
                 $onRestore,
                 self::supportedRestorePolicies(),
@@ -144,7 +149,7 @@ final class DeletePolicy
      */
     private static function supportedRestorePolicies(): array
     {
-        return ['flag', 'recreate'];
+        return ['flag'];
     }
 
     /**

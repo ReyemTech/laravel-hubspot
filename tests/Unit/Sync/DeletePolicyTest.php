@@ -26,6 +26,9 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * | `warn` | skip | warning |
  * | `allow` | archive | — |
  *
+ * `on_restore` accepts `flag` and nothing else in this release; `recreate` was built during review
+ * and withdrawn, and is refused by name rather than approximated.
+ *
  * `warn` SKIPS. A config value whose plain-English reading ("warn me instead of doing it") is the
  * opposite of its behaviour is a trap, and because HubSpot has no unarchive endpoint the failure
  * would be silent until somebody read the CRM.
@@ -67,9 +70,10 @@ final class DeletePolicyTest extends TestCase
                 true, 'deleted', 'allow', 'flag', 'skip-quietly',
             ],
 
-            // A restore can never be mirrored: there is no unarchive endpoint.
+            // A restore can never be mirrored: there is no unarchive endpoint. `flag` is the only
+            // value this release accepts -- `recreate` was built and WITHDRAWN during review (see
+            // the unrecognised-value test below), so the table has one restore row rather than two.
             'restore flags by default' => [true, 'restored', 'guard', 'flag', 'flag-stale'],
-            'restore recreates when opted in' => [true, 'restored', 'guard', 'recreate', 'recreate'],
         ];
     }
 
@@ -111,9 +115,10 @@ final class DeletePolicyTest extends TestCase
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage(
             'hubspot.auto_sync.on_restore is set to "unarchive", which is not a supported restore '
-            .'policy. Supported values are: flag, recreate. HubSpot has no unarchive endpoint, so '
-            .'"flag" keeps the stored hubspot_id and marks it stale, and "recreate" creates a NEW '
-            .'object and rewrites the id, which forks CRM history.'
+            .'policy. Supported values are: flag. HubSpot has no unarchive endpoint, so "flag" '
+            .'keeps the stored hubspot_id and marks it stale. "recreate" is not implemented in '
+            .'this release: creating a replacement has to be ordered after the earlier archive '
+            .'confirms completion, and this package cannot yet guarantee that ordering.'
         );
 
         DeletePolicy::resolve(true, 'restored', 'guard', 'unarchive');
@@ -137,6 +142,23 @@ final class DeletePolicyTest extends TestCase
         );
 
         DeletePolicy::resolve(false, 'saved', 'guard', 'flag');
+    }
+
+    /**
+     * `recreate` is REFUSED rather than approximated, and that is the whole point of withdrawing it.
+     *
+     * It was built during review and taken back out: creating a replacement object has to be
+     * ordered after the earlier archive has CONFIRMED completion, or a restore racing an in-flight
+     * archive leaves two active records with only one linked. Accepting the value and quietly doing
+     * what `flag` does would be the worst of the three options -- an operator would believe CRM
+     * history had been forked when it had not.
+     */
+    public function test_recreate_is_refused_because_it_is_not_implemented_in_this_release(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('"recreate" is not implemented in this release');
+
+        DeletePolicy::resolve(true, 'restored', 'guard', 'recreate');
     }
 
     /**

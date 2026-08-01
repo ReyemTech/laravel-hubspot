@@ -451,8 +451,11 @@ REL-02.
     named `allow` can archive, because no archive this package issues can be programmatically undone.
 
   - `on_restore` values, in full: `flag` (default) keeps the stored `hubspot_id` and marks the link
-    row stale; `recreate` drops the link and syncs afresh, creating a NEW HubSpot object and leaving
-    the old one archived. Anything else throws `ConfigurationException`, as does anything outside the
+    row stale, and is the ONLY value this release accepts. `recreate` — drop the link and create a
+    NEW object, leaving the old one archived — was built during 04-06 and **withdrawn**: it must be
+    ordered after the earlier archive confirms completion, or a restore racing an in-flight archive
+    leaves two active records with only one linked. It is refused by name rather than approximated.
+    Anything outside the accepted set throws `ConfigurationException`, as does anything outside the
     three `hard_delete` values — neither has a fallback, because both available fallbacks are silent
     and wrong in opposite directions.
 

@@ -298,15 +298,16 @@ return [
     | unarchive endpoint: nothing this package issues here can be walked back.
     |
     | 'on_restore' decides what happens when a soft-deleted model is restored.
-    | Nothing can un-archive the HubSpot record, so neither option pretends to:
+    | Nothing can un-archive the HubSpot record, so it does not pretend to:
     |
     |   'flag'    (default)  keep the stored hubspot_id, mark the link stale
-    |   'recreate'           drop the link and sync afresh, creating a NEW
-    |                        HubSpot record and leaving the old one archived
     |
-    | 'recreate' forks this record's CRM history in two -- every association,
-    | note and timeline entry stays on the archived object -- which is why it
-    | is opt-in and can never be a default.
+    | 'flag' is the only value this release accepts. A 'recreate' option --
+    | drop the link and create a NEW record, leaving the old one archived --
+    | was built and withdrawn: a restore can race an archive that is still in
+    | flight, and creating the replacement before that archive confirms leaves
+    | two active records with only one linked. Anything other than 'flag'
+    | throws rather than quietly behaving like it.
     |
     | Plain scalars and arrays only, here and everywhere in this file:
     | `php artisan config:cache` serialises with var_export(), which throws on a

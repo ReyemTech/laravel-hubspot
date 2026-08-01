@@ -169,8 +169,9 @@ final class ConfigurationException extends LogicException implements HubspotExce
         return new self(sprintf(
             'hubspot.auto_sync.on_restore is set to "%s", which is not a supported restore '
             .'policy. Supported values are: %s. HubSpot has no unarchive endpoint, so "flag" '
-            .'keeps the stored hubspot_id and marks it stale, and "recreate" creates a NEW object '
-            .'and rewrites the id, which forks CRM history.',
+            .'keeps the stored hubspot_id and marks it stale. "recreate" is not implemented in '
+            .'this release: creating a replacement has to be ordered after the earlier archive '
+            .'confirms completion, and this package cannot yet guarantee that ordering.',
             $given,
             implode(', ', $validValues),
         ));

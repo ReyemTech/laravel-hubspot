@@ -14,7 +14,6 @@ use ReyemTech\Hubspot\Gateway\AssociationGateway;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
-use ReyemTech\Hubspot\Gateway\Contracts\NonRetryingObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
@@ -147,56 +146,8 @@ final class ServiceProvider extends BaseServiceProvider
         // instance and relies on every subsequent resolution constructing a fresh gateway
         // against it, rather than needing to forget a cached gateway instance.
         $this->app->bind(ObjectGatewayContract::class, ObjectGateway::class);
-
-        // The one binding that differs by TRANSPORT rather than by implementation (Codex, PR #49).
-        // `Sync\RecreateHubspotObjectJob` issues a create, which cannot converge on a repeat the
-        // way an upsert does (D-11), so a 5xx or a timeout must be raised rather than repeated --
-        // repeating it after a write that already landed leaves two ACTIVE CRM objects for one
-        // model. The rate-limit retry is kept: a 429 says the request was refused, so repeating it
-        // cannot duplicate anything.
-        //
-        // The container's own factory is preferred whenever it does not retry internal errors,
-        // which is what keeps `Hubspot::fake()` working: the fake replaces this singleton with a
-        // `forTransport()` factory carrying no retry middleware at all, so there is nothing to
-        // rebuild and the mock transport is used unchanged. Only a production factory is rebuilt.
-        $this->app->bind(NonRetryingObjectGatewayContract::class, function (Application $app): ObjectGateway {
-            $factory = $app->make(HubspotClientFactory::class);
-
-            return new ObjectGateway(
-                $factory->retriesInternalErrors() ? self::nonRetryingClientFactory($app) : $factory,
-                $app->make(ExceptionTranslator::class),
-            );
-        });
         $this->app->bind(AssociationGatewayContract::class, AssociationGateway::class);
         $this->app->bind(AssociationDefinitionsGatewayContract::class, AssociationDefinitionsGateway::class);
-    }
-
-    /**
-     * The production transport, rebuilt with the internal-errors retry off and everything else
-     * identical. Reads the same four config values the shared factory does, rather than deriving
-     * them from it: a factory exposes only the SHAPE of its transport, never the credentials it was
-     * built with (STANDARDS Sec.12).
-     */
-    private static function nonRetryingClientFactory(Application $app): HubspotClientFactory
-    {
-        $config = $app->make('config');
-
-        /** @var string|null $token */
-        $token = $config->get('hubspot.token');
-        /** @var float $timeout */
-        $timeout = $config->get('hubspot.transport.timeout');
-        /** @var float $connectTimeout */
-        $connectTimeout = $config->get('hubspot.transport.connect_timeout');
-        /** @var bool $retriesEnabled */
-        $retriesEnabled = $config->get('hubspot.transport.retries');
-
-        return HubspotClientFactory::fromConfig(
-            $token,
-            $timeout,
-            $connectTimeout,
-            $retriesEnabled,
-            retryInternalErrors: false,
-        );
     }
 
     /**

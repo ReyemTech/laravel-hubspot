@@ -284,7 +284,7 @@ the probe sets a default, it does not block the design.
     'on'          => ['created', 'updated'],   // 'deleted' is opt-in
     'queue'       => true,
     'hard_delete' => 'guard',                  // 'guard' | 'warn' | 'allow'
-    'on_restore'  => 'flag',                   // 'flag' | 'recreate'
+    'on_restore'  => 'flag',                   // 'flag' ('recreate' deferred)
 ],
 ```
 
@@ -324,10 +324,14 @@ responses to that:
 | value | action |
 |---|---|
 | `flag` (default) | log, keep the stored `hubspot_id` and mark the link row stale — **never null it**, so re-linking stays possible |
-| `recreate` | drop the link and sync afresh, creating a NEW HubSpot object and leaving the old one archived |
 
-`recreate` forks CRM history — every association, note and timeline entry stays on the archived
-object — and therefore must be explicit and can never be a default.
+**`recreate` is deferred and NOT implemented in this release** (amended 2026-08-01, during 04-06's
+review). It was built and withdrawn: creating a replacement object has to be ordered after the
+earlier archive has *confirmed* completion, or a restore racing an in-flight archive leaves two
+active records with only one linked — and confirming completion needs a state machine on the link
+row that 04-06 does not own. It forks CRM history when it does land, so it will always be opt-in and
+never a default. Until then `on_restore` accepts `flag` and throws on anything else, rather than
+quietly approximating the option it cannot yet honour.
 
 Required escape hatches:
 

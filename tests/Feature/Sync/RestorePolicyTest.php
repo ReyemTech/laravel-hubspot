@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Schema;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
-use ReyemTech\Hubspot\Sync\RecreateHubspotObjectJob;
 use ReyemTech\Hubspot\Tests\Support\Sync\DisabledSoftDeletingLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SoftDeletingLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
@@ -120,46 +119,6 @@ final class RestorePolicyTest extends SyncTestCase
     }
 
     /**
-     * The same history under `recreate`, where getting it wrong is far more expensive: dropping a
-     * link that still points at a live record and creating a SECOND object for the same model.
-     */
-    public function test_a_restore_does_not_recreate_over_a_link_this_package_never_archived(): void
-    {
-        config()->set('hubspot.auto_sync.on', ['created', 'updated']);
-        config()->set('hubspot.auto_sync.on_restore', 'recreate');
-
-        Hubspot::fake();
-        $lead = SoftDeletingLead::create(['email' => 'stillvalid@example.com', 'first_name' => 'Ada']);
-        $lead->delete();
-
-        $linkRowIdBefore = HubspotObjectLink::query()->value('id');
-
-        config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
-
-        Hubspot::fake();
-        $log = Log::spy();
-        $lead->restore();
-
-        Hubspot::assertRequestCount(0);
-        $log->shouldHaveReceived('info', [
-            'A restored model was not recreated, because this package never archived its HubSpot '
-            .'record. Its existing link still points at a live record, and forking it would create '
-            .'a duplicate.',
-            [
-                'model' => SoftDeletingLead::class,
-                'model_id' => $lead->getKey(),
-                'event' => 'restored',
-                'action' => 'recreate',
-            ],
-        ]);
-        self::assertSame(
-            $linkRowIdBefore,
-            HubspotObjectLink::query()->sole()->id,
-            'The existing link is valid and must survive -- forking it would create a duplicate.'
-        );
-    }
-
-    /**
      * A restore cannot be mirrored -- there is no unarchive endpoint -- so the package flags the
      * link row and NEVER nulls the stored id, keeping re-linking possible.
      *
@@ -208,52 +167,6 @@ final class RestorePolicyTest extends SyncTestCase
     }
 
     /**
-     * `on_restore => 'recreate'`, the opt-in that forks CRM history.
-     *
-     * The link row's own primary key is what proves the fork: an implementation that merely
-     * re-synced onto the EXISTING link would keep writing to the archived HubSpot record and leave
-     * the row's id unchanged. Recreating means the old link is dropped and a new one written, so
-     * the id must move.
-     */
-    public function test_a_restore_under_recreate_drops_the_link_and_syncs_afresh(): void
-    {
-        config()->set('hubspot.auto_sync.on_restore', 'recreate');
-
-        Hubspot::fake();
-        $lead = SoftDeletingLead::create(['email' => 'forked@example.com', 'first_name' => 'Ada']);
-        $lead->delete();
-
-        $linkRowIdBefore = HubspotObjectLink::query()->value('id');
-
-        Hubspot::fake();
-        $log = Log::spy();
-        $lead->restore();
-
-        Hubspot::assertRequestCount(1);
-        $log->shouldHaveReceived('warning', [
-            'A restored model is being recreated in HubSpot under hubspot.auto_sync.on_restore = '
-            .'"recreate". The previously archived record is left archived and its id is dropped, '
-            ."which forks this record's CRM history.",
-            [
-                'model' => SoftDeletingLead::class,
-                'model_id' => $lead->getKey(),
-                'event' => 'restored',
-                'action' => 'recreate',
-            ],
-        ]);
-
-        $link = HubspotObjectLink::query()->sole();
-
-        self::assertNotSame(
-            $linkRowIdBefore,
-            $link->id,
-            'A recreate must DROP the old link row rather than re-sync onto it -- re-syncing onto '
-            .'the old row would write to the record that is already archived.'
-        );
-        self::assertFalse($link->is_stale, 'A freshly recreated link is not stale.');
-    }
-
-    /**
      * The stale flag is set by a restore and cleared by the next successful write, and nothing else
      * clears it -- which `SyncsToHubspot::scopePendingHubspotSync()`'s own docblock already assumed
      * when 04-04 wrote the stale leg into that scope. Without the clear, a link goes stale once, on
@@ -290,65 +203,6 @@ final class RestorePolicyTest extends SyncTestCase
         self::assertFalse($link->is_stale, 'A successful write to the stored id is the record being current again.');
         self::assertNull($link->stale_at, 'The timestamp goes with the flag it belongs to.');
         self::assertNotNull($link->synced_at);
-    }
-
-    /**
-     * `recreate` means "sync this model afresh", and a restored model that never linked -- deleted
-     * before its initial create sync ran -- needs exactly that. Sending it down the missing-link
-     * guard left it permanently unsynced under the one setting whose entire purpose is to resync
-     * it, and silently: D-17 suppresses the restore's own `updated` event, so nothing else would
-     * ever dispatch for it (Codex, PR #49).
-     *
-     * `'created'` is left out of `auto_sync.on` here precisely so no link row is ever written.
-     */
-    public function test_a_restore_under_recreate_syncs_a_model_that_never_linked(): void
-    {
-        config()->set('hubspot.auto_sync.on', ['deleted']);
-        config()->set('hubspot.auto_sync.on_restore', 'recreate');
-
-        Hubspot::fake();
-        $lead = SoftDeletingLead::create(['email' => 'neverlinked@example.com', 'first_name' => 'Ada']);
-        $lead->delete();
-
-        self::assertNull(HubspotObjectLink::query()->value('id'), 'Nothing may have linked yet.');
-
-        Hubspot::fake();
-        $lead->restore();
-
-        Hubspot::assertRequestCount(1);
-        self::assertNotNull(
-            HubspotObjectLink::query()->value('id'),
-            'The fresh sync must have written the link row the restore had none of.'
-        );
-    }
-
-    /**
-     * The recreate job's own race, and it is worse than the sync job's because this one CREATES
-     * (Codex, PR #49). Queued is the default, so a model restored and then deleted again before the
-     * worker runs arrives trashed -- and nothing would clean up what it created, since the observer
-     * dropped the old link before dispatching and the intervening `trashed` found nothing to
-     * archive.
-     *
-     * The job is invoked directly, after the deletion, to place the model in exactly the state the
-     * worker would have found it in.
-     */
-    public function test_a_recreate_job_whose_model_was_deleted_again_creates_nothing(): void
-    {
-        config()->set('hubspot.auto_sync.on_restore', 'recreate');
-
-        Hubspot::fake();
-        $lead = SoftDeletingLead::create(['email' => 'reraced@example.com', 'first_name' => 'Ada']);
-        $lead->delete();
-        $lead->restore();
-        $lead->delete();
-
-        Hubspot::fake();
-        $log = Log::spy();
-
-        app()->call([new RecreateHubspotObjectJob($lead), 'handle']);
-
-        Hubspot::assertRequestCount(0);
-        $log->shouldHaveReceived('info');
     }
 
     /**
@@ -400,57 +254,6 @@ final class RestorePolicyTest extends SyncTestCase
     }
 
     /**
-     * The race that makes a recreate create a DUPLICATE, and it needs no failure to happen: under
-     * the default queued `created` sync a model can be created, soft-deleted and restored before
-     * its initial `SyncHubspotObjectJob` runs. The restore sees no link and queues a recreate; the
-     * older sync then upserts and writes a live link; the recreate creates a second ACTIVE object
-     * and overwrites the link with its id, orphaning the first (Codex, PR #49).
-     *
-     * The link is written directly here because that is exactly what the older sync job would have
-     * done between the observer's decision and this job running.
-     */
-    public function test_a_recreate_job_creates_nothing_once_a_link_exists_again(): void
-    {
-        config()->set('hubspot.auto_sync.on_restore', 'recreate');
-
-        Hubspot::fake();
-        $lead = SoftDeletingLead::create(['email' => 'raced-again@example.com', 'first_name' => 'Ada']);
-
-        // Whatever the restore decided, another sync has linked this model since.
-        $linkIdBefore = HubspotObjectLink::query()->sole()->id;
-
-        Hubspot::fake();
-        $log = Log::spy();
-
-        app()->call([new RecreateHubspotObjectJob($lead), 'handle']);
-
-        Hubspot::assertRequestCount(0);
-        $log->shouldHaveReceived('info');
-        self::assertSame(
-            $linkIdBefore,
-            HubspotObjectLink::query()->sole()->id,
-            'The existing link must survive untouched -- overwriting it orphans the record it names.'
-        );
-    }
-
-    /**
-     * A recreate is never retried, because a create is not idempotent and this one cannot be made
-     * so: a lost response is indistinguishable from a failed request, and repeating it produces two
-     * ACTIVE CRM objects for one model (Codex, PR #49). `SyncHubspotObjectJob` upserts and so does
-     * not have this problem; this is the one path where converging is the wrong answer, so it gives
-     * up the retry instead.
-     */
-    public function test_the_recreate_job_is_never_retried(): void
-    {
-        self::assertSame(
-            1,
-            (new RecreateHubspotObjectJob(new SoftDeletingLead(['email' => 'once@example.com'])))->tries,
-            'A retried create is a duplicate CRM object, and nothing durable tells a lost response '
-            .'from a failed request.'
-        );
-    }
-
-    /**
      * `$hubspotAutoSync = false` means never auto-sync this model, and that outranks the evidence
      * an archived link carries (Codex, PR #49). Regating the restore on the kill switch alone --
      * which was the right fix for the event list -- dropped this per-model statement with it, so an
@@ -459,8 +262,6 @@ final class RestorePolicyTest extends SyncTestCase
      */
     public function test_a_restore_refuses_when_the_model_itself_opted_out(): void
     {
-        config()->set('hubspot.auto_sync.on_restore', 'recreate');
-
         // Archived while the model still synced: the link is written by hand because the model's
         // own override means no observer path would ever create one.
         $lead = DisabledSoftDeletingLead::create(['email' => 'optedout@example.com', 'first_name' => 'Ada']);
@@ -478,46 +279,9 @@ final class RestorePolicyTest extends SyncTestCase
         $lead->restore();
 
         Hubspot::assertRequestCount(0);
-        self::assertNotNull(
-            HubspotObjectLink::query()->sole()->archived_at,
-            'The link must be left exactly as the opt-out found it.'
-        );
-    }
-
-    /**
-     * The race the entry guard cannot close: a soft delete landing between that check and the
-     * `create()` leaves an ACTIVE HubSpot object behind a deleted local model, and no `trashed`
-     * handler cleans it up because the observer already dropped the link that handler looks for
-     * (Codex, PR #49).
-     *
-     * A lock would have to be taken by the DELETE path too -- an exclusion one side observes is not
-     * exclusion -- so every delete of every bound model would pay for one opt-in restore policy.
-     * The state is made to CONVERGE instead: the model is re-read without scopes after the create,
-     * and a row that came back deleted has the object archived immediately.
-     *
-     * The race is reproduced deterministically by deleting the row underneath an in-memory model
-     * that still believes it is live, which is exactly what the worker would be holding.
-     */
-    public function test_a_create_that_raced_a_delete_archives_what_it_just_created(): void
-    {
-        Hubspot::fake();
-        $lead = SoftDeletingLead::create(['email' => 'raced-delete@example.com', 'first_name' => 'Ada']);
-        HubspotObjectLink::query()->delete();
-
-        // The delete lands in another request while this job holds a live in-memory model.
-        SoftDeletingLead::query()->whereKey($lead->getKey())->update(['deleted_at' => now()]);
-
-        Hubspot::fake();
-        $log = Log::spy();
-
-        app()->call([new RecreateHubspotObjectJob($lead), 'handle']);
-
-        // The create, then the archive that converges on the delete it raced.
-        Hubspot::assertRequestCount(2);
-        $log->shouldHaveReceived('warning');
-        self::assertNotNull(
-            HubspotObjectLink::query()->sole()->archived_at,
-            'The link must record the archive, or the next delete would archive an archived record.'
+        self::assertFalse(
+            HubspotObjectLink::query()->sole()->is_stale,
+            'The link must be left exactly as the opt-out found it -- not even flagged.'
         );
     }
 }
