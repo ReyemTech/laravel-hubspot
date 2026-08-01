@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.4.0...reyemtech/laravel-hubspot-v0.5.0) (2026-07-31)
+
+
+### Features
+
+* **04-05:** gate created and updated behind three independent switches ([536184d](https://github.com/ReyemTech/laravel-hubspot/commit/536184df74b23e74d456eac4370f0bab87ea4c88))
+
+
+### Bug Fixes
+
+* **04-05:** honour auto_sync.queue, and keep the observer constructor stable ([19821d1](https://github.com/ReyemTech/laravel-hubspot/commit/19821d1dbc279939ef805d2f32cddda9ec8800c1))
+* **04-05:** identify soft-deleting models by their scope, not a method name ([629c683](https://github.com/ReyemTech/laravel-hubspot/commit/629c683ba2f05a21adacb75917b07c29110421bb))
+* **04-05:** require a real restore, and check the trait rather than the method name ([997b5f7](https://github.com/ReyemTech/laravel-hubspot/commit/997b5f7af62454364ed33167a8066625d24a6a6d))
+* **04-05:** resolve the restore guard's column through getDeletedAtColumn() ([fb89166](https://github.com/ReyemTech/laravel-hubspot/commit/fb891666a69542002eb1f24c2fb5f3e221a0cc10))
+* **tests:** empty the per-process publish directories before each boot ([381185d](https://github.com/ReyemTech/laravel-hubspot/commit/381185d531e3526eb338ecea835322d131e404ce))
+* **tests:** publish into per-process directories, not the shared skeleton ([7995017](https://github.com/ReyemTech/laravel-hubspot/commit/7995017ae4b4c7527fc2f4ff2300528dc55bc595))
+* **tests:** remove stale "inside the Testbench skeleton" comment ([22d12e5](https://github.com/ReyemTech/laravel-hubspot/commit/22d12e534850133be62d26f7e427c2a0d842f29c))
+
 ## [0.4.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.3.1...reyemtech/laravel-hubspot-v0.4.0) (2026-07-31)
 
 > **Note on the four `04-04` cross-connection entries below.** They are four attempts at one
