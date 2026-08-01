@@ -13,7 +13,7 @@ provides:
   - "Sync\\DeletePolicy -- design spec §7's table as a pure static function over four primitives"
   - "Sync\\ArchiveHubspotObjectJob -- carries objectType + hubspotId as SCALARS, never the model"
   - "Sync\\HubspotObserver::trashed(), ::forceDeleted(), ::deleted(), ::restored()"
-  - "Sync\\HubspotObserver::passesGate() and ::dispatchJob(), factored out of syncOn()"
+  - "Sync\\HubspotObserver::passesGate(), ::dispatchJob() and ::applyToLink(), factored out of syncOn()"
   - "SyncHubspotObjectJob's trashed-model early return"
   - "config/hubspot.php auto_sync.hard_delete ('guard') and auto_sync.on_restore ('flag')"
   - "ConfigurationException::unknownHardDeletePolicy(), ::unknownRestorePolicy(), ::unknownDeleteEvent()"
@@ -91,6 +91,15 @@ key-decisions:
   - "illuminate/log is now a declared production require. The Log facade ships in illuminate/support
     but resolves illuminate/log's LogManager at runtime, and D-19 is precisely what an undeclared
     runtime dependency costs. CLAUDE.md's post-D-02 rule admits any illuminate/* on declaration."
+  - "The stale flag is CLEARED by SyncHubspotObjectJob's existing-link branch, and by nothing else.
+    04-04 wrote the stale leg into scopePendingHubspotSync() on the stated assumption that a
+    successful re-sync would clear it; 04-06 is the plan that made the flag reachable, so it owes
+    the clear. Without it a link goes stale once, on the first restore, and is re-reported as
+    pending forever (Codex, PR #49)."
+  - "`recreate` is routed PAST the missing-link guard; `archive` and `flag-stale` keep it. Its
+    instruction is 'sync this model afresh', which is exactly what a restored model that never
+    linked needs, and skipping was silent -- D-17 suppresses the restore's own `updated` event, so
+    nothing else would ever have dispatched for it (Codex, PR #49)."
   - "A third factory, ConfigurationException::unknownDeleteEvent(), was added beyond the plan's two.
     DeletePolicy is public API of a released package and PHPStan (level max) requires the match to
     be total; a written `default => throw` with a unit test covering it is honest and covered, where
@@ -173,11 +182,24 @@ coverage:
     human_judgment: false
   - id: D7
     description: "on_restore => 'recreate' drops the link row and syncs afresh, proven by the link
-      row's own primary key moving rather than by the request count alone"
+      row's own primary key moving rather than by the request count alone -- and syncs a model that
+      never linked at all, rather than skipping it (Codex, PR #49)"
     requirement: "SYNC-04"
     verification:
       - kind: unit
         ref: "tests/Feature/Sync/DeletePolicyTest.php#test_a_restore_under_recreate_drops_the_link_and_syncs_afresh"
+        status: pass
+      - kind: unit
+        ref: "tests/Feature/Sync/DeletePolicyTest.php#test_a_restore_under_recreate_syncs_a_model_that_never_linked"
+        status: pass
+    human_judgment: false
+  - id: D11
+    description: "A successful re-sync CLEARS the stale flag a restore set, so
+      scopePendingHubspotSync() stops reporting the model as outstanding (Codex, PR #49)"
+    requirement: "SYNC-04"
+    verification:
+      - kind: unit
+        ref: "tests/Feature/Sync/DeletePolicyTest.php#test_a_successful_resync_clears_the_stale_flag_a_restore_set"
         status: pass
     human_judgment: false
   - id: D8
@@ -312,9 +334,31 @@ archived state.
    them exist because the branches they cover would otherwise have been uncovered lines; the rest
    because mutation testing showed the assertions were free.
 
+## Review findings closed on PR #49
+
+Codex raised two P2s against `215e110df4`, both real, both fixed in `ecbeaed`:
+
+1. **The stale flag was never cleared.** `flagStale()` set `is_stale`/`stale_at` and
+   `SyncHubspotObjectJob`'s existing-link branch updated only `synced_at`. Since
+   `SyncsToHubspot::scopePendingHubspotSync()` returns every model carrying the flag, a link went
+   stale once — on the first restore — and every later successful sync still re-reported the model
+   as having work outstanding, forever. 04-04's own docblock on that scope already said "nothing
+   else ever clears the flag but a successful re-sync"; this plan is the one that made the flag
+   reachable, so it owed the clear. Only the update branch needed it — the upsert branch is reached
+   only when the relation found no row, and a new row's `is_stale` is false.
+2. **`on_restore => 'recreate'` skipped a model that had never linked.** It hit the missing-link
+   guard and returned, so a model deleted before its initial create sync ran stayed permanently
+   unsynced under the one setting whose purpose is to resync it — and silently, because D-17
+   suppresses the restore's own `updated` event. `recreate` now runs past that guard with a
+   nullable link; `archive` and `flag-stale` keep it, factored into `applyToLink()`.
+
+Both fixes are pinned by tests that fail against the code as reviewed:
+`test_a_successful_resync_clears_the_stale_flag_a_restore_set` and
+`test_a_restore_under_recreate_syncs_a_model_that_never_linked`.
+
 ## Mutation note
 
-Scoped run over the five changed classes: **87.86% MSI** (181 tested, 25 untested), floor 80. Every
+Scoped run over the five changed classes: **88.26% MSI** (188 tested, 25 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
