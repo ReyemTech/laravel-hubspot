@@ -597,7 +597,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **MSI reported below**, floor 80. Every
+Scoped run over the changed classes: **90.29% MSI** (307 tested, 33 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
