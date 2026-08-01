@@ -417,6 +417,79 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
+     * The race, but with a FORCE delete -- and under the default `guard`, which is the case that
+     * makes replaying the right event load-bearing rather than tidy (Codex, PR #49).
+     *
+     * `trashed` resolves straight to `archive` without consulting `hard_delete`, because a soft
+     * delete is locally recoverable. Replaying it for a row that is GONE would therefore archive
+     * irreversibly under the very setting that exists to forbid it. `forceDeleted` is the event
+     * that answers for a hard delete, and it follows `hard_delete`.
+     */
+    public function test_a_sync_that_raced_a_force_delete_still_obeys_the_guard(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'racedforce@example.com', 'first_name' => 'Ada']);
+        HubspotObjectLink::query()->delete();
+
+        // The row is GONE, not trashed: a hard delete in another request.
+        SoftDeletingLead::query()->whereKey($lead->id)->forceDelete();
+
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectJob($lead), 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        self::assertNull(
+            HubspotObjectLink::query()->sole()->archived_at,
+            'hard_delete defaults to guard, and a raced force delete must not archive around it.'
+        );
+    }
+
+    /**
+     * The same force-delete race under `allow`, so the test above cannot pass merely because
+     * nothing was ever dispatched.
+     */
+    public function test_a_sync_that_raced_a_force_delete_archives_under_allow(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'racedforceallow@example.com', 'first_name' => 'Ada']);
+        HubspotObjectLink::query()->delete();
+
+        SoftDeletingLead::query()->whereKey($lead->id)->forceDelete();
+
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectJob($lead), 'handle']);
+
+        Hubspot::assertRequestCount(2);
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+    }
+
+    /**
+     * A model with no `SoftDeletes` at all races the same way, and `deleted` is the event that
+     * answers for it -- also following `hard_delete`.
+     */
+    public function test_a_sync_that_raced_a_plain_delete_applies_the_delete_policy(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SyncedLead::create(['email' => 'racedplain@example.com', 'first_name' => 'Ada']);
+        HubspotObjectLink::query()->delete();
+
+        SyncedLead::query()->whereKey($lead->id)->delete();
+
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectJob($lead), 'handle']);
+
+        Hubspot::assertRequestCount(2);
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+    }
+
+    /**
      * A record HubSpot no longer has is a record that is archived. The redundant archive a purge
      * issues must not become a failed job for saying so, which is `04-06-PLAN.md`'s own rule for a
      * missing link row applied to the record instead of the row.

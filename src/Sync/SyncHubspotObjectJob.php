@@ -212,12 +212,23 @@ final class SyncHubspotObjectJob implements ShouldQueue
      * to archive and schedules nothing. This job then records a link for a model that is already
      * deleted, and no later event revisits it.
      *
-     * The response is to replay the event that could not act, now that the link it needed exists.
-     * `HubspotObserver::trashed()` is called rather than the archive being reproduced here, so the
-     * whole gate applies unchanged -- `auto_sync.enabled`, the `'deleted'` opt-in, the per-model
-     * override, the `hard_delete` policy and the `archived_at` evidence. A delete this application
-     * does not mirror stays unmirrored, which is the correct answer and one a hand-rolled archive
-     * here would have got wrong.
+     * The response is to replay the event that could not act, now that the link it needed exists,
+     * rather than to reproduce an archive here -- so the whole gate applies unchanged:
+     * `auto_sync.enabled`, the `'deleted'` opt-in, the per-model override, the `hard_delete` policy
+     * and the `archived_at` evidence. A delete this application does not mirror stays unmirrored,
+     * which is the correct answer and one a hand-rolled archive would have got wrong.
+     *
+     * **Which event is replayed is decided by what actually happened**, because the three do not
+     * resolve alike: `trashed` archives unconditionally, since a soft delete is locally
+     * recoverable, while `forceDeleted` and `deleted` follow `hard_delete`. Replaying the wrong one
+     * for a vanished row would archive irreversibly under the default `guard`.
+     *
+     * | fresh row | model | replayed |
+     * |---|---|---|
+     * | gone | soft-deleting | `forceDeleted()` |
+     * | gone | plain | `deleted()` |
+     * | present and trashed | soft-deleting | `trashed()` |
+     * | present and live | either | nothing raced this write |
      *
      * The observer is resolved from the container rather than taken as a fourth parameter of
      * `handle()`: this job is public API of a released package, and
@@ -229,28 +240,45 @@ final class SyncHubspotObjectJob implements ShouldQueue
      */
     private function archiveIfTheModelWasDeletedMeanwhile(): void
     {
-        if (! in_array(SoftDeletes::class, class_uses_recursive($this->model), true)) {
-            return;
-        }
+        $usesSoftDeletes = in_array(SoftDeletes::class, class_uses_recursive($this->model), true);
 
         $fresh = $this->model->newQueryWithoutScopes()->find($this->model->getKey());
 
-        // A missing row is a raced HARD delete, and it counts: `deleteWhenMissingModels` only
-        // discards a job before `handle()` runs, never one already in flight.
-        if ($fresh instanceof Model && $fresh->trashed() !== true) { // @phpstan-ignore-line method.notFound
+        /** @var HubspotObserver $observer */
+        $observer = App::make(HubspotObserver::class);
+
+        // A row that is GONE was hard-deleted, and which event answers for that depends on the
+        // model, not on this job (Codex, PR #49). An earlier revision replayed `trashed()` for
+        // every case, which was wrong in the one that matters most: `trashed` resolves straight to
+        // `archive` without consulting `hard_delete`, because a soft delete is locally recoverable
+        // -- so a raced FORCE delete under the default `guard` would have archived irreversibly,
+        // defeating the exact protection that value exists to provide.
+        if (! $fresh instanceof Model) {
+            $this->logRacedDelete();
+
+            $usesSoftDeletes
+                ? $observer->forceDeleted($this->model)
+                : $observer->deleted($this->model);
+
             return;
         }
 
+        // A row that is still there but trashed is a genuine soft delete, and `trashed()` is the
+        // event that answers for one. A live row means no delete raced this write at all.
+        if ($usesSoftDeletes && $fresh->trashed() === true) { // @phpstan-ignore-line method.notFound
+            $this->logRacedDelete();
+
+            $observer->trashed($fresh);
+        }
+    }
+
+    private function logRacedDelete(): void
+    {
         Log::info(
             'A model was deleted while its HubSpot sync was in flight, so the delete policy is '
             .'being applied now that the link it needed exists.',
             ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
         );
-
-        /** @var HubspotObserver $observer */
-        $observer = App::make(HubspotObserver::class);
-
-        $observer->trashed($fresh instanceof Model ? $fresh : $this->model);
     }
 
     /**
