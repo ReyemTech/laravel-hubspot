@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * The single generic Eloquent observer every bound model shares (SYNC-03).
@@ -247,7 +248,35 @@ final class HubspotObserver
             $this->policyValue('on_restore', 'flag'),
         );
 
-        $this->flagStale($this->linkOf($model), $model);
+        $link = $this->linkOf($model);
+
+        // No link at all means this model has never synced, and a restore is the moment that
+        // becomes repairable (Codex, PR #49). The sequence is ordinary: a model created, soft
+        // deleted before its queued initial sync ran, and that job returning without creating
+        // anything because `SyncHubspotObjectJob` refuses to bring a CRM record into existence for
+        // a trashed model. Nothing else would ever pick it up -- D-17 suppresses the restore's own
+        // `updated` event, and there is no link for anything to flag.
+        //
+        // Gated on `'created'` because that is the consumer's statement that this model syncs when
+        // it comes into existence. A model whose application never syncs on create has no link for
+        // an innocent reason, and manufacturing one here would create a CRM record nobody asked
+        // for.
+        if ($link === null) {
+            if (in_array('created', $this->eventsFor($model), true)) {
+                Log::info(
+                    'A restored model has no HubSpot link, so the sync its creation would have '
+                    .'made is being dispatched now. Its initial sync was skipped because the model '
+                    .'was already deleted by the time that job ran.',
+                    $this->logContext('restored', $model, 'created'),
+                );
+
+                $this->dispatchJob(new SyncHubspotObjectJob($model));
+            }
+
+            return;
+        }
+
+        $this->flagStale($link, $model);
     }
 
     /**
@@ -350,14 +379,25 @@ final class HubspotObserver
         // cannot report it. That is the same silent stranding the restore path was regated to
         // avoid, arriving through a different door.
         //
-        // Writing first cannot strand anything. A dispatch that then fails leaves a link marked
-        // archived whose record is live, which is LOUD -- a synchronous failure propagates out of
-        // the model event, and a queued one lands in `failed_jobs` -- and recoverable: a restore
-        // flags it, so `pendingHubspotSync()` reports it. A silent no-op nobody can see is the
-        // worse of the two, which is the trade every ordering decision in this file makes.
+        // The marker is TAKEN BACK when publication fails, and that half is not optional (Codex,
+        // PR #49). An earlier revision justified writing first by calling the failure "recoverable
+        // because a restore flags it", and that was wrong: a marker left behind by a failed
+        // dispatch makes a repeated delete skip -- the marker says this package already archived --
+        // while ordinary pushes refuse the link for the same reason, so the still-live HubSpot
+        // record could only be recovered by editing the link row by hand.
+        //
+        // Written first, cleared on failure, the marker means what it says in both directions: an
+        // archive was issued, or it was not. `dispatchSync()` surfaces a synchronous failure here,
+        // and a queued dispatch fails only if the queue backend itself does.
         $link->update(['archived_at' => Carbon::now()]);
 
-        $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id));
+        try {
+            $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id));
+        } catch (Throwable $exception) {
+            $link->update(['archived_at' => null]);
+
+            throw $exception;
+        }
     }
 
     /**
@@ -367,13 +407,16 @@ final class HubspotObserver
      * asserting only the flag would pass against an implementation that nulled the id and then
      * flagged it -- which is precisely what SYNC-04 forbids.
      */
-    private function flagStale(?HubspotObjectLink $link, Model $model): void
+    private function flagStale(HubspotObjectLink $link, Model $model): void
     {
         // Nothing was archived, so nothing is stale (Codex, PR #49). A model soft-deleted while
         // `deleted` was gated off still points at a LIVE HubSpot record, and flagging that link
         // would report a perfectly current record as having sync work outstanding until some
         // unrelated later write cleared it.
-        if ($link === null || $link->archived_at === null) {
+        //
+        // The link itself is non-null by the time this runs: {@see restored()} answers the no-link
+        // case on its own, by dispatching the initial sync that never happened.
+        if ($link->archived_at === null) {
             Log::info(
                 'A restored model was not flagged stale, because this package never archived its '
                 .'HubSpot record. The link, if any, still points at a live record.',

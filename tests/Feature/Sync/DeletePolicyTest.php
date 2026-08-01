@@ -23,6 +23,7 @@ use ReyemTech\Hubspot\Tests\Support\Sync\DisabledSoftDeletingLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SoftDeletingLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
+use Throwable;
 
 /**
  * # Deletes cannot surprise anyone
@@ -316,6 +317,44 @@ final class DeletePolicyTest extends SyncTestCase
             'A restore racing this archive must be able to see that an archive was issued before '
             .'the request goes out, or it leaves the link archived and unflagged -- invisible to '
             .'every read path there is.'
+        );
+    }
+
+    /**
+     * The marker is taken back when publication fails, and this is the half that makes writing it
+     * first safe (Codex, PR #49). A marker left behind by a failed dispatch makes a repeated delete
+     * SKIP -- it says this package already archived -- while ordinary pushes refuse the link for
+     * the same reason, so a still-live HubSpot record could only be recovered by editing the link
+     * row by hand.
+     *
+     * `queue => false` makes the failure synchronous, which is the configuration where a caller
+     * sees it at all.
+     */
+    public function test_a_failed_archive_takes_its_marker_back(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'failedarchive@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake(['contacts' => Hubspot::response(['message' => 'boom'], 500)]);
+
+        // Caught as Throwable rather than by class: the exception travels out of an Eloquent event
+        // handler, and PHPStan reads `Model::delete()` as throwing nothing at all.
+        $reachedTheCaller = false;
+
+        try {
+            $lead->delete();
+        } catch (Throwable) {
+            $reachedTheCaller = true;
+        }
+
+        self::assertTrue($reachedTheCaller, 'A synchronous archive failure must reach the caller.');
+        self::assertNull(
+            HubspotObjectLink::query()->sole()->archived_at,
+            'A marker that outlived its failed archive would make every later delete skip and '
+            .'every later push refuse, leaving a live record reachable only by hand.'
         );
     }
 

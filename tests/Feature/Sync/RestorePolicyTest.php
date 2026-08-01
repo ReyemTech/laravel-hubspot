@@ -254,6 +254,56 @@ final class RestorePolicyTest extends SyncTestCase
     }
 
     /**
+     * A restore repairs an initial sync that never happened (Codex, PR #49).
+     *
+     * The sequence is ordinary: a model created, soft-deleted before its queued initial sync ran,
+     * and that job returning without creating anything because `SyncHubspotObjectJob` refuses to
+     * bring a CRM record into existence for a trashed model. Nothing else would ever pick it up --
+     * D-17 suppresses the restore's own `updated` event, and there is no link for anything to flag,
+     * so the model stayed unsynced forever with auto-sync fully enabled.
+     */
+    public function test_a_restore_dispatches_the_initial_sync_its_deletion_skipped(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'skipped@example.com', 'first_name' => 'Ada']);
+
+        // The initial sync never landed: exactly the state the trashed guard leaves behind.
+        HubspotObjectLink::query()->delete();
+        $lead->delete();
+
+        Hubspot::fake();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(1);
+        self::assertNotNull(
+            HubspotObjectLink::query()->value('id'),
+            'The restore must leave the model synced, not merely un-deleted.'
+        );
+    }
+
+    /**
+     * ...unless this application does not sync on `created` at all, in which case an absent link is
+     * absent for an innocent reason and manufacturing one would create a CRM record nobody asked
+     * for.
+     */
+    public function test_a_restore_creates_nothing_when_the_application_does_not_sync_on_created(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['updated', 'deleted']);
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'nevercreated@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        self::assertNull(HubspotObjectLink::query()->value('id'));
+
+        Hubspot::fake();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(0);
+        self::assertNull(HubspotObjectLink::query()->value('id'));
+    }
+
+    /**
      * `$hubspotAutoSync = false` means never auto-sync this model, and that outranks the evidence
      * an archived link carries (Codex, PR #49). Regating the restore on the kill switch alone --
      * which was the right fix for the event list -- dropped this per-model statement with it, so an
