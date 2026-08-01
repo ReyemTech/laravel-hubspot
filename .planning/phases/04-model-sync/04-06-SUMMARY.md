@@ -96,6 +96,11 @@ key-decisions:
     successful re-sync would clear it; 04-06 is the plan that made the flag reachable, so it owes
     the clear. Without it a link goes stale once, on the first restore, and is re-reported as
     pending forever (Codex, PR #49)."
+  - "A PURGE -- forceDelete() on a row already soft-deleted -- archives ONCE in total. `trashed`
+    owns the archive on the way down, so `forceDeleted` skips rather than addressing a record
+    HubSpot has already archived. `trashed()` is a sound discriminator at that one point:
+    performDeleteOnModel() skips runSoftDelete() while forceDeleting is true, so a DIRECT force
+    delete reads false and a purge reads true (Codex, PR #49; see the research correction below)."
   - "`recreate` is routed PAST the missing-link guard; `archive` and `flag-stale` keep it. Its
     instruction is 'sync this model afresh', which is exactly what a restored model that never
     linked needs, and skipping was silent -- D-17 suppresses the restore's own `updated` event, so
@@ -352,13 +357,45 @@ Codex raised two P2s against `215e110df4`, both real, both fixed in `ecbeaed`:
    suppresses the restore's own `updated` event. `recreate` now runs past that guard with a
    nullable link; `archive` and `flag-stale` keep it, factored into `applyToLink()`.
 
-Both fixes are pinned by tests that fail against the code as reviewed:
-`test_a_successful_resync_clears_the_stale_flag_a_restore_set` and
-`test_a_restore_under_recreate_syncs_a_model_that_never_linked`.
+A third P2 landed against `55f8306922` and was also real, fixed in `05a6d7f`:
+
+3. **A purge archived twice.** Soft-delete now, `forceDelete()` later: `trashed` dispatched the
+   archive on the way down, then `forceDeleted` dispatched the same archive again against a record
+   HubSpot had already archived. `deleteOn()` now skips a `forceDeleted` whose model is already
+   trashed — after the gate, so a purge under a disabled auto-sync stays silent, and keyed on the
+   event rather than applied generally, since `trashed()` is true during `restored` handling too
+   and means the opposite there.
+
+Each fix is pinned by a test that fails against the code as reviewed:
+`test_a_successful_resync_clears_the_stale_flag_a_restore_set`,
+`test_a_restore_under_recreate_syncs_a_model_that_never_linked`,
+`test_purging_an_already_trashed_model_does_not_archive_a_second_time` and
+`test_purging_while_deleted_is_not_opted_in_stays_silent`.
+
+## A correction to `04-RESEARCH.md` Common Pitfall 2
+
+Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
+unreliable. It is not — and the research's stated MECHANISM is wrong, though its conclusion is
+right. Pitfall 2 says the in-memory delete column is already set by the time `deleted` runs during
+a force delete. `SoftDeletes::performDeleteOnModel()` skips `runSoftDelete()` entirely while
+`forceDeleting` is true, so nothing sets it. Measured against the framework rather than recalled:
+
+| scenario | `deleted` fires | `trashed()` inside it |
+|---|---|---|
+| soft delete | once | true |
+| direct `forceDelete()` | once | **false** |
+| purge (soft delete, then `forceDelete()`) | **twice** | true |
+
+So a `deleted`-plus-`trashed()` implementation reads a direct force delete CORRECTLY and
+misclassifies a **purge** as a soft delete — archiving it even under `hard_delete => 'guard'`, the
+setting that exists to prevent exactly that, and twice, because `deleted` fires twice there. The
+three-event split stands; only the reason for it needed correcting. The docblocks in
+`HubspotObserver`, `DeletePolicy` and `tests/Feature/Sync/DeletePolicyTest.php` that repeated the
+wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the five changed classes: **88.26% MSI** (188 tested, 25 untested), floor 80. Every
+Scoped run over the five changed classes: **86.28% MSI** (195 tested, 31 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
