@@ -7,6 +7,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
@@ -147,11 +148,31 @@ final class DeletePolicyTest extends SyncTestCase
         Hubspot::fake();
         $lead->delete();
         Hubspot::assertRequestCount(1);
-        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+        self::assertInstanceOf(
+            Carbon::class,
+            HubspotObjectLink::query()->sole()->archived_at,
+            'archived_at is cast to a date, so every reader compares timestamps rather than strings.'
+        );
 
         Hubspot::fake();
+        $log = Log::spy();
         $lead->forceDelete();
+
         Hubspot::assertRequestCount(0);
+
+        // The message is asserted VERBATIM, the discipline every ConfigurationException factory in
+        // this suite is held to. A log line is only useful if it says what happened, and a test
+        // that asserted only the level would pass against one that said anything at all.
+        $log->shouldHaveReceived('info', [
+            'A deleted model was NOT archived a second time: this package already archived that '
+            .'HubSpot record, and there is no unarchive endpoint for it to have come back through.',
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'forceDeleted',
+                'action' => 'already-archived',
+            ],
+        ]);
     }
 
     /**
@@ -196,10 +217,21 @@ final class DeletePolicyTest extends SyncTestCase
         config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
 
         Hubspot::fake();
+        $log = Log::spy();
         $lead->restore();
 
         Hubspot::assertRequestCount(0);
         self::assertFalse(HubspotObjectLink::query()->sole()->is_stale);
+        $log->shouldHaveReceived('info', [
+            'A restored model was not flagged stale, because this package never archived its '
+            .'HubSpot record. The link, if any, still points at a live record.',
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'restored',
+                'action' => 'flag-stale',
+            ],
+        ]);
     }
 
     /**
@@ -220,9 +252,21 @@ final class DeletePolicyTest extends SyncTestCase
         config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
 
         Hubspot::fake();
+        $log = Log::spy();
         $lead->restore();
 
         Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info', [
+            'A restored model was not recreated, because this package never archived its HubSpot '
+            .'record. Its existing link still points at a live record, and forking it would create '
+            .'a duplicate.',
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'restored',
+                'action' => 'recreate',
+            ],
+        ]);
         self::assertSame(
             $linkRowIdBefore,
             HubspotObjectLink::query()->sole()->id,
@@ -405,7 +449,16 @@ final class DeletePolicyTest extends SyncTestCase
         $lead->restore();
 
         Hubspot::assertRequestCount(0);
-        $log->shouldHaveReceived('info');
+        $log->shouldHaveReceived('info', [
+            'A restored model still points at an archived HubSpot record. HubSpot has no unarchive '
+            .'endpoint, so its link row is now flagged stale and the stored id is kept.',
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'restored',
+                'action' => 'flag-stale',
+            ],
+        ]);
 
         $link = HubspotObjectLink::query()->sole();
 
@@ -525,7 +578,17 @@ final class DeletePolicyTest extends SyncTestCase
         $lead->restore();
 
         Hubspot::assertRequestCount(1);
-        $log->shouldHaveReceived('warning');
+        $log->shouldHaveReceived('warning', [
+            'A restored model is being recreated in HubSpot under hubspot.auto_sync.on_restore = '
+            .'"recreate". The previously archived record is left archived and its id is dropped, '
+            ."which forks this record's CRM history.",
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'restored',
+                'action' => 'recreate',
+            ],
+        ]);
 
         $link = HubspotObjectLink::query()->sole();
 
@@ -558,7 +621,16 @@ final class DeletePolicyTest extends SyncTestCase
         $lead->delete();
 
         Hubspot::assertRequestCount(0);
-        $log->shouldHaveReceived('info');
+        $log->shouldHaveReceived('info', [
+            'A deleted model has no HubSpot link row, so there is nothing to archive. It was '
+            .'deleted before its first sync landed.',
+            [
+                'model' => SyncedLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'deleted',
+                'action' => 'archive',
+            ],
+        ]);
     }
 
     /**
