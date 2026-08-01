@@ -618,6 +618,31 @@ the event that could not act is **replayed** once the link it needed exists —
 deletes are not mirrored, that correctly decides to do nothing; a hand-rolled archive there would
 have got it backwards. Both directions are tested.
 
+## Finding 22: the convergence archived around `guard`
+
+Finding 21's fix replayed `HubspotObserver::trashed()` for every raced delete, and that was the most
+serious defect on the branch. **`trashed` resolves straight to `archive` without consulting
+`hard_delete`** — correctly, because a soft delete is locally recoverable — so a raced FORCE delete
+under the default `guard` archived irreversibly. The protection was defeated by the code written to
+converge on it.
+
+Which event is replayed now follows what actually happened:
+
+| fresh row | model | replayed | consults `hard_delete`? |
+|---|---|---|---|
+| gone | soft-deleting | `forceDeleted()` | yes |
+| gone | plain | `deleted()` | yes |
+| present, trashed | soft-deleting | `trashed()` | no — archives, locally recoverable |
+| present, live | either | nothing raced this write | — |
+
+The plain-model row is new: that race was previously not converged at all, because the method
+returned early for any model without `SoftDeletes`.
+
+**The lesson this phase keeps re-learning**, and the reason the three-event split exists at all: the
+three delete events are not interchangeable, and any code that picks one on the reader's behalf has
+to justify which. Replaying "a delete happened" is not enough — *which* delete happened decides
+whether `hard_delete` is consulted.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -641,7 +666,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **84.72% MSI** (255 tested, 46 untested), floor 80. Every
+Scoped run over the changed classes: **85.33% MSI** (256 tested, 44 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
