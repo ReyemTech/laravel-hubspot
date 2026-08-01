@@ -448,6 +448,31 @@ to be had, and that is the point: the flag cannot come off by accident.
 — which is the correct reading of a link written before the column existed, since this package has
 no evidence it archived them.
 
+A fifth round against `aece2f50f1` found two more, the first of them a consequence of the
+`archived_at` guard itself (`0f2a1f8`):
+
+9. **The restore response was still gated on the current event list.** Remove `deleted` from
+   `auto_sync.on` between the delete and the restore and the record is STRANDED: the link stays
+   archived and unflagged, so property pushes skip it (`archived_at` is set) while
+   `pendingHubspotSync()` cannot report it (the stale flag was never set). Nothing local mentions it
+   again. The list answers "does this application mirror deletes now"; a restore has to answer for
+   an archive that already happened. `restored()` is now gated on the **kill switch alone** — that
+   one is a statement about the package as a whole, and `recreate` reaches the API — and keys
+   everything else on the link. `deleteOn()` serves the three delete events only, and its match
+   collapses to the archive.
+10. **A retried recreate duplicates the CRM object.** If the create lands and the worker dies before
+    `updateOrCreate()`, or the acknowledgement is lost and the broker redelivers, a second attempt
+    makes a second ACTIVE object with only the last one linked. Nothing durable distinguishes a lost
+    response from a failed request, which is the distinction a retry has to make.
+    `RecreateHubspotObjectJob` declares **`$tries = 1`**. `SyncHubspotObjectJob` has no such problem
+    because D-11 chose upsert for exactly this reason; recreate is the path where converging is the
+    wrong answer, so it gives up the retry instead. **When you cannot converge, do not repeat.**
+
+    The cost is stated rather than hidden: a transiently-failing recreate is not retried either and
+    lands in `failed_jobs` with HubSpot's own reason, which is the right destination for an operation
+    that forks CRM history. An operator re-dispatching it knowingly is safe; a worker doing so
+    silently is not.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -471,7 +496,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **87.16% MSI** (258 tested, 38 untested), floor 80. Every
+Scoped run over the changed classes: **87.58% MSI** (268 tested, 38 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both

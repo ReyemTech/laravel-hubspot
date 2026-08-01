@@ -77,12 +77,18 @@ final class RecreateHubspotObjectJob implements ShouldQueue
      * attached, which is the correct destination for an operation that forks CRM history and cannot
      * be undone. An operator re-dispatching it knowingly is safe; a queue worker doing so silently
      * is not.
+     *
+     * Assigned in the constructor body rather than as the property's own default, for the reason
+     * `$deleteWhenMissingModels` is: `pest --mutate` reports a mutation on a bare property default
+     * as UNCOVERED, because a property declaration is not an executed line coverage can attribute a
+     * test to. The worker reads it off the live object either way.
      */
-    public int $tries = 1;
+    public int $tries;
 
     public function __construct(public Model $model)
     {
         $this->deleteWhenMissingModels = true;
+        $this->tries = 1;
     }
 
     public function handle(ModelBindings $bindings, PropertyMapper $mapper, ObjectGatewayContract $gateway): void
