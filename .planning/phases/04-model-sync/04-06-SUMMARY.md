@@ -574,6 +574,26 @@ that read produces the same outcome on its own next pass.
 half moved to `RestorePolicyTest.php`. The two sides gate differently and now say so in their own
 headers.
 
+## Ordering, not only gating (finding 18)
+
+The last finding on the PR was an ordering one, and it produced the same silent stranding as finding
+9 through a different door. `archived_at` was stamped AFTER the archive was dispatched — and with
+`auto_sync.queue => false`, or on a synchronous queue driver, that dispatch performs the HubSpot
+request inline. A restore landing in that window read a null marker, concluded nothing had been
+archived, and left the link current; the archive then completed and stamped it, leaving a link that
+is archived but never flagged. Pushes skip it (`archived_at` set), `pendingHubspotSync()` cannot
+report it (not stale).
+
+The marker is now written **before** the archive is published. Writing first cannot strand anything:
+a dispatch that then fails leaves a link marked archived whose record is live, which is loud — a
+synchronous failure propagates out of the model event, a queued one lands in `failed_jobs` — and
+recoverable, because a restore flags it and the scope reports it. That is the same trade every
+ordering decision in this file makes: a loud wrong state beats a silent one.
+
+Its test asserts the ORDER rather than the outcome, reading the query log rather than a mocked
+gateway — how many requests had gone out by the time the marker was written — and was verified to
+fail against the previous ordering.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -597,7 +617,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **90.29% MSI** (307 tested, 33 untested), floor 80. Every
+Scoped run over the changed classes: **89.22% MSI** (240 tested, 29 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
