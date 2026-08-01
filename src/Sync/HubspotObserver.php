@@ -242,15 +242,39 @@ final class HubspotObserver
             return;
         }
 
+        // `recreate` is the one action that is meaningful WITHOUT a link, which is why it is
+        // routed past the missing-link guard below rather than through it (Codex, PR #49). Its
+        // instruction is "sync this model afresh", and a restored model that never linked -- one
+        // deleted before its initial create sync ran, say -- needs exactly that. Sending it to the
+        // guard instead left it permanently unsynced under a setting whose entire purpose is to
+        // resync it, and silently: D-17 suppresses the restore's own `updated` event, so nothing
+        // else would ever have dispatched for it.
+        if ($action === 'recreate') {
+            $this->recreate($this->linkOf($model), $model);
+
+            return;
+        }
+
+        $this->applyToLink($action, $event, $model);
+    }
+
+    /**
+     * The two actions that are meaningless without a link row, and the single guard they share.
+     *
+     * Nothing ever synced means there is nothing to archive and nothing to flag. An archive with
+     * nothing to archive is a completed archive: this logs rather than throwing, because a model
+     * deleted before its first sync landed is ordinary, not a failure.
+     *
+     * @param  'archive'|'flag-stale'  $action
+     */
+    private function applyToLink(string $action, string $event, Model $model): void
+    {
         $link = $this->linkOf($model);
 
-        // Nothing ever synced, so there is nothing to archive, flag or fork. An archive with
-        // nothing to archive is a completed archive: this logs rather than throwing, because a
-        // model deleted before its first sync landed is ordinary, not a failure.
         if ($link === null) {
             Log::info(
-                'A deleted model has no HubSpot link row, so there is nothing to archive, flag or '
-                .'recreate. It was deleted before its first sync landed.',
+                'A deleted model has no HubSpot link row, so there is nothing to archive or flag. '
+                .'It was deleted before its first sync landed.',
                 $this->logContext($event, $model, $action),
             );
 
@@ -260,7 +284,6 @@ final class HubspotObserver
         match ($action) {
             'archive' => $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id)),
             'flag-stale' => $this->flagStale($link, $model),
-            'recreate' => $this->recreate($link, $model),
         };
     }
 
@@ -288,8 +311,12 @@ final class HubspotObserver
      * Dropping the link row is the whole mechanism: with no link, {@see SyncHubspotObjectJob} takes
      * its upsert-on-`id_property` path and writes a NEW row on the way back. The old HubSpot record
      * stays archived and unreferenced -- that is the fork, and why this can never be a default.
+     *
+     * The link is nullable because the absence of one is not a reason to skip: it is the state this
+     * action produces anyway. A model restored without ever having linked gets its fresh sync, and
+     * nothing was forked because nothing was archived.
      */
-    private function recreate(HubspotObjectLink $link, Model $model): void
+    private function recreate(?HubspotObjectLink $link, Model $model): void
     {
         Log::warning(
             'A restored model is being recreated in HubSpot under hubspot.auto_sync.on_restore = '
@@ -298,7 +325,7 @@ final class HubspotObserver
             $this->logContext('restored', $model, 'recreate'),
         );
 
-        $link->delete();
+        $link?->delete();
 
         $this->dispatchJob(new SyncHubspotObjectJob($model));
     }

@@ -128,10 +128,24 @@ final class SyncHubspotObjectJob implements ShouldQueue
 
             $gateway->update($binding->objectType, $link->hubspot_id, $properties);
 
-            // Only synced_at moves. hubspot_id is never rewritten here from the update response --
-            // it is already the address this call just wrote to, and reassigning it from the
-            // response would be re-deriving the very value this branch exists to avoid re-deriving.
-            $link->update(['synced_at' => Carbon::now()]);
+            // hubspot_id is never rewritten here from the update response -- it is already the
+            // address this call just wrote to, and reassigning it from the response would be
+            // re-deriving the very value this branch exists to avoid re-deriving.
+            //
+            // The stale flag is CLEARED here, and this is the only place that clears it (Codex,
+            // PR #49). 04-06's restore path sets it rather than nulling the stored id, and
+            // `SyncsToHubspot::scopePendingHubspotSync()` returns every model carrying it -- so
+            // without this line a link goes stale once, on the first restore, and stays stale
+            // forever. Every subsequent successful write would re-report the model as having sync
+            // work outstanding, which is exactly the silent under-reporting that scope's own
+            // docblock says the flag exists to avoid. A successful write to the stored id IS the
+            // record being current again; there is nothing further for an operator to do.
+            //
+            // Only this branch needs it. The upsert branch below reaches `updateOrCreate()` only
+            // when the relation found no row, and the relation's predicates are a superset of that
+            // call's key, so the row it writes is always a new one -- and a new row's `is_stale`
+            // is false by default.
+            $link->update(['synced_at' => Carbon::now(), 'is_stale' => false, 'stale_at' => null]);
 
             return;
         }

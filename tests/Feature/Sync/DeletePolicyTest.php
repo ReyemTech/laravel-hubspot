@@ -353,6 +353,65 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
+     * The stale flag is set by a restore and cleared by the next successful write, and nothing
+     * else clears it -- which `SyncsToHubspot::scopePendingHubspotSync()`'s own docblock already
+     * assumed when 04-04 wrote the stale leg into that scope. Without the clear, a link goes stale
+     * once, on the first restore, and every later successful sync still re-reports the model as
+     * having work outstanding, forever (Codex, PR #49).
+     */
+    public function test_a_successful_resync_clears_the_stale_flag_a_restore_set(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'relinked@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+        $lead->restore();
+
+        self::assertTrue(
+            HubspotObjectLink::query()->sole()->is_stale,
+            'The restore must have flagged the link stale, or this test proves nothing.'
+        );
+
+        Hubspot::fake();
+        $lead->update(['first_name' => 'Bea']);
+
+        $link = HubspotObjectLink::query()->sole();
+
+        self::assertFalse($link->is_stale, 'A successful write to the stored id is the record being current again.');
+        self::assertNull($link->stale_at, 'The timestamp goes with the flag it belongs to.');
+        self::assertNotNull($link->synced_at);
+    }
+
+    /**
+     * `recreate` means "sync this model afresh", and a restored model that never linked -- deleted
+     * before its initial create sync ran -- needs exactly that. Sending it down the missing-link
+     * guard left it permanently unsynced under the one setting whose entire purpose is to resync
+     * it, and silently: D-17 suppresses the restore's own `updated` event, so nothing else would
+     * ever dispatch for it (Codex, PR #49).
+     *
+     * `'created'` is left out of `auto_sync.on` here precisely so no link row is ever written.
+     */
+    public function test_a_restore_under_recreate_syncs_a_model_that_never_linked(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['deleted']);
+        config()->set('hubspot.auto_sync.on_restore', 'recreate');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'neverlinked@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        self::assertNull(HubspotObjectLink::query()->value('id'), 'Nothing may have linked yet.');
+
+        Hubspot::fake();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(1);
+        self::assertNotNull(
+            HubspotObjectLink::query()->value('id'),
+            'The fresh sync must have written the link row the restore had none of.'
+        );
+    }
+
+    /**
      * A policy value that is not even a string still fails as this package's own exception naming
      * the key and the supported values, not as a `TypeError` raised from inside an Eloquent event
      * handler that names neither.
