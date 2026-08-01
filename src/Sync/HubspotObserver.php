@@ -212,20 +212,56 @@ final class HubspotObserver
      */
     public function restored(Model $model): void
     {
-        $this->deleteOn('restored', $model);
+        // Deliberately NOT gated on `'deleted'` being in `auto_sync.on` (Codex, PR #49). That list
+        // answers "does this application mirror deletes NOW"; a restore of a link this package has
+        // ALREADY archived is not a new delete to mirror, it is cleanup owed for one it did mirror,
+        // and `archived_at` is the durable evidence of that where the current config is not.
+        //
+        // Removing `deleted` from the list between the delete and the restore would otherwise
+        // STRAND the record, and silently: the link stays archived and unflagged, so property
+        // pushes skip it (`archived_at` is set) while `pendingHubspotSync()` cannot report it (the
+        // stale flag was never set). Nothing local would ever mention it again.
+        //
+        // `auto_sync.enabled` still applies. It is a statement about the package as a whole rather
+        // than about which events mirror, and `recreate` reaches the API.
+        if (Config::get('hubspot.auto_sync.enabled') !== true) {
+            return;
+        }
+
+        $link = $this->linkOf($model);
+
+        // `resolve()` answers exactly `flag-stale` or `recreate` for this event -- the unit table
+        // pins both rows and no others -- so this is a two-valued choice rather than a match whose
+        // remaining arms could never run.
+        $action = DeletePolicy::resolve(
+            $this->modelUses($model, SoftDeletes::class),
+            'restored',
+            $this->policyValue('hard_delete', 'guard'),
+            $this->policyValue('on_restore', 'flag'),
+        );
+
+        if ($action === 'recreate') {
+            $this->recreate($link, $model);
+
+            return;
+        }
+
+        $this->flagStale($link, $model);
     }
 
     /**
-     * The delete-policy half of the gate, and the single place any of the four events becomes an
-     * action.
+     * The delete-policy half of the gate, and where each of the three DELETE events becomes an
+     * action. {@see restored()} is gated separately and for a different reason.
      *
-     * All four are gated on `'deleted'` rather than on their own event names, which is a deliberate
+     * All three are gated on `'deleted'` rather than on their own event names, which is a deliberate
      * choice and not an oversight. `hubspot.auto_sync.on` is the consumer's statement about whether
-     * local deletes mirror to HubSpot at all; splitting that into four separately-opt-in-able names
+     * local deletes mirror to HubSpot at all; splitting that into three separately-opt-in-able names
      * would let a consumer enable `trashed` and forget `forceDeleted`, which is the failure the
-     * three-event split makes possible in the first place. `restored` rides the same switch because
-     * a restore is only ever interesting when a delete archived something: with deletes not
-     * mirroring, there is no stale CRM state for a restore to flag.
+     * three-event split makes possible in the first place.
+     *
+     * A restore does NOT ride that switch, and an earlier revision that had it do so was wrong
+     * (Codex, PR #49): the list describes what happens to deletes from now on, while a restore has
+     * to answer for an archive that already happened.
      *
      * The two policy values are READ eagerly and VALIDATED lazily -- reading a config key is not
      * consulting it, and {@see DeletePolicy} validates only the one the event actually governs.
@@ -258,13 +294,10 @@ final class HubspotObserver
             return;
         }
 
-        $link = $this->linkOf($model);
-
-        match ($action) {
-            'archive' => $this->archive($link, $event, $model),
-            'flag-stale' => $this->flagStale($link, $model),
-            'recreate' => $this->recreate($link, $model),
-        };
+        // Only `archive` is left. The three delete events cannot resolve to a restore action, and
+        // `restored()` no longer comes through here at all -- it is gated differently, on evidence
+        // rather than on the current event list.
+        $this->archive($this->linkOf($model), $event, $model);
     }
 
     /**

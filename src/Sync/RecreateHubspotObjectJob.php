@@ -57,6 +57,29 @@ final class RecreateHubspotObjectJob implements ShouldQueue
      */
     public bool $deleteWhenMissingModels;
 
+    /**
+     * **This job is never retried, and that is the point** (Codex, PR #49).
+     *
+     * A create is not idempotent and this one cannot be made so. If the create succeeds and the
+     * worker then dies before `updateOrCreate()` lands -- or the acknowledgement is simply lost and
+     * the broker redelivers -- a second attempt issues a second create, and the result is two
+     * ACTIVE CRM objects for one model with only the last one linked locally. Nothing durable
+     * distinguishes "the response was lost" from "the request failed", which is exactly the
+     * distinction a retry has to make.
+     *
+     * `SyncHubspotObjectJob` does not have this problem because it upserts, and D-11 chose that verb
+     * for precisely this reason: a create whose response was lost converges instead of duplicating.
+     * `recreate` is the one path where converging is the wrong answer, so it gives up the retry
+     * instead. When you cannot converge, do not repeat.
+     *
+     * The cost is real and stated rather than hidden: a recreate that fails for a transient reason
+     * -- a 429, a blip -- is not retried either. It lands in `failed_jobs` with HubSpot's own reason
+     * attached, which is the correct destination for an operation that forks CRM history and cannot
+     * be undone. An operator re-dispatching it knowingly is safe; a queue worker doing so silently
+     * is not.
+     */
+    public int $tries = 1;
+
     public function __construct(public Model $model)
     {
         $this->deleteWhenMissingModels = true;

@@ -732,6 +732,71 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
+     * The restore response is owed for an archive that ALREADY happened, so removing `deleted` from
+     * `auto_sync.on` between the delete and the restore must not strand the record (Codex, PR #49).
+     *
+     * Stranding is the exact outcome the gate produced: the link stays archived and unflagged, so
+     * property pushes skip it because `archived_at` is set, while `pendingHubspotSync()` cannot
+     * report it because the stale flag was never set. Nothing local would mention it again.
+     */
+    public function test_a_restore_still_responds_when_deletes_stopped_mirroring_after_the_archive(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'stranded@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+
+        // The archive already happened; the application stops mirroring deletes only afterwards.
+        config()->set('hubspot.auto_sync.on', ['created', 'updated']);
+
+        Hubspot::fake();
+        $lead->restore();
+
+        self::assertTrue(
+            HubspotObjectLink::query()->sole()->is_stale,
+            'A link this package archived must still be flagged on restore, whatever the event '
+            .'list says now -- otherwise nothing local ever reports it again.'
+        );
+    }
+
+    /**
+     * The kill switch is different from the event list and still applies: it is a statement about
+     * the package as a whole, and `recreate` reaches the API.
+     */
+    public function test_a_restore_does_nothing_while_auto_sync_is_disabled(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'killswitch@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        config()->set('hubspot.auto_sync.enabled', false);
+
+        Hubspot::fake();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(0);
+        self::assertFalse(HubspotObjectLink::query()->sole()->is_stale);
+    }
+
+    /**
+     * A recreate is never retried, because a create is not idempotent and this one cannot be made
+     * so: a lost response is indistinguishable from a failed request, and repeating it produces two
+     * ACTIVE CRM objects for one model (Codex, PR #49). `SyncHubspotObjectJob` upserts and so does
+     * not have this problem; this is the one path where converging is the wrong answer, so it gives
+     * up the retry instead.
+     */
+    public function test_the_recreate_job_is_never_retried(): void
+    {
+        self::assertSame(
+            1,
+            (new RecreateHubspotObjectJob(new SoftDeletingLead(['email' => 'once@example.com'])))->tries,
+            'A retried create is a duplicate CRM object, and nothing durable tells a lost response '
+            .'from a failed request.'
+        );
+    }
+
+    /**
      * A policy value that is not even a string still fails as this package's own exception naming
      * the key and the supported values, not as a `TypeError` raised from inside an Eloquent event
      * handler that names neither.
