@@ -11,7 +11,8 @@ requires:
     provides: "the auto_sync gate, D-17's restore guard on updated(), SoftDeletingLead"
 provides:
   - "Sync\\DeletePolicy -- design spec §7's table as a pure static function over four primitives"
-  - "Sync\\ArchiveHubspotObjectJob -- carries objectType + hubspotId as SCALARS, never the model"
+  - "Sync\\ArchiveHubspotObjectJob -- carries objectType + hubspotId as SCALARS, never the model;\n    treats a 404 as a completed archive"
+  - "Sync\\RecreateHubspotObjectJob -- the on_restore => recreate path, which CREATES, never upserts"
   - "Sync\\HubspotObserver::trashed(), ::forceDeleted(), ::deleted(), ::restored()"
   - "Sync\\HubspotObserver::passesGate(), ::dispatchJob() and ::applyToLink(), factored out of syncOn()"
   - "SyncHubspotObjectJob's trashed-model early return"
@@ -50,6 +51,7 @@ key-files:
   created:
     - src/Sync/DeletePolicy.php
     - src/Sync/ArchiveHubspotObjectJob.php
+    - src/Sync/RecreateHubspotObjectJob.php
     - tests/Unit/Sync/DeletePolicyTest.php
     - tests/Feature/Sync/DeletePolicyTest.php
   modified:
@@ -96,11 +98,11 @@ key-decisions:
     successful re-sync would clear it; 04-06 is the plan that made the flag reachable, so it owes
     the clear. Without it a link goes stale once, on the first restore, and is re-reported as
     pending forever (Codex, PR #49)."
-  - "A PURGE -- forceDelete() on a row already soft-deleted -- archives ONCE in total. `trashed`
-    owns the archive on the way down, so `forceDeleted` skips rather than addressing a record
-    HubSpot has already archived. `trashed()` is a sound discriminator at that one point:
-    performDeleteOnModel() skips runSoftDelete() while forceDeleting is true, so a DIRECT force
-    delete reads false and a purge reads true (Codex, PR #49; see the research correction below)."
+  - "A PURGE archives on BOTH events, and the redundancy is deliberate. Deduplicating on trashed()
+    was tried and reverted: it proves a soft delete happened, never that ITS archive passed the gate
+    in force at the time, so it silently orphaned a live HubSpot record whenever deletes were
+    enabled BETWEEN the two events (Codex, PR #49). ArchiveHubspotObjectJob treats a 404 as a
+    completed archive so the redundant request cannot become a failed job."
   - "`recreate` is routed PAST the missing-link guard; `archive` and `flag-stale` keep it. Its
     instruction is 'sync this model afresh', which is exactly what a restored model that never
     linked needs, and skipping was silent -- D-17 suppresses the restore's own `updated` event, so
@@ -360,17 +362,47 @@ Codex raised two P2s against `215e110df4`, both real, both fixed in `ecbeaed`:
 A third P2 landed against `55f8306922` and was also real, fixed in `f1fd9f1`:
 
 3. **A purge archived twice.** Soft-delete now, `forceDelete()` later: `trashed` dispatched the
-   archive on the way down, then `forceDeleted` dispatched the same archive again against a record
-   HubSpot had already archived. `deleteOn()` now skips a `forceDeleted` whose model is already
-   trashed — after the gate, so a purge under a disabled auto-sync stays silent, and keyed on the
-   event rather than applied generally, since `trashed()` is true during `restored` handling too
-   and means the opposite there.
+   archive on the way down, then `forceDeleted` dispatched the same archive again. The first fix
+   deduplicated on `trashed()`; **finding 4 below proved that unsound and it was reverted.** The
+   redundancy is accepted, and the failed-job risk that motivated the finding is answered inside
+   `ArchiveHubspotObjectJob` instead.
 
 Each fix is pinned by a test that fails against the code as reviewed:
 `test_a_successful_resync_clears_the_stale_flag_a_restore_set`,
 `test_a_restore_under_recreate_syncs_a_model_that_never_linked`,
 `test_purging_an_already_trashed_model_does_not_archive_a_second_time` and
 `test_purging_while_deleted_is_not_opted_in_stays_silent`.
+
+Two further P2s landed against `bfef9b5d99`, and the first of them **reverses** finding 3's fix
+(`5c0bd5e`):
+
+4. **The purge deduplication was unsound.** `trashed()` proves a soft delete happened; it never
+   proves that soft delete's archive passed the gate in force at the time. A model soft-deleted
+   while `deleted` was absent from `auto_sync.on` was never archived, so skipping its later purge
+   left a live HubSpot record with no local row behind it — silently, and precisely for the operator
+   who has since set `allow` to prevent that. The only sound version needs durable evidence that
+   this package issued the first archive, and `hubspot_object_links` has nowhere to record it.
+
+   So the purge archives on both events again, and the redundancy is now stated rather than
+   optimised away. What made it worth avoiding was the risk of a failed job, and that is addressed
+   where it actually occurs: `ArchiveHubspotObjectJob` treats a **404 as a completed archive** — the
+   plan's own rule for a missing link row, applied to the record instead of the row — while every
+   other status still throws, because a 429 or a 500 says nothing about whether the record is
+   archived. Correct-and-redundant beats efficient-and-silently-wrong.
+5. **`recreate` upserted instead of creating.** The ordinary sync job's no-link branch upserts on
+   the model's unchanged `id_property` for D-11's reason, and that is the wrong verb here:
+   converging onto whatever HubSpot's batch-upsert matches is the opposite of forking away from it.
+   `recreate` now dispatches `RecreateHubspotObjectJob`, which calls `ObjectGatewayContract::
+   create()`. **It does not guarantee a new object and no longer claims to** — HubSpot retains a
+   unique property value on an archived record, so the create can be rejected for conflicting with
+   the very object being forked away from, arriving as this package's own `ApiException` carrying
+   HubSpot's reason. What it can no longer do is silently match the archived record and keep
+   writing to it.
+
+Pinned by `test_a_purge_archives_on_both_events_rather_than_risking_a_silent_orphan`,
+`test_a_purge_still_archives_when_the_earlier_soft_delete_was_gated_off`,
+`test_an_archive_of_an_already_gone_record_is_a_completed_archive` and
+`test_an_archive_rejected_for_any_other_reason_still_throws`.
 
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
@@ -395,7 +427,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the five changed classes: **86.28% MSI** (195 tested, 31 untested), floor 80. Every
+Scoped run over the six changed classes: **84.03% MSI** (200 tested, 38 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
