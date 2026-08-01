@@ -7,7 +7,9 @@ namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
@@ -212,6 +214,12 @@ final class DeletePolicyTest extends SyncTestCase
      * `newQueryWithoutScopes()` -- so the job does find its model rather than being discarded. It
      * must not push: the delete path has already archived that record, so the push is at best
      * wasted and at worst a write to an archived record. The delete path owns the archived state.
+     *
+     * `handle()` is reached through the container rather than called bare, because its collaborators
+     * are METHOD parameters resolved per call -- the shape that lets `Hubspot::fake()` swap the
+     * transport underneath a job that was constructed before the fake existed. Calling it with no
+     * arguments raises `ArgumentCountError` before any assertion in this test can run; going through
+     * `app()->call()` is how the queue itself invokes it, and changes nothing this test asserts.
      */
     public function test_a_property_push_job_arriving_with_the_model_trashed_issues_no_request(): void
     {
@@ -221,8 +229,117 @@ final class DeletePolicyTest extends SyncTestCase
 
         Hubspot::fake();
 
-        (new SyncHubspotObjectJob($lead))->handle();
+        app()->call([new SyncHubspotObjectJob($lead), 'handle']);
 
         Hubspot::assertRequestCount(0);
+    }
+
+    /**
+     * D-21 is a claim about LOG LEVEL, and the request-count tests above cannot see it: `guard` and
+     * `warn` take the same action, so a suite that only counted requests would pass against an
+     * implementation where the two were literally the same branch. These two tests are what make
+     * the decision real rather than documented.
+     */
+    public function test_the_default_guard_logs_the_skipped_archive_at_info(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'quiet@example.com', 'first_name' => 'Ada']);
+
+        $log = Log::spy();
+
+        $lead->forceDelete();
+
+        $log->shouldHaveReceived('info');
+        $log->shouldNotHaveReceived('warning');
+    }
+
+    public function test_warn_logs_the_same_skipped_archive_at_warning(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 'warn');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'loud@example.com', 'first_name' => 'Ada']);
+
+        $log = Log::spy();
+
+        $lead->forceDelete();
+
+        $log->shouldHaveReceived('warning');
+        $log->shouldNotHaveReceived('info');
+    }
+
+    /**
+     * `on_restore => 'recreate'`, the opt-in that forks CRM history.
+     *
+     * The link row's own primary key is what proves the fork: an implementation that merely
+     * re-synced onto the EXISTING link would keep writing to the archived HubSpot record and leave
+     * the row's id unchanged. Recreating means the old link is dropped and a new one written, so
+     * the id must move.
+     */
+    public function test_a_restore_under_recreate_drops_the_link_and_syncs_afresh(): void
+    {
+        config()->set('hubspot.auto_sync.on_restore', 'recreate');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'forked@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        $linkRowIdBefore = HubspotObjectLink::query()->value('id');
+
+        Hubspot::fake();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(1);
+
+        $link = HubspotObjectLink::query()->sole();
+
+        self::assertNotSame(
+            $linkRowIdBefore,
+            $link->id,
+            'A recreate must DROP the old link row rather than re-sync onto it -- re-syncing onto '
+            .'the old row would write to the record that is already archived.'
+        );
+        self::assertFalse($link->is_stale, 'A freshly recreated link is not stale.');
+    }
+
+    /**
+     * A model deleted before its first sync ever landed is ordinary, not a failure: there is no
+     * HubSpot record to archive, so the delete path logs and stops. `'created'` is left out of
+     * `auto_sync.on` here precisely so no link row is ever written.
+     */
+    public function test_a_delete_with_no_link_row_issues_no_request_and_does_not_throw(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['deleted']);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SyncedLead::create(['email' => 'unsynced@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::assertRequestCount(0);
+        self::assertNull(HubspotObjectLink::query()->value('id'));
+
+        $lead->delete();
+
+        Hubspot::assertRequestCount(0);
+    }
+
+    /**
+     * A policy value that is not even a string still fails as this package's own exception naming
+     * the key and the supported values, not as a `TypeError` raised from inside an Eloquent event
+     * handler that names neither.
+     */
+    public function test_a_non_string_hard_delete_value_fails_as_a_configuration_exception(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 42);
+
+        Hubspot::fake();
+        $lead = SyncedLead::create(['email' => 'mistyped@example.com', 'first_name' => 'Ada']);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage(
+            'hubspot.auto_sync.hard_delete is set to "int", which is not a supported delete policy.'
+        );
+
+        $lead->delete();
     }
 }

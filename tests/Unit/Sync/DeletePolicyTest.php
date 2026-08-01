@@ -120,6 +120,26 @@ final class DeletePolicyTest extends TestCase
     }
 
     /**
+     * The resolver is total over the four events it models and refuses everything else. Reachable
+     * only from a direct call -- `HubspotObserver` passes one of four literals -- but `DeletePolicy`
+     * is public API of a released package, and the two available fallbacks are both silent and both
+     * wrong: answering `archive` issues an irreversible archive nobody asked for, and answering a
+     * skip drops a mirror the consumer believed was happening.
+     */
+    public function test_an_unrecognised_event_throws_naming_the_events_it_models(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage(
+            'ReyemTech\Hubspot\Sync\DeletePolicy cannot resolve the "saved" Eloquent event. It '
+            .'models these and only these: trashed, forceDeleted, deleted, restored. Each one '
+            .'answers a different row of the delete-policy table, and this resolver never guesses '
+            .'a row it was not given.'
+        );
+
+        DeletePolicy::resolve(false, 'saved', 'guard', 'flag');
+    }
+
+    /**
      * `hard_delete` is consulted only by the events it governs, so a nonsense value there does not
      * throw on a soft delete. Stated as a test rather than left implicit: the alternative -- eager
      * validation of both values on every call -- would make a typo in one policy throw on events

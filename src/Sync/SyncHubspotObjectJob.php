@@ -9,9 +9,11 @@ use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 
@@ -78,6 +80,17 @@ final class SyncHubspotObjectJob implements ShouldQueue
      */
     public function handle(ModelBindings $bindings, PropertyMapper $mapper, ObjectGatewayContract $gateway): void
     {
+        if ($this->modelIsTrashed()) {
+            Log::info(
+                'A HubSpot property push was skipped because its model arrived soft-deleted. The '
+                .'delete path owns that record now: it has already archived it, and there is no '
+                .'unarchive endpoint to put it back.',
+                ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+            );
+
+            return;
+        }
+
         $binding = $bindings->for(get_class($this->model));
 
         // getHubspotMap() is declared by the SyncsToHubspot trait every bound model uses -- this
@@ -167,5 +180,35 @@ final class SyncHubspotObjectJob implements ShouldQueue
                 'synced_at' => Carbon::now(),
             ],
         );
+    }
+
+    /**
+     * Whether this job's model came back soft-deleted -- the race `04-CONTEXT.md` left for 04-06's
+     * planner, now closed.
+     *
+     * A job queued by an `updated` event and a soft delete that lands before the worker picks it up
+     * is an ordinary interleaving, not a rare one, and `SerializesModels` does NOT discard the job
+     * for it: `newQueryForRestoration()` uses `newQueryWithoutScopes()`, so the trashed model is
+     * found and handed to `handle()` exactly as a live one would be. Without this guard the push
+     * writes properties to a record the delete path has already archived -- at best wasted, at
+     * worst a write to archived CRM state that nothing local points at any more (T-04-25).
+     *
+     * Trait presence is decided by `class_uses_recursive()`, never by `method_exists()`: a name is
+     * not a contract, and a NON-PUBLIC method of that name is reached through `Model::__call()` and
+     * raises `BadMethodCallException` from inside a queue worker. `HubspotObserver::modelUses()`
+     * makes the identical check for the identical reason (Codex, PR #48, twice) -- two lines
+     * duplicated across two classes, rather than a shared helper that would exist only to be shared
+     * and would put the check one indirection away from the per-line suppression it needs.
+     */
+    private function modelIsTrashed(): bool
+    {
+        if (! in_array(SoftDeletes::class, class_uses_recursive($this->model), true)) {
+            return false;
+        }
+
+        // trashed() is declared by SoftDeletes, not by Model, and the line above is the
+        // precondition PHPStan cannot express. D-04 forbids a baseline, not a justified per-line
+        // ignore.
+        return $this->model->trashed() === true; // @phpstan-ignore-line method.notFound
     }
 }
