@@ -594,6 +594,30 @@ Its test asserts the ORDER rather than the outcome, reading the query log rather
 gateway — how many requests had gone out by the time the marker was written — and was verified to
 fail against the previous ordering.
 
+## Round nine: three findings, all born of earlier fixes (19-21)
+
+19. **The marker outlived a failed archive.** Finding 18's fix wrote `archived_at` before
+    dispatching, defended as "recoverable, because a restore flags it" — and that defence was wrong.
+    A marker left by a failed dispatch makes a repeated delete SKIP (it says this package already
+    archived) while ordinary pushes refuse the link for the same reason, so a still-live record was
+    reachable only by editing the row. The marker is now **taken back** when publication fails, so
+    it means what it says in both directions.
+20. **A restore never repaired a skipped initial sync.** A model created, soft-deleted before its
+    queued initial sync ran, and restored afterwards stayed unsynced forever: the job refuses to
+    create a CRM record for a trashed model, D-17 suppresses the restore's `updated`, and there was
+    no link to flag. `restored()` now dispatches that missing sync, **gated on `'created'`** being
+    in `auto_sync.on` — a model whose application never syncs on create has no link for an innocent
+    reason.
+21. **The ordinary sync path has the same check-before-act race** the withdrawn recreate job had. A
+    delete landing between the trashed guard and the link write finds no link, so `trashed` archives
+    nothing; the job then links a deleted model and nothing revisits it.
+
+Finding 21's answer is worth stating as a pattern: rather than reproduce an archive inside the job,
+the event that could not act is **replayed** once the link it needed exists —
+`HubspotObserver::trashed()` runs with the whole gate intact. Under the shipped default, where
+deletes are not mirrored, that correctly decides to do nothing; a hand-rolled archive there would
+have got it backwards. Both directions are tested.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -617,7 +641,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **89.22% MSI** (240 tested, 29 untested), floor 80. Every
+Scoped run over the changed classes: **84.72% MSI** (255 tested, 46 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
