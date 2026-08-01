@@ -53,6 +53,7 @@ key-files:
     - src/Sync/DeletePolicy.php
     - src/Sync/ArchiveHubspotObjectJob.php
     - src/Sync/RecreateHubspotObjectJob.php
+    - src/Gateway/Contracts/NonRetryingObjectGatewayContract.php
     - database/migrations/sync/0001_01_01_000001_add_archived_at_to_hubspot_object_links_table.php
     - tests/Unit/Sync/DeletePolicyTest.php
     - tests/Feature/Sync/DeletePolicyTest.php
@@ -473,6 +474,42 @@ A fifth round against `aece2f50f1` found two more, the first of them a consequen
     that forks CRM history. An operator re-dispatching it knowingly is safe; a worker doing so
     silently is not.
 
+A sixth round against `fdc4794508` found two more, both on the recreate job (`805b64e`, `2e0c1cb`):
+
+11. **A recreate created a duplicate with no failure involved.** Under the default queued `created`
+    sync, a model created, soft-deleted and restored before its initial `SyncHubspotObjectJob` runs
+    leaves the restore seeing no link; the older sync then upserts and writes a live one, and the
+    recreate creates a SECOND active object and overwrites the link with its id. The job now
+    rechecks the link when it runs: the observer drops the old link before dispatching, so any link
+    found there was written afterwards and the state the job was dispatched for no longer holds.
+12. **`$tries = 1` did not actually prevent the duplicate it was added for.** It bounds Laravel job
+    attempts; the production client still carried the SDK's internal-errors retry middleware, so a
+    5xx or a timeout from `create()` was repeated INSIDE a single attempt — and after a write that
+    already landed, that repeat is the duplicate.
+
+## Two retries, only one of them safe
+
+`HubspotClientFactory` pushed both of the SDK's retry middlewares together. They are not equally
+safe, and they are now switchable separately:
+
+| middleware | fires on | safe to repeat a create? |
+|---|---|---|
+| `rate_limit_retry` | 429 | **yes** — the request was refused, never processed |
+| `internal_errors_retry` | 5xx | **no** — says nothing about whether the write landed |
+
+`Gateway\Contracts\NonRetryingObjectGatewayContract` names a transport without the second one, and
+`RecreateHubspotObjectJob` asks for it **by type rather than by argument**: the safety of repeating
+a request is a property of the operation, and putting that decision at the call site makes it
+forgettable. `ObjectGateway` implements both contracts — it is `final`, and a decorator
+reimplementing eleven delegating methods to express one transport difference would be more surface
+for less clarity — so the guarantee lives in the binding, and `ServiceProviderBindingsTest` asserts
+it in both directions rather than assuming it.
+
+**Nothing changes for existing callers.** This adds a second transport for one caller rather than
+taking retries away from anybody, and `Hubspot::fake()` is unaffected by construction: it replaces
+the factory singleton with a `forTransport()` one carrying no retry middleware at all, so the
+binding finds nothing to rebuild and uses the mock unchanged.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -496,7 +533,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **87.58% MSI** (268 tested, 38 untested), floor 80. Every
+Scoped run over the changed classes: **89.82% MSI** (459 tested, 52 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
