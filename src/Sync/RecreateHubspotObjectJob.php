@@ -14,7 +14,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
-use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Gateway\Contracts\NonRetryingObjectGatewayContract;
 
 /**
  * The queued job behind `hubspot.auto_sync.on_restore => 'recreate'` (SYNC-04).
@@ -91,7 +91,7 @@ final class RecreateHubspotObjectJob implements ShouldQueue
         $this->tries = 1;
     }
 
-    public function handle(ModelBindings $bindings, PropertyMapper $mapper, ObjectGatewayContract $gateway): void
+    public function handle(ModelBindings $bindings, PropertyMapper $mapper, NonRetryingObjectGatewayContract $gateway): void
     {
         // The same race {@see SyncHubspotObjectJob} guards against, and worse here, because this
         // job CREATES (Codex, PR #49). Queued is the default, so a model restored and then

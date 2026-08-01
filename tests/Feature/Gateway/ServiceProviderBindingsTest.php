@@ -11,6 +11,7 @@ use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\AssociationType;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
+use ReyemTech\Hubspot\Gateway\Contracts\NonRetryingObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
@@ -174,5 +175,44 @@ final class ServiceProviderBindingsTest extends TestCase
         $second = app(ExceptionTranslator::class);
 
         self::assertSame($first, $second);
+    }
+
+    /**
+     * The binding is the entire guarantee (Codex, PR #49). `ObjectGateway` implements both
+     * contracts, so what makes an instance of the non-retrying one retry-free is this line of
+     * `ServiceProvider::register()` and nothing else -- which is exactly why it is asserted rather
+     * than assumed. Without it a 5xx after a successful create is repeated inside a single job
+     * attempt, and `Sync\RecreateHubspotObjectJob` leaves two active CRM objects.
+     */
+    public function test_the_non_retrying_object_gateway_is_built_on_a_transport_that_does_not_repeat_creates(): void
+    {
+        config()->set('hubspot.token', 'token-value');
+
+        $gateway = app(NonRetryingObjectGatewayContract::class);
+
+        self::assertInstanceOf(ObjectGateway::class, $gateway);
+
+        $factory = (new ReflectionProperty(ObjectGateway::class, 'clientFactory'))->getValue($gateway);
+
+        self::assertInstanceOf(HubspotClientFactory::class, $factory);
+        self::assertFalse(
+            $factory->retriesInternalErrors(),
+            'A create that is repeated after an ambiguous failure is a duplicate CRM object.'
+        );
+    }
+
+    /**
+     * The ordinary gateway is untouched. This change adds a second transport for one caller; it
+     * does not take retries away from anybody who had them.
+     */
+    public function test_the_ordinary_object_gateway_keeps_both_retries(): void
+    {
+        config()->set('hubspot.token', 'token-value');
+
+        $factory = (new ReflectionProperty(ObjectGateway::class, 'clientFactory'))
+            ->getValue(app(ObjectGatewayContract::class));
+
+        self::assertInstanceOf(HubspotClientFactory::class, $factory);
+        self::assertTrue($factory->retriesInternalErrors());
     }
 }

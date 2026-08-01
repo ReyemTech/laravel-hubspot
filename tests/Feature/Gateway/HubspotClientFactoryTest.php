@@ -222,4 +222,46 @@ final class HubspotClientFactoryTest extends TestCase
 
         self::assertSame($innerHandler, $result);
     }
+
+    /**
+     * The one question a non-idempotent write needs answered about its transport: does it repeat a
+     * request that failed for a reason which does not prove the request was unprocessed? A 429 does
+     * prove it -- refused, never processed -- while a 5xx or a timeout proves nothing, so repeating
+     * a create there can leave two objects (Codex, PR #49).
+     */
+    public function test_the_production_transport_retries_internal_errors_by_default(): void
+    {
+        self::assertTrue(
+            HubspotClientFactory::fromConfig('token-value')->retriesInternalErrors(),
+            'Nothing about the default transport changed: T-02-03 attached both retries and both stay.'
+        );
+    }
+
+    public function test_the_internal_errors_retry_can_be_switched_off_on_its_own(): void
+    {
+        $factory = HubspotClientFactory::fromConfig('token-value', 10.0, 5.0, true, retryInternalErrors: false);
+
+        self::assertFalse(
+            $factory->retriesInternalErrors(),
+            'This is the transport Sync\\RecreateHubspotObjectJob creates through.'
+        );
+    }
+
+    public function test_disabling_retries_entirely_also_disables_the_internal_errors_retry(): void
+    {
+        self::assertFalse(
+            HubspotClientFactory::fromConfig('token-value', 10.0, 5.0, false)->retriesInternalErrors(),
+            'The internal-errors retry is pushed only when retries are on at all, so the narrower '
+            .'flag can never re-enable what the broader one refused.'
+        );
+    }
+
+    public function test_a_caller_supplied_transport_never_retries_internal_errors(): void
+    {
+        self::assertFalse(
+            HubspotClientFactory::forTransport(new Client)->retriesInternalErrors(),
+            'forTransport() attaches no retry middleware at all, which is what keeps '
+            .'assertRequestCount() exact under Hubspot::fake().'
+        );
+    }
 }
