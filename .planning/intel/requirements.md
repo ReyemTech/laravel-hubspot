@@ -60,7 +60,7 @@ marked absent rather than invented. See INGEST-CONFLICTS.md for the correspondin
 ## REQ-delete-policy
 - source: docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md §7
 - description: Delete propagation is derived from the model rather than configured twice, and is guarded by default because HubSpot's delete is `archive()` and there is no unarchive endpoint.
-- acceptance: `'deleted'` is opt-in in `auto_sync.on`; `hard_delete` defaults to `guard`, which skips and logs. A `SoftDeletes` model archives in HubSpot on soft delete. `restored` cannot be mirrored: log, keep the stored `hubspot_id` intact but flagged stale, never null it. `on_restore => 'recreate'` is opt-in because it forks CRM history.
+- acceptance: `'deleted'` is opt-in in `auto_sync.on`; `hard_delete` defaults to `guard`, which skips and logs. A `SoftDeletes` model archives in HubSpot on soft delete. `restored` cannot be mirrored: log, keep the stored `hubspot_id` intact but flagged stale, never null it. `on_restore => 'recreate'` is opt-in because it forks CRM history. D-21 (2026-07-30) defines the two values the spec left undefined: `hard_delete => 'warn'` SKIPS exactly as `guard` does and differs only in log level (warning rather than info), and only `allow` archives; `on_restore => 'flag'` is the default and keeps the id. An unrecognised value for either throws `ConfigurationException` rather than falling back.
 - scope: Sync layer, delete propagation, config defaults
 
 ## REQ-sync-escape-hatches

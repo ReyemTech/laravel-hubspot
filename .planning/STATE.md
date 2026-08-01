@@ -31,21 +31,34 @@ request lifecycle.
 
 ## Current Position
 
-Phase: 4 of 9 (Model Sync) — 3 of 9 plans executed (04-01, 04-02, 04-03)
-Plan: 4 of 9 in current phase; 04-03 just landed on branch `feat/04-03-property-map` (not yet
-merged). 04-04 shares 04-03's wave and runs independently against the same base.
-Status: **PropertyMapper's three `$hubspotMap` forms and the job's update-by-stored-id leg are
-done.** `map()` dispatches on the map value's own shape (`Closure` vs. a `data_get()` path) with
-null-omits-the-key as the one shared filter; `mapForUpdate()` adds the `$hubspotUpdateMap`
-selection rule; `SyncHubspotObjectJob::handle()` now updates an already-linked model by its stored
-`hubspot_id` rather than re-upserting it. **`$hubspotUpdateMap` is honoured end to end**
-via `SyncsToHubspot::getHubspotUpdateMap()`, which 04-03 added after Codex rejected the deferral as
-a P1 on PR #42 — passing `[]` made `mapForUpdate()` fall back to the FULL create map, so a
-consumer's update map was silently ignored and every update overwrote the properties it existed to
-protect. `WINDOWS.md` entry 4 is fixed. Also fixed R3's architecture rule to admit the bare global function
-`data_get`, which the existing `'Illuminate'` allow-list entry never covered since the function is
-declared with no namespace statement in `Illuminate\Collections\helpers.php`.
-Last activity: 2026-07-31 — executed 04-03-PLAN.md. PropertyMapper::map() resolves all three $hubspotMap forms (literal, dot-notation, closure) through one data_get()/Closure dispatch with null-omits-the-key as the shared filter step; mapForUpdate() adds the $hubspotUpdateMap selection rule; SyncHubspotObjectJob::handle() updates an already-linked model by its stored hubspot_id instead of re-upserting it. Fixed R3 (architecture rule) to admit the bare global function data_get, which pest-plugin-arch's existing 'Illuminate' allow-list entry never covered since the function is declared with no namespace statement. 709 tests, 2724 assertions, 100.0% coverage. MSI 95.24% measured over the three classes this plan changed (PropertyMapper, SyncHubspotObjectJob, SyncsToHubspot) — a SCOPED figure, not comparable to a whole-tree MSI, and stated that way rather than swapped in as if it were. $hubspotUpdateMap IS honoured end to end: SyncsToHubspot::getHubspotUpdateMap() reads it and the job passes it. This was first deferred to 04-04 and Codex rejected the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the FULL create map, so a consumer's update map was silently ignored and every update overwrote the properties it existed to protect. WINDOWS.md entry 4 is fixed.
+Phase: 4 of 9 (Model Sync) — 5 of 9 plans executed and merged (04-01…04-05); 04-06 in flight
+Plan: 6 of 9 in current phase, on branch `feat/04-06-delete-policy` (not yet merged). 0.5.0 is
+released and tagged.
+Status: **Deletes cannot surprise anyone.** `Sync\DeletePolicy` resolves design spec §7's table
+from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
+Three DISTINCT events drive it — `trashed`, `forceDeleted`, and plain `deleted` gated on the
+ABSENCE of `SoftDeletes` — because `deleted` fires identically for a soft delete and a
+`forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()`
+implementation archives twice and misclassifies the hard delete. D-21 is implemented as selected:
+`hard_delete => 'warn'` **skips**, exactly as `guard` does, and differs only in log level.
+`restored` flags the link row stale and never nulls `hubspot_id`; `on_restore => 'recreate'` drops
+the link and syncs afresh. `ArchiveHubspotObjectJob` carries the object type and HubSpot id as
+scalars rather than the model — after a hard delete the local row is gone, and
+`deleteWhenMissingModels` would silently discard a model-carrying job on exactly the deletes it
+exists to mirror. `SyncHubspotObjectJob` returns early when its model arrives trashed, closing
+`04-CONTEXT.md`'s deferred update-racing-a-soft-delete item. `illuminate/log` is now a declared
+production require — these are the package's first log calls.
+Last activity: 2026-08-01 — executed 04-06-PLAN.md. 795 tests, 2905 assertions, 100.0% coverage.
+MSI 87.86% measured over the five classes this plan changed (ConfigurationException,
+ArchiveHubspotObjectJob, DeletePolicy, HubspotObserver, SyncHubspotObjectJob) — a SCOPED figure,
+not comparable to a whole-tree MSI, and stated that way rather than swapped in as if it were.
+Every remaining mutation survivor is a Concat mutator on a log MESSAGE string; the log LEVEL and
+CONTEXT are both asserted, which is what D-21 reduces to.
+
+Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the query scopes,
+`ModelBindings::for()`'s unbound-model exception and the multi-binding fixtures; **04-05**
+(2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
+and the `auto_sync` config block.
 
 Progress: [████████░░] 80%
 

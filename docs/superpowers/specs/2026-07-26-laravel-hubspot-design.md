@@ -284,6 +284,7 @@ the probe sets a default, it does not block the design.
     'on'          => ['created', 'updated'],   // 'deleted' is opt-in
     'queue'       => true,
     'hard_delete' => 'guard',                  // 'guard' | 'warn' | 'allow'
+    'on_restore'  => 'flag',                   // 'flag' | 'recreate'
 ],
 ```
 
@@ -302,10 +303,31 @@ package can never programmatically undo one.
 | Uses `SoftDeletes`, `forceDeleted` | a hard delete | Follows `hard_delete` |
 | No `SoftDeletes` | a hard, irreversible delete | Follows `hard_delete`; default `guard` **skips and logs** |
 
-`restored` cannot be mirrored (no unarchive API). Default: log, keep the stored `hubspot_id`
-intact but flagged stale — **never null it**, so re-linking stays possible. Opt-in
-`on_restore => 'recreate'` creates a fresh object and rewrites the id, which forks CRM history
-and therefore must be explicit.
+**What each `hard_delete` value does** (D-21, resolved 2026-07-30 — the spec previously defined
+only `guard`). It governs the IRREVERSIBLE deletes and only those: a soft delete is locally
+recoverable, so it archives regardless of this value.
+
+| value | action | log level |
+|---|---|---|
+| `guard` (default) | skip — the HubSpot record is left alone | info |
+| `warn` | **skip**, identically to `guard` | **warning** |
+| `allow` | archive in HubSpot | — |
+
+`warn` SKIPS. It is `guard` said loudly, not "archive it, but tell me". A config value whose
+plain-English reading is the opposite of its behaviour is a trap, and because there is no
+unarchive endpoint the failure would stay silent until somebody read the CRM. Only the value
+literally named `allow` can archive.
+
+`restored` cannot be mirrored (no unarchive API), and `on_restore` chooses between the two honest
+responses to that:
+
+| value | action |
+|---|---|
+| `flag` (default) | log, keep the stored `hubspot_id` and mark the link row stale — **never null it**, so re-linking stays possible |
+| `recreate` | drop the link and sync afresh, creating a NEW HubSpot object and leaving the old one archived |
+
+`recreate` forks CRM history — every association, note and timeline entry stays on the archived
+object — and therefore must be explicit and can never be a default.
 
 Required escape hatches:
 
