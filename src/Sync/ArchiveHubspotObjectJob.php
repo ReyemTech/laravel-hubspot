@@ -9,6 +9,8 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
+use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 
 /**
@@ -62,9 +64,39 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      *
      * HubSpot's delete IS an archive and it is one-way; see `ObjectGatewayContract::archive()` for
      * what that means for anything downstream of this line.
+     *
+     * ## A record that is not there is a record that is archived
+     *
+     * A 404 is treated as a COMPLETED archive rather than a failure, which is `04-06-PLAN.md`'s own
+     * rule for a missing link row -- "an archive with nothing to archive is a completed archive" --
+     * applied to the record instead of the row. Two paths reach it, and neither is a defect:
+     *
+     * 1. A PURGE. A soft delete archives from `trashed`, and the later `forceDelete()` archives
+     *    again under `hard_delete => 'allow'`. The observer deliberately does NOT deduplicate those
+     *    (Codex, PR #49): `trashed()` proves a soft delete happened, never that its archive passed
+     *    the gate in force at the time, so skipping the second one would silently orphan a live
+     *    HubSpot record whenever deletes were enabled BETWEEN the two events. The redundant request
+     *    is the price of never doing that, and this is what stops it costing a failed job as well.
+     * 2. Somebody archived the record in the HubSpot UI first.
+     *
+     * Every other status still throws. A 401, a 429 or a 500 says nothing about whether the record
+     * is archived, and swallowing those would turn a retryable failure into a silent no-op.
      */
     public function handle(ObjectGatewayContract $gateway): void
     {
-        $gateway->archive($this->objectType, $this->hubspotId);
+        try {
+            $gateway->archive($this->objectType, $this->hubspotId);
+        } catch (ApiException $exception) {
+            if ($exception->status() !== 404) {
+                throw $exception;
+            }
+
+            Log::info(
+                'A HubSpot record was already gone when this archive ran, so the archive is '
+                .'complete. Either a purge archived it on the way down, or somebody archived it '
+                .'in HubSpot first.',
+                ['object_type' => $this->objectType, 'hubspot_id' => $this->hubspotId],
+            );
+        }
     }
 }

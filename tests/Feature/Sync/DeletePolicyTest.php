@@ -10,6 +10,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
+use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
@@ -128,17 +129,18 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
-     * A PURGE -- soft-delete now, `forceDelete()` later -- archives ONCE in total, not twice.
+     * A PURGE -- soft-delete now, `forceDelete()` later -- archives on BOTH events under `allow`,
+     * and that redundancy is deliberate (Codex, PR #49, twice).
      *
-     * `trashed` already dispatched the archive on the way down, and HubSpot has no unarchive
-     * endpoint for that first archive to have been undone by, so the record `forceDeleted` would
-     * address is one HubSpot has already archived. The second request is at best wasted and at
-     * worst a job that retries and fails (Codex, PR #49).
-     *
-     * Under `allow` on purpose: `guard` would issue nothing anyway, so it could not tell a fixed
-     * implementation from a broken one.
+     * The obvious optimisation is to skip the second archive when the model is already trashed,
+     * and it is unsound: `trashed()` proves a soft delete happened, never that ITS archive passed
+     * the gate in force at the time. A model soft-deleted while `deleted` was absent from
+     * `auto_sync.on` was never archived, so skipping its purge would leave a live HubSpot record
+     * with no local row behind it -- silently, and exactly for the operator who has since set
+     * `allow` to prevent that. One redundant request is the price of never doing that, and
+     * {@see ArchiveHubspotObjectJob} is what stops it also costing a failed job.
      */
-    public function test_purging_an_already_trashed_model_does_not_archive_a_second_time(): void
+    public function test_a_purge_archives_on_both_events_rather_than_risking_a_silent_orphan(): void
     {
         config()->set('hubspot.auto_sync.hard_delete', 'allow');
 
@@ -150,40 +152,72 @@ final class DeletePolicyTest extends SyncTestCase
         Hubspot::assertRequestCount(1);
 
         Hubspot::fake();
-        $log = Log::spy();
         $lead->forceDelete();
-
-        Hubspot::assertRequestCount(0);
-        $log->shouldHaveReceived('info', [
-            Mockery::type('string'),
-            [
-                'model' => SoftDeletingLead::class,
-                'model_id' => $lead->getKey(),
-                'event' => 'forceDeleted',
-                'action' => 'already-archived',
-            ],
-        ]);
+        Hubspot::assertRequestCount(1);
     }
 
     /**
-     * The same purge with `deleted` not opted in issues nothing and says nothing. A skip is only
-     * worth logging once the consumer has asked for deletes to mirror at all.
+     * The case the deduplication would have broken, stated as its own test so nobody re-introduces
+     * it: the soft delete was gated off, so nothing archived, and the purge under `allow` is the
+     * only thing standing between HubSpot and an orphaned live record.
      */
-    public function test_purging_while_deleted_is_not_opted_in_stays_silent(): void
+    public function test_a_purge_still_archives_when_the_earlier_soft_delete_was_gated_off(): void
     {
-        Hubspot::fake();
-        $lead = SoftDeletingLead::create(['email' => 'quietpurge@example.com', 'first_name' => 'Ada']);
-        $lead->delete();
-
         config()->set('hubspot.auto_sync.on', ['created', 'updated']);
 
         Hubspot::fake();
-        $log = Log::spy();
+        $lead = SoftDeletingLead::create(['email' => 'gatedoff@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake();
+        $lead->delete();
+        Hubspot::assertRequestCount(0);
+
+        config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
         $lead->forceDelete();
 
-        Hubspot::assertRequestCount(0);
-        $log->shouldNotHaveReceived('info');
-        $log->shouldNotHaveReceived('warning');
+        Hubspot::assertRequestCount(1);
+    }
+
+    /**
+     * A record HubSpot no longer has is a record that is archived. The redundant archive a purge
+     * issues must not become a failed job for saying so, which is `04-06-PLAN.md`'s own rule for a
+     * missing link row applied to the record instead of the row.
+     */
+    public function test_an_archive_of_an_already_gone_record_is_a_completed_archive(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'gone@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake(['contacts' => Hubspot::response(['message' => 'not found'], 404)]);
+        $log = Log::spy();
+
+        $lead->forceDelete();
+
+        Hubspot::assertRequestCount(1);
+        $log->shouldHaveReceived('info');
+    }
+
+    /**
+     * Every other status still throws. A 429 or a 500 says nothing about whether the record is
+     * archived, and swallowing it would turn a retryable failure into a silent no-op.
+     */
+    public function test_an_archive_rejected_for_any_other_reason_still_throws(): void
+    {
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'ratelimited@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake(['contacts' => Hubspot::response(['message' => 'slow down'], 429)]);
+
+        $this->expectException(ApiException::class);
+
+        $lead->forceDelete();
     }
 
     /**

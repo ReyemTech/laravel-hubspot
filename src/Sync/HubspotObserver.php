@@ -236,28 +236,6 @@ final class HubspotObserver
             return;
         }
 
-        // A PURGE -- forceDelete() on a row that was already soft-deleted -- has already archived,
-        // from trashed(), and archiving the same record twice is at best a wasted request and at
-        // worst a job that retries and fails against a record HubSpot has already archived (Codex,
-        // PR #49). `trashed()` is a sound discriminator HERE and only here: verified against the
-        // framework, `SoftDeletes::performDeleteOnModel()` skips `runSoftDelete()` entirely while
-        // `forceDeleting` is true, so a DIRECT force delete never sets the in-memory delete column
-        // and reads false, while a purge reads true from the soft delete that preceded it.
-        //
-        // This lives after the gate rather than in forceDeleted(), so a purge under a disabled
-        // auto-sync stays silent, and it is keyed on the event rather than applied generally --
-        // `trashed()` is true during `restored` handling too, and there it means the opposite.
-        if ($event === 'forceDeleted' && $this->modelIsTrashed($model)) {
-            Log::info(
-                'A purged model was NOT archived a second time. Its HubSpot record was already '
-                .'archived when the soft delete fired `trashed`, and HubSpot has no unarchive '
-                .'endpoint for the first archive to have been undone by.',
-                $this->logContext($event, $model, 'already-archived'),
-            );
-
-            return;
-        }
-
         $action = DeletePolicy::resolve(
             $this->modelUses($model, SoftDeletes::class),
             $event,
@@ -346,9 +324,20 @@ final class HubspotObserver
     /**
      * `on_restore => 'recreate'`, the opt-in that forks CRM history.
      *
-     * Dropping the link row is the whole mechanism: with no link, {@see SyncHubspotObjectJob} takes
-     * its upsert-on-`id_property` path and writes a NEW row on the way back. The old HubSpot record
-     * stays archived and unreferenced -- that is the fork, and why this can never be a default.
+     * Dispatches {@see RecreateHubspotObjectJob}, which CREATES, rather than the ordinary sync job,
+     * which upserts (Codex, PR #49). The distinction is the whole of what `recreate` means. The sync
+     * job's no-link branch upserts on the model's `id_property` for D-11's reason -- a create whose
+     * response was lost must converge rather than duplicate -- and here duplication is precisely
+     * what was asked for, so converging onto whatever HubSpot matches is the wrong answer.
+     *
+     * What that buys is honesty, not a guarantee. HubSpot retains a unique property value on an
+     * archived record, so a create can still be REJECTED for conflicting with the object this
+     * restore is forking away from. That surfaces as this package's own `ApiException` naming
+     * HubSpot's own reason. What it can no longer do is silently match the archived record and go
+     * on writing to it, which is what an upsert here risked.
+     *
+     * Dropping the link row is the other half: the old HubSpot record stays archived and
+     * unreferenced -- that is the fork, and why this can never be a default.
      *
      * The link is nullable because the absence of one is not a reason to skip: it is the state this
      * action produces anyway. A model restored without ever having linked gets its fresh sync, and
@@ -365,7 +354,7 @@ final class HubspotObserver
 
         $link?->delete();
 
-        $this->dispatchJob(new SyncHubspotObjectJob($model));
+        $this->dispatchJob(new RecreateHubspotObjectJob($model));
     }
 
     /**
@@ -378,23 +367,6 @@ final class HubspotObserver
      * the row is reachable from the model at all; see {@see ArchiveHubspotObjectJob} for what
      * deferring it to the worker would cost.
      */
-    /**
-     * Whether the model is currently soft-deleted.
-     *
-     * No `modelUses()` guard in front of it, and that is an invariant rather than an oversight:
-     * `forceDeleted` is dispatched from exactly one place in the entire framework --
-     * `SoftDeletes::forceDelete()` (`SoftDeletes.php:63`) -- so a model reaching the only call site
-     * of this method applies the trait by construction. A guard would be an unreachable branch, and
-     * this phase has deleted three of those already.
-     */
-    private function modelIsTrashed(Model $model): bool
-    {
-        // trashed() is declared by SoftDeletes, not by Model, and the invariant above is the
-        // precondition PHPStan cannot express. D-04 forbids a baseline, not a justified per-line
-        // ignore.
-        return $model->trashed() === true; // @phpstan-ignore-line method.notFound
-    }
-
     private function linkOf(Model $model): ?HubspotObjectLink
     {
         /** @var HubspotObjectLink|null $link */
@@ -521,7 +493,7 @@ final class HubspotObserver
      * running this inside a transaction gets the call before the commit -- which is inherent to
      * asking for a synchronous sync, not something this method can paper over.
      */
-    private function dispatchJob(ArchiveHubspotObjectJob|SyncHubspotObjectJob $job): void
+    private function dispatchJob(ArchiveHubspotObjectJob|RecreateHubspotObjectJob|SyncHubspotObjectJob $job): void
     {
         if (Config::get('hubspot.auto_sync.queue', true) === false) {
             $this->dispatcher->dispatchSync($job);
