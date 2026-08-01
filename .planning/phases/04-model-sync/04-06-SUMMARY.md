@@ -57,6 +57,8 @@ key-files:
     - database/migrations/sync/0001_01_01_000001_add_archived_at_to_hubspot_object_links_table.php
     - tests/Unit/Sync/DeletePolicyTest.php
     - tests/Feature/Sync/DeletePolicyTest.php
+    - tests/Feature/Sync/RestorePolicyTest.php
+    - tests/Support/Sync/DisabledSoftDeletingLead.php
   modified:
     - src/Sync/HubspotObserver.php
     - src/Sync/SyncHubspotObjectJob.php
@@ -510,6 +512,39 @@ taking retries away from anybody, and `Hubspot::fake()` is unaffected by constru
 the factory singleton with a `forTransport()` one carrying no retry middleware at all, so the
 binding finds nothing to rebuild and uses the mock unchanged.
 
+A seventh round against `36d823baab` found two more (`bbf3c0e`):
+
+13. **The recreate's entry guard is a check-before-act.** A soft delete landing between that check
+    and the `create()` leaves an ACTIVE HubSpot object behind a deleted local model, with no
+    `trashed` handler to clean it up because the observer had already dropped the link that handler
+    looks for.
+14. **The per-model opt-out was dropped when `restored()` was regated.** Finding 9's fix moved the
+    restore off the event list and onto the kill switch, and took `$hubspotAutoSync = false` with
+    it — so a model an operator opted out AFTER it was archived could still have a new CRM object
+    created for it by a restore.
+
+Finding 14 is a one-line rule: `false` means "never auto-sync this model", a statement about the
+model rather than about which events an application mirrors, so it outranks the evidence an archived
+link carries. The read is now factored into `declaredAutoSyncOf()`, which `eventsFor()` and
+`restored()` consult for different parts of the same answer.
+
+## Why finding 13 converges rather than locks
+
+A lock was considered and rejected, and the reason is worth recording because the finding will look
+unfixed to anyone who expects one. Mutual exclusion here would have to be taken by the **delete
+path** as well as by the job — an exclusion one side observes is not exclusion — so every delete of
+every bound model, on every consumer, would acquire a lock to protect one opt-in restore policy.
+
+So the state is made to converge instead. After the create, the model is re-read **without scopes**
+so a trashed row is actually found, and a row that came back deleted has the object archived
+immediately and the link stamped — exactly what the `trashed` handler would have done had it been
+able to see it. The window is not closed; it is made self-correcting, and a delete landing after
+that read produces the same outcome on its own next pass.
+
+`tests/Feature/Sync/DeletePolicyTest.php` outgrew the 500-line ceiling as a result, so the restore
+half moved to `RestorePolicyTest.php`. The two sides gate differently and now say so in their own
+headers.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -533,7 +568,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **89.82% MSI** (459 tested, 52 untested), floor 80. Every
+Scoped run over the changed classes: **88.50% MSI** (477 tested, 62 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
