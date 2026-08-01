@@ -341,9 +341,23 @@ final class HubspotObserver
             return;
         }
 
-        $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id));
-
+        // The evidence is written BEFORE the archive is published, and the order is load-bearing
+        // (Codex, PR #49). With `auto_sync.queue => false`, or on a synchronous queue driver, the
+        // dispatch below performs the HubSpot request inline -- so stamping afterwards leaves a
+        // window in which a concurrent restore reads a null marker, decides nothing was archived,
+        // and leaves the link current. The archive then completes and stamps it: the link is
+        // archived but never flagged, so property pushes skip it while `pendingHubspotSync()`
+        // cannot report it. That is the same silent stranding the restore path was regated to
+        // avoid, arriving through a different door.
+        //
+        // Writing first cannot strand anything. A dispatch that then fails leaves a link marked
+        // archived whose record is live, which is LOUD -- a synchronous failure propagates out of
+        // the model event, and a queued one lands in `failed_jobs` -- and recoverable: a restore
+        // flags it, so `pendingHubspotSync()` reports it. A silent no-op nobody can see is the
+        // worse of the two, which is the trade every ordering decision in this file makes.
         $link->update(['archived_at' => Carbon::now()]);
+
+        $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id));
     }
 
     /**

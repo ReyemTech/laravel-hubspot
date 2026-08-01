@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
@@ -269,6 +271,52 @@ final class DeletePolicyTest extends SyncTestCase
 
         Hubspot::assertRequestCount(0);
         $log->shouldHaveReceived('info');
+    }
+
+    /**
+     * The archive evidence is written BEFORE the request goes out, and this test proves the order
+     * rather than the outcome (Codex, PR #49).
+     *
+     * With `auto_sync.queue => false` the dispatch performs the HubSpot call inline, so stamping
+     * afterwards leaves a window in which a concurrent restore reads a null marker, concludes
+     * nothing was archived, and leaves the link current -- after which the archive completes and
+     * stamps it, leaving a link that is archived but never flagged. Pushes skip it because
+     * `archived_at` is set; `pendingHubspotSync()` cannot report it because it is not stale.
+     *
+     * The gateway is replaced only for the delete, so the record is read at exactly the moment the
+     * archive is in flight -- which is the moment a racing restore would have read it.
+     */
+    public function test_the_archive_marker_is_written_before_the_request_goes_out(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'ordered@example.com', 'first_name' => 'Ada']);
+
+        // A fresh fake, so the request log holds only what the delete itself sends.
+        $fake = Hubspot::fake();
+
+        // How many requests had gone out by the time the marker was written. Read from the query
+        // log rather than from a mocked gateway: this asserts the ORDER of the two real operations,
+        // which is the whole of the finding, and needs no test double to do it.
+        $requestsSentWhenMarked = null;
+
+        DB::listen(function (QueryExecuted $query) use ($fake, &$requestsSentWhenMarked): void {
+            if ($requestsSentWhenMarked === null && str_contains($query->sql, 'archived_at')) {
+                $requestsSentWhenMarked = count($fake->recordedRequests());
+            }
+        });
+
+        $lead->delete();
+
+        self::assertSame(
+            0,
+            $requestsSentWhenMarked,
+            'A restore racing this archive must be able to see that an archive was issued before '
+            .'the request goes out, or it leaves the link archived and unflagged -- invisible to '
+            .'every read path there is.'
+        );
     }
 
     /**
