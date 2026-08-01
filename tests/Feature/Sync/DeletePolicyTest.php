@@ -15,6 +15,7 @@ use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
+use ReyemTech\Hubspot\Sync\RecreateHubspotObjectJob;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
 use ReyemTech\Hubspot\Tests\Support\Sync\SoftDeletingLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
@@ -508,6 +509,35 @@ final class DeletePolicyTest extends SyncTestCase
             HubspotObjectLink::query()->value('id'),
             'The fresh sync must have written the link row the restore had none of.'
         );
+    }
+
+    /**
+     * The recreate job's own race, and it is worse than the sync job's because this one CREATES
+     * (Codex, PR #49). Queued is the default, so a model restored and then deleted again before the
+     * worker runs arrives trashed -- and nothing would clean up what it created, since the observer
+     * dropped the old link before dispatching and the intervening `trashed` found nothing to
+     * archive.
+     *
+     * The job is invoked directly, after the deletion, to place the model in exactly the state the
+     * worker would have found it in.
+     */
+    public function test_a_recreate_job_whose_model_was_deleted_again_creates_nothing(): void
+    {
+        config()->set('hubspot.auto_sync.on_restore', 'recreate');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'reraced@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+        $lead->restore();
+        $lead->delete();
+
+        Hubspot::fake();
+        $log = Log::spy();
+
+        app()->call([new RecreateHubspotObjectJob($lead), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info');
     }
 
     /**

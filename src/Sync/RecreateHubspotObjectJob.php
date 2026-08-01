@@ -9,9 +9,11 @@ use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 
 /**
@@ -62,6 +64,27 @@ final class RecreateHubspotObjectJob implements ShouldQueue
 
     public function handle(ModelBindings $bindings, PropertyMapper $mapper, ObjectGatewayContract $gateway): void
     {
+        // The same race {@see SyncHubspotObjectJob} guards against, and worse here, because this
+        // job CREATES (Codex, PR #49). Queued is the default, so a model restored and then
+        // soft-deleted again before the worker runs arrives trashed -- `SerializesModels` restores
+        // a trashed row rather than discarding the job. Creating then would leave an ACTIVE HubSpot
+        // object behind a deleted local model, and nothing would clean it up: the observer dropped
+        // the old link before dispatching, so the intervening `trashed` found no link to archive.
+        //
+        // Returning is the correct end state, not merely the safe one. The record this restore was
+        // forking away from is still archived, the model is deleted again, and nothing points
+        // anywhere -- which is what a deleted model should look like.
+        if (in_array(SoftDeletes::class, class_uses_recursive($this->model), true)
+            && $this->model->trashed() === true) { // @phpstan-ignore-line method.notFound
+            Log::info(
+                'A HubSpot recreate was skipped because its model was deleted again before the '
+                .'job ran. The archived record it was forking away from stays archived.',
+                ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+            );
+
+            return;
+        }
+
         $binding = $bindings->for(get_class($this->model));
 
         /** @var array<string, string|Closure> $map */
