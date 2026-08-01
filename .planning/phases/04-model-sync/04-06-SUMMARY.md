@@ -19,6 +19,7 @@ provides:
   - "config/hubspot.php auto_sync.hard_delete ('guard') and auto_sync.on_restore ('flag')"
   - "ConfigurationException::unknownHardDeletePolicy(), ::unknownRestorePolicy(), ::unknownDeleteEvent()"
   - "illuminate/log as a declared production require -- the package's first log calls"
+  - "hubspot_object_links.archived_at -- durable evidence that THIS PACKAGE archived a link"
 affects: [04-07 (SyncGate's suppression sits in front of passesGate; withoutSyncing() must suppress
   the delete path too), 04-09 (hubspot:doctor reports the resolved hard_delete and on_restore
   values -- defaults are 'guard' and 'flag')]
@@ -52,6 +53,7 @@ key-files:
     - src/Sync/DeletePolicy.php
     - src/Sync/ArchiveHubspotObjectJob.php
     - src/Sync/RecreateHubspotObjectJob.php
+    - database/migrations/sync/0001_01_01_000001_add_archived_at_to_hubspot_object_links_table.php
     - tests/Unit/Sync/DeletePolicyTest.php
     - tests/Feature/Sync/DeletePolicyTest.php
   modified:
@@ -404,6 +406,48 @@ Pinned by `test_a_purge_archives_on_both_events_rather_than_risking_a_silent_orp
 `test_an_archive_of_an_already_gone_record_is_a_completed_archive` and
 `test_an_archive_rejected_for_any_other_reason_still_throws`.
 
+A fourth review round against `3fc2f1ade0` produced three more, and the last two forced the
+design change this plan had been working around (`e535167`, `b315afe`):
+
+6. **The recreate job had no trashed guard.** Queued is the default, so a model restored and then
+   soft-deleted again before the worker ran arrived trashed — and this job CREATES, so it left an
+   active HubSpot object behind a deleted local model with nothing to clean it up, the observer
+   having dropped the old link before dispatching.
+7. **A restore acted on a delete that was never mirrored** — `flag` marked a live link stale,
+   `recreate` deleted a valid link and created a duplicate object.
+8. **An edit to a soft-deleted model was discarded** as "the delete path owns this record" when,
+   under the SHIPPED DEFAULT, `deleted` is not mirrored and the delete path had never touched it.
+   The edit was lost outright: D-17 suppresses the restore's `updated` event and `restored` is
+   gated off by the same absent option.
+
+## `archived_at`: the fact three findings were missing
+
+Findings 4, 7 and 8 are one defect wearing three hats. **Nothing recorded whether THIS PACKAGE
+archived a link**, so every decision after a delete inferred it from `hubspot.auto_sync.on`'s
+CURRENT value — and that value can change between the delete and whatever asks later. `trashed()`
+proves a soft delete happened; it never proves that soft delete's archive passed the gate.
+
+`archived_at` on `hubspot_object_links` is that fact. It is added by a **second migration**, because
+the first shipped in 0.5.0 and editing a migration somebody has already run changes nothing in their
+database while making the schema depend on when they installed. It is stamped when an archive is
+DISPATCHED, which is the question being asked — has this package already issued an archive for this
+record — rather than when one succeeds.
+
+| decision | before | now |
+|---|---|---|
+| purge archives again? | skipped if `trashed()`, orphaning a live record when the soft delete was gated off | skipped only if `archived_at` is set |
+| restore flags stale? | always | only if `archived_at` is set |
+| restore recreates? | always, dropping a possibly-valid link | only if `archived_at` is set, or no link exists |
+| property push skipped? | whenever the model was trashed | only when the link is archived; a trashed model with no link still creates nothing |
+
+The stale flag consequently clears on the first successful write **after an operator relinks**,
+which is the scenario finding 1 described. While `archived_at` stands there is no successful write
+to be had, and that is the point: the flag cannot come off by accident.
+
+**Consumer impact:** one additional migration. Additive, nullable, and null for every existing row
+— which is the correct reading of a link written before the column existed, since this package has
+no evidence it archived them.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -427,7 +471,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the six changed classes: **84.03% MSI** (200 tested, 38 untested), floor 80. Every
+Scoped run over the changed classes: **87.16% MSI** (258 tested, 38 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
