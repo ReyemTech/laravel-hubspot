@@ -228,6 +228,15 @@ final class HubspotObserver
             return;
         }
 
+        // The per-model opt-out is NOT the event list and is not bypassed with it (Codex, PR #49).
+        // `$hubspotAutoSync = false` is documented as "never auto-sync this model" -- a statement
+        // about the model itself rather than about which events an application mirrors -- so it
+        // outranks the evidence an archived link carries. An operator who opted a model out after
+        // it was archived must not have a new CRM object created for it by a restore.
+        if ($this->declaredAutoSyncOf($model) === false) {
+            return;
+        }
+
         $link = $this->linkOf($model);
 
         // `resolve()` answers exactly `flag-stale` or `recreate` for this event -- the unit table
@@ -637,6 +646,30 @@ final class HubspotObserver
     }
 
     /**
+     * What the model itself declared, in the three shapes `SyncsToHubspot::getHubspotAutoSync()`
+     * answers with: a list, `false`, or null for said-nothing. Read in one place because two
+     * callers now need it and they need DIFFERENT parts -- {@see eventsFor()} wants the list, while
+     * {@see restored()} wants only whether the answer was an outright `false`.
+     *
+     * The call carries a per-line suppression for the reason {@see deletedAtColumnOf()} does: the
+     * method is declared by `SyncsToHubspot`, not by `Model`, and `modelUses()` is a precondition
+     * PHPStan cannot express. D-04 forbids a baseline, not a justified per-line ignore.
+     *
+     * @return array<array-key, mixed>|bool|null
+     */
+    private function declaredAutoSyncOf(Model $model): array|bool|null
+    {
+        if (! $this->modelUses($model, SyncsToHubspot::class)) {
+            return null;
+        }
+
+        /** @var array<array-key, mixed>|bool|null $declared */
+        $declared = $model->getHubspotAutoSync(); // @phpstan-ignore-line method.notFound
+
+        return $declared;
+    }
+
+    /**
      * The event list that applies to this model: its own declaration when it makes one, otherwise
      * the application-wide `hubspot.auto_sync.on`.
      *
@@ -657,10 +690,7 @@ final class HubspotObserver
      */
     private function eventsFor(Model $model): array
     {
-        $declared = $this->modelUses($model, SyncsToHubspot::class)
-            // @phpstan-ignore-next-line method.notFound (see declaredAutoSyncOf's sibling reason)
-            ? $model->getHubspotAutoSync()
-            : null;
+        $declared = $this->declaredAutoSyncOf($model);
 
         if ($declared === false) {
             return [];

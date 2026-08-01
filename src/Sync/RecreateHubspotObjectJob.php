@@ -103,8 +103,7 @@ final class RecreateHubspotObjectJob implements ShouldQueue
         // Returning is the correct end state, not merely the safe one. The record this restore was
         // forking away from is still archived, the model is deleted again, and nothing points
         // anywhere -- which is what a deleted model should look like.
-        if (in_array(SoftDeletes::class, class_uses_recursive($this->model), true)
-            && $this->model->trashed() === true) { // @phpstan-ignore-line method.notFound
+        if ($this->isTrashed($this->model)) {
             Log::info(
                 'A HubSpot recreate was skipped because its model was deleted again before the '
                 .'job ran. The archived record it was forking away from stays archived.',
@@ -172,5 +171,67 @@ final class RecreateHubspotObjectJob implements ShouldQueue
                 'archived_at' => null,
             ],
         );
+
+        $this->archiveIfTheModelWasDeletedMeanwhile($binding->objectType, $object->id, $gateway);
+    }
+
+    /**
+     * Converges on the delete that raced this create, rather than pretending to exclude it (Codex,
+     * PR #49).
+     *
+     * The guard at the top of `handle()` is a check-before-act on an in-memory model, and no
+     * arrangement of checks makes it anything else: a soft delete landing between the last check
+     * and the `create()` above leaves an ACTIVE HubSpot object behind a deleted local model, and no
+     * `trashed` handler will clean it up because the observer had already dropped the link that
+     * handler looks for.
+     *
+     * **A lock was considered and rejected.** Mutual exclusion here would have to be taken by the
+     * DELETE path as well as by this job -- an exclusion one side observes is not exclusion -- so
+     * every delete of every bound model would acquire a lock, on every consumer, to protect one
+     * opt-in restore policy. That is a cost imposed on everybody for a race almost nobody runs.
+     *
+     * So the state is made to converge instead. The model is re-read from the database, without
+     * scopes so a trashed row is actually found, and if it came back deleted the object this job
+     * just created is archived immediately and the link stamped accordingly -- exactly what the
+     * `trashed` handler would have done had it been able to see it. The window is not closed, it is
+     * made self-correcting, and one more delete landing after THIS read simply produces the same
+     * outcome on its own next pass.
+     */
+    private function archiveIfTheModelWasDeletedMeanwhile(
+        string $objectType,
+        string $hubspotId,
+        NonRetryingObjectGatewayContract $gateway,
+    ): void {
+        $fresh = $this->model->newQueryWithoutScopes()->find($this->model->getKey());
+
+        if (! $fresh instanceof Model || ! $this->isTrashed($fresh)) {
+            return;
+        }
+
+        Log::warning(
+            'A model was deleted while its HubSpot recreate was in flight, so the record this job '
+            .'created has been archived immediately. The local row is gone and nothing points at '
+            .'an active CRM object.',
+            ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+        );
+
+        $gateway->archive($objectType, $hubspotId);
+
+        HubspotObjectLink::query()
+            ->where('lookup_hash', HubspotObjectLink::lookupHashFor($this->model->getMorphClass()))
+            ->where('model_id', (string) $this->model->getKey()) // @phpstan-ignore-line cast.string
+            ->where('object_type', $objectType)
+            ->update(['archived_at' => Carbon::now()]);
+    }
+
+    /**
+     * Whether a model applying `SoftDeletes` is currently deleted. Answers false for a model that
+     * does not apply the trait at all, which is the correct reading: it cannot be soft-deleted, and
+     * a hard delete would have removed the row this method was handed.
+     */
+    private function isTrashed(Model $model): bool
+    {
+        return in_array(SoftDeletes::class, class_uses_recursive($model), true)
+            && $model->trashed() === true; // @phpstan-ignore-line method.notFound
     }
 }
