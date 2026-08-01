@@ -357,7 +357,7 @@ Codex raised two P2s against `215e110df4`, both real, both fixed in `ecbeaed`:
    suppresses the restore's own `updated` event. `recreate` now runs past that guard with a
    nullable link; `archive` and `flag-stale` keep it, factored into `applyToLink()`.
 
-A third P2 landed against `55f8306922` and was also real, fixed in `05a6d7f`:
+A third P2 landed against `55f8306922` and was also real, fixed in `f1fd9f1`:
 
 3. **A purge archived twice.** Soft-delete now, `forceDelete()` later: `trashed` dispatched the
    archive on the way down, then `forceDeleted` dispatched the same archive again against a record
