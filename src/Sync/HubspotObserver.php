@@ -258,49 +258,58 @@ final class HubspotObserver
             return;
         }
 
-        // `recreate` is the one action that is meaningful WITHOUT a link, which is why it is
-        // routed past the missing-link guard below rather than through it (Codex, PR #49). Its
-        // instruction is "sync this model afresh", and a restored model that never linked -- one
-        // deleted before its initial create sync ran, say -- needs exactly that. Sending it to the
-        // guard instead left it permanently unsynced under a setting whose entire purpose is to
-        // resync it, and silently: D-17 suppresses the restore's own `updated` event, so nothing
-        // else would ever have dispatched for it.
-        if ($action === 'recreate') {
-            $this->recreate($this->linkOf($model), $model);
+        $link = $this->linkOf($model);
 
-            return;
-        }
-
-        $this->applyToLink($action, $event, $model);
+        match ($action) {
+            'archive' => $this->archive($link, $event, $model),
+            'flag-stale' => $this->flagStale($link, $model),
+            'recreate' => $this->recreate($link, $model),
+        };
     }
 
     /**
-     * The two actions that are meaningless without a link row, and the single guard they share.
+     * Archives, unless this package has already archived this exact link.
      *
-     * Nothing ever synced means there is nothing to archive and nothing to flag. An archive with
-     * nothing to archive is a completed archive: this logs rather than throwing, because a model
-     * deleted before its first sync landed is ordinary, not a failure.
+     * `archived_at` is the evidence, and only evidence will do (Codex, PR #49). An earlier revision
+     * deduplicated a purge on `$model->trashed()`, which proves a soft delete happened and never
+     * that ITS archive passed the gate in force at the time -- so a model soft-deleted while
+     * `deleted` was gated off had its later purge skipped, leaving a live HubSpot record with no
+     * local row behind it. The column answers the question the gate could not.
      *
-     * @param  'archive'|'flag-stale'  $action
+     * It is stamped at DISPATCH rather than on the job's success, which is the question being
+     * asked: whether this package has already issued an archive for this record. A job that then
+     * fails is retried by the queue and visible in `failed_jobs`; re-deriving "was it issued" from
+     * "did it succeed" would need a second round trip this package has no reason to make.
+     *
+     * A null link is not a failure. An archive with nothing to archive is a completed archive, and
+     * a model deleted before its first sync landed is ordinary.
      */
-    private function applyToLink(string $action, string $event, Model $model): void
+    private function archive(?HubspotObjectLink $link, string $event, Model $model): void
     {
-        $link = $this->linkOf($model);
-
         if ($link === null) {
             Log::info(
-                'A deleted model has no HubSpot link row, so there is nothing to archive or flag. '
-                .'It was deleted before its first sync landed.',
-                $this->logContext($event, $model, $action),
+                'A deleted model has no HubSpot link row, so there is nothing to archive. It was '
+                .'deleted before its first sync landed.',
+                $this->logContext($event, $model, 'archive'),
             );
 
             return;
         }
 
-        match ($action) {
-            'archive' => $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id)),
-            'flag-stale' => $this->flagStale($link, $model),
-        };
+        if ($link->archived_at !== null) {
+            Log::info(
+                'A deleted model was NOT archived a second time: this package already archived '
+                .'that HubSpot record, and there is no unarchive endpoint for it to have come '
+                .'back through.',
+                $this->logContext($event, $model, 'already-archived'),
+            );
+
+            return;
+        }
+
+        $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id));
+
+        $link->update(['archived_at' => Carbon::now()]);
     }
 
     /**
@@ -310,8 +319,22 @@ final class HubspotObserver
      * asserting only the flag would pass against an implementation that nulled the id and then
      * flagged it -- which is precisely what SYNC-04 forbids.
      */
-    private function flagStale(HubspotObjectLink $link, Model $model): void
+    private function flagStale(?HubspotObjectLink $link, Model $model): void
     {
+        // Nothing was archived, so nothing is stale (Codex, PR #49). A model soft-deleted while
+        // `deleted` was gated off still points at a LIVE HubSpot record, and flagging that link
+        // would report a perfectly current record as having sync work outstanding until some
+        // unrelated later write cleared it.
+        if ($link === null || $link->archived_at === null) {
+            Log::info(
+                'A restored model was not flagged stale, because this package never archived its '
+                .'HubSpot record. The link, if any, still points at a live record.',
+                $this->logContext('restored', $model, 'flag-stale'),
+            );
+
+            return;
+        }
+
         $link->update(['is_stale' => true, 'stale_at' => Carbon::now()]);
 
         Log::info(
@@ -345,6 +368,22 @@ final class HubspotObserver
      */
     private function recreate(?HubspotObjectLink $link, Model $model): void
     {
+        // There is nothing to fork AWAY from (Codex, PR #49). A link this package never archived
+        // points at a live HubSpot record, and dropping it to create a second object would turn a
+        // correct link into a duplicate -- the most expensive possible answer to a restore that
+        // needed no answer at all. A null link is different and does recreate: nothing was ever
+        // synced, so a fresh create is exactly what `recreate` promises.
+        if ($link !== null && $link->archived_at === null) {
+            Log::info(
+                'A restored model was not recreated, because this package never archived its '
+                .'HubSpot record. Its existing link still points at a live record, and forking it '
+                .'would create a duplicate.',
+                $this->logContext('restored', $model, 'recreate'),
+            );
+
+            return;
+        }
+
         Log::warning(
             'A restored model is being recreated in HubSpot under hubspot.auto_sync.on_restore = '
             .'"recreate". The previously archived record is left archived and its id is dropped, '

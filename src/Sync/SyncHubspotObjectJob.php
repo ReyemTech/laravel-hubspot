@@ -80,11 +80,24 @@ final class SyncHubspotObjectJob implements ShouldQueue
      */
     public function handle(ModelBindings $bindings, PropertyMapper $mapper, ObjectGatewayContract $gateway): void
     {
-        if ($this->modelIsTrashed()) {
+        /** @var HubspotObjectLink|null $link */
+        $link = $this->model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
+
+        if ($this->pushIsOwnedByTheDeletePath($link)) {
             Log::info(
-                'A HubSpot property push was skipped because its model arrived soft-deleted. The '
-                .'delete path owns that record now: it has already archived it, and there is no '
-                .'unarchive endpoint to put it back.',
+                'A HubSpot property push was skipped because the delete path owns that record: '
+                .'this package archived it, and there is no unarchive endpoint to bring it back.',
+                ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+            );
+
+            return;
+        }
+
+        if ($link === null && $this->modelIsTrashed()) {
+            Log::info(
+                'A HubSpot property push was skipped because its model arrived soft-deleted and '
+                .'has never synced. Creating a CRM record for a locally deleted model is not what '
+                .'an unmirrored delete asks for.',
                 ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
             );
 
@@ -99,15 +112,6 @@ final class SyncHubspotObjectJob implements ShouldQueue
         // Eloquent type.
         /** @var array<string, string|Closure> $map */
         $map = $this->model->getHubspotMap(); // @phpstan-ignore-line method.notFound
-
-        // hubspotLink() is the same trait accessor SyncsToHubspot::hubspotLink() exposes,
-        // already scoped to this binding's object type and to the digest of the model's own
-        // morph class (see the trait's own docblock). Called here, not cached anywhere on this
-        // job, for the identical per-call reason every other Sync collaborator resolves fresh:
-        // the model handed to this method is whatever SerializesModels re-fetched (D-09), and
-        // its link row -- if any -- is read against that same freshly-fetched state.
-        /** @var HubspotObjectLink|null $link */
-        $link = $this->model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
 
         if ($link !== null) {
             // An existing link means this record's HubSpot id is already known, so the write
@@ -197,22 +201,42 @@ final class SyncHubspotObjectJob implements ShouldQueue
     }
 
     /**
-     * Whether this job's model came back soft-deleted -- the race `04-CONTEXT.md` left for 04-06's
-     * planner, now closed.
+     * Whether the delete path already owns this record, which is the only reason a push is
+     * unconditionally wrong.
      *
-     * A job queued by an `updated` event and a soft delete that lands before the worker picks it up
-     * is an ordinary interleaving, not a rare one, and `SerializesModels` does NOT discard the job
-     * for it: `newQueryForRestoration()` uses `newQueryWithoutScopes()`, so the trashed model is
-     * found and handed to `handle()` exactly as a live one would be. Without this guard the push
-     * writes properties to a record the delete path has already archived -- at best wasted, at
-     * worst a write to archived CRM state that nothing local points at any more (T-04-25).
+     * **`archived_at`, not `trashed()`** (Codex, PR #49). An earlier revision skipped the push for
+     * any trashed model, on the stated grounds that "the delete path has already archived that
+     * record". Under the SHIPPED DEFAULT that premise is false: `deleted` is absent from
+     * `auto_sync.on`, so a soft delete archives nothing and the HubSpot record stays live and
+     * editable. Editing a soft-deleted model then had its update silently discarded, and restoring
+     * did not recover it -- D-17 suppresses the restore's own `updated` event, and the `restored`
+     * handler is gated off by that same absent option -- so the CRM stayed stale until some
+     * unrelated later write.
+     *
+     * The archived link is the real signal, and it is not limited to trashed models: after a
+     * restore under `on_restore => 'flag'` the model is live again while its record is still
+     * archived, and a push there would write to archived CRM state just as surely.
+     */
+    private function pushIsOwnedByTheDeletePath(?HubspotObjectLink $link): bool
+    {
+        return $link !== null && $link->archived_at !== null;
+    }
+
+    /**
+     * Whether this job's model came back soft-deleted. Consulted only for a model with NO link,
+     * where `archived_at` cannot answer anything: an unsynced, soft-deleted model must not have a
+     * CRM record CREATED for it, whatever the delete policy says, because an unmirrored delete asks
+     * for the record to be left alone rather than brought into existence.
+     *
+     * The race itself is ordinary, not rare, and `SerializesModels` does NOT discard the job for
+     * it: `newQueryForRestoration()` uses `newQueryWithoutScopes()`, so the trashed model is found
+     * and handed to `handle()` exactly as a live one would be. This closes `04-CONTEXT.md`'s
+     * deferred "update job dispatched before a soft delete" item.
      *
      * Trait presence is decided by `class_uses_recursive()`, never by `method_exists()`: a name is
      * not a contract, and a NON-PUBLIC method of that name is reached through `Model::__call()` and
-     * raises `BadMethodCallException` from inside a queue worker. `HubspotObserver::modelUses()`
-     * makes the identical check for the identical reason (Codex, PR #48, twice) -- two lines
-     * duplicated across two classes, rather than a shared helper that would exist only to be shared
-     * and would put the check one indirection away from the per-line suppression it needs.
+     * raises `BadMethodCallException` from inside a queue worker. `HubspotObserver` makes the
+     * identical check for the identical reason (Codex, PR #48, twice).
      */
     private function modelIsTrashed(): bool
     {

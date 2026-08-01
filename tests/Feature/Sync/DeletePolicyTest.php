@@ -130,18 +130,14 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
-     * A PURGE -- soft-delete now, `forceDelete()` later -- archives on BOTH events under `allow`,
-     * and that redundancy is deliberate (Codex, PR #49, twice).
+     * A PURGE -- soft-delete now, `forceDelete()` later -- archives ONCE in total.
      *
-     * The obvious optimisation is to skip the second archive when the model is already trashed,
-     * and it is unsound: `trashed()` proves a soft delete happened, never that ITS archive passed
-     * the gate in force at the time. A model soft-deleted while `deleted` was absent from
-     * `auto_sync.on` was never archived, so skipping its purge would leave a live HubSpot record
-     * with no local row behind it -- silently, and exactly for the operator who has since set
-     * `allow` to prevent that. One redundant request is the price of never doing that, and
-     * {@see ArchiveHubspotObjectJob} is what stops it also costing a failed job.
+     * The deduplication is evidence-based, and only evidence will do. An earlier revision keyed it
+     * on `$model->trashed()`, which proves a soft delete happened and never that ITS archive passed
+     * the gate; the test below is the case that broke. `archived_at` on the link row is the proof,
+     * stamped when this package dispatches the archive (Codex, PR #49).
      */
-    public function test_a_purge_archives_on_both_events_rather_than_risking_a_silent_orphan(): void
+    public function test_a_purge_archives_once_in_total(): void
     {
         config()->set('hubspot.auto_sync.hard_delete', 'allow');
 
@@ -151,16 +147,17 @@ final class DeletePolicyTest extends SyncTestCase
         Hubspot::fake();
         $lead->delete();
         Hubspot::assertRequestCount(1);
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
 
         Hubspot::fake();
         $lead->forceDelete();
-        Hubspot::assertRequestCount(1);
+        Hubspot::assertRequestCount(0);
     }
 
     /**
-     * The case the deduplication would have broken, stated as its own test so nobody re-introduces
-     * it: the soft delete was gated off, so nothing archived, and the purge under `allow` is the
-     * only thing standing between HubSpot and an orphaned live record.
+     * The case that makes the deduplication evidence-based rather than trashed-based, and the one
+     * a `trashed()` check gets wrong: the soft delete was gated off, so nothing archived, and the
+     * purge under `allow` is the only thing standing between HubSpot and an orphaned live record.
      */
     public function test_a_purge_still_archives_when_the_earlier_soft_delete_was_gated_off(): void
     {
@@ -172,6 +169,7 @@ final class DeletePolicyTest extends SyncTestCase
         Hubspot::fake();
         $lead->delete();
         Hubspot::assertRequestCount(0);
+        self::assertNull(HubspotObjectLink::query()->sole()->archived_at);
 
         config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
         config()->set('hubspot.auto_sync.hard_delete', 'allow');
@@ -180,6 +178,117 @@ final class DeletePolicyTest extends SyncTestCase
         $lead->forceDelete();
 
         Hubspot::assertRequestCount(1);
+    }
+
+    /**
+     * A restore after a delete that was never mirrored has nothing to respond to. The link points
+     * at a LIVE HubSpot record, so flagging it stale would report a perfectly current record as
+     * having sync work outstanding until some unrelated later write cleared it (Codex, PR #49).
+     */
+    public function test_a_restore_does_not_flag_a_link_this_package_never_archived(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['created', 'updated']);
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'neverarchived@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
+
+        Hubspot::fake();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(0);
+        self::assertFalse(HubspotObjectLink::query()->sole()->is_stale);
+    }
+
+    /**
+     * The same history under `recreate`, where getting it wrong is far more expensive: dropping a
+     * link that still points at a live record and creating a SECOND object for the same model.
+     */
+    public function test_a_restore_does_not_recreate_over_a_link_this_package_never_archived(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['created', 'updated']);
+        config()->set('hubspot.auto_sync.on_restore', 'recreate');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'stillvalid@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        $linkRowIdBefore = HubspotObjectLink::query()->value('id');
+
+        config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
+
+        Hubspot::fake();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(0);
+        self::assertSame(
+            $linkRowIdBefore,
+            HubspotObjectLink::query()->sole()->id,
+            'The existing link is valid and must survive -- forking it would create a duplicate.'
+        );
+    }
+
+    /**
+     * Under the SHIPPED DEFAULT `deleted` is not mirrored, so a soft delete archives nothing and
+     * the HubSpot record stays live and editable. Editing a soft-deleted model must therefore still
+     * push: discarding it lost the edit outright, since D-17 suppresses the restore's `updated`
+     * event and the `restored` handler is gated off by that same absent option (Codex, PR #49).
+     */
+    public function test_an_edit_to_a_soft_deleted_model_still_pushes_when_the_delete_was_not_mirrored(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['created', 'updated']);
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'edited@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        Hubspot::fake();
+        $lead->update(['first_name' => 'Bea']);
+
+        Hubspot::assertRequestCount(1);
+    }
+
+    /**
+     * A soft-deleted model that has NEVER synced is the one case `archived_at` cannot speak to,
+     * and the answer is still no: an unmirrored delete asks for the HubSpot record to be left
+     * alone, not for one to be brought into existence for a locally deleted row.
+     */
+    public function test_an_edit_to_a_trashed_model_that_never_linked_creates_nothing(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['updated']);
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'neversynced@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        self::assertNull(HubspotObjectLink::query()->value('id'), 'Nothing may have linked yet.');
+
+        Hubspot::fake();
+        $log = Log::spy();
+        $lead->update(['first_name' => 'Bea']);
+
+        Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info');
+    }
+
+    /**
+     * The mirror image, and the reason the guard is keyed on the LINK rather than dropped: once
+     * this package has archived the record, a push writes to archived CRM state.
+     */
+    public function test_an_edit_to_a_model_whose_record_we_archived_does_not_push(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'archivededit@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        Hubspot::fake();
+        $log = Log::spy();
+        $lead->update(['first_name' => 'Bea']);
+
+        Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info');
     }
 
     /**
@@ -453,11 +562,18 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
-     * The stale flag is set by a restore and cleared by the next successful write, and nothing
-     * else clears it -- which `SyncsToHubspot::scopePendingHubspotSync()`'s own docblock already
-     * assumed when 04-04 wrote the stale leg into that scope. Without the clear, a link goes stale
-     * once, on the first restore, and every later successful sync still re-reports the model as
-     * having work outstanding, forever (Codex, PR #49).
+     * The stale flag is set by a restore and cleared by the next successful write, and nothing else
+     * clears it -- which `SyncsToHubspot::scopePendingHubspotSync()`'s own docblock already assumed
+     * when 04-04 wrote the stale leg into that scope. Without the clear, a link goes stale once, on
+     * the first restore, and every later successful sync still re-reports the model as having work
+     * outstanding, forever (Codex, PR #49).
+     *
+     * The relink is what makes a successful write possible at all, and it is the scenario the
+     * finding described: while `archived_at` stands, this package refuses to push to a record it
+     * archived, so an operator pointing the link at a live record -- a new `hubspot_id`, and
+     * `archived_at` cleared because that record was never archived by us -- is precisely the
+     * "operator relinks the record and it syncs successfully" case. The flag has to come off then,
+     * and the guard is what makes sure it cannot come off any other way.
      */
     public function test_a_successful_resync_clears_the_stale_flag_a_restore_set(): void
     {
@@ -466,10 +582,13 @@ final class DeletePolicyTest extends SyncTestCase
         $lead->delete();
         $lead->restore();
 
-        self::assertTrue(
-            HubspotObjectLink::query()->sole()->is_stale,
-            'The restore must have flagged the link stale, or this test proves nothing.'
-        );
+        $link = HubspotObjectLink::query()->sole();
+
+        self::assertTrue($link->is_stale, 'The restore must have flagged the link stale.');
+        self::assertNotNull($link->archived_at, 'The delete must have recorded its own archive.');
+
+        // The operator relinks: a live HubSpot record, so this package's archive no longer applies.
+        $link->update(['hubspot_id' => '424242', 'archived_at' => null]);
 
         Hubspot::fake();
         $lead->update(['first_name' => 'Bea']);
