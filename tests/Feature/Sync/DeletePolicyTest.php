@@ -780,6 +780,40 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
+     * The race that makes a recreate create a DUPLICATE, and it needs no failure to happen: under
+     * the default queued `created` sync a model can be created, soft-deleted and restored before
+     * its initial `SyncHubspotObjectJob` runs. The restore sees no link and queues a recreate; the
+     * older sync then upserts and writes a live link; the recreate creates a second ACTIVE object
+     * and overwrites the link with its id, orphaning the first (Codex, PR #49).
+     *
+     * The link is written directly here because that is exactly what the older sync job would have
+     * done between the observer's decision and this job running.
+     */
+    public function test_a_recreate_job_creates_nothing_once_a_link_exists_again(): void
+    {
+        config()->set('hubspot.auto_sync.on_restore', 'recreate');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'raced-again@example.com', 'first_name' => 'Ada']);
+
+        // Whatever the restore decided, another sync has linked this model since.
+        $linkIdBefore = HubspotObjectLink::query()->sole()->id;
+
+        Hubspot::fake();
+        $log = Log::spy();
+
+        app()->call([new RecreateHubspotObjectJob($lead), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info');
+        self::assertSame(
+            $linkIdBefore,
+            HubspotObjectLink::query()->sole()->id,
+            'The existing link must survive untouched -- overwriting it orphans the record it names.'
+        );
+    }
+
+    /**
      * A recreate is never retried, because a create is not idempotent and this one cannot be made
      * so: a lost response is indistinguishable from a failed request, and repeating it produces two
      * ACTIVE CRM objects for one model (Codex, PR #49). `SyncHubspotObjectJob` upserts and so does

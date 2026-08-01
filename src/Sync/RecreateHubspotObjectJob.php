@@ -114,6 +114,30 @@ final class RecreateHubspotObjectJob implements ShouldQueue
             return;
         }
 
+        // A link exists again, so there is nothing left to recreate (Codex, PR #49). The observer
+        // drops the old link before dispatching, so any link found HERE was written after that --
+        // and the race is ordinary under the default queued `created` sync: a model created,
+        // soft-deleted and restored before its initial SyncHubspotObjectJob runs leaves the restore
+        // seeing no link, while that older job then upserts and writes a live one. Creating on top
+        // of it would leave a second ACTIVE CRM object and overwrite the link with its id, so the
+        // first object is orphaned and nothing local names it.
+        //
+        // Any link at all is enough to stop: whatever wrote it did so after the observer decided,
+        // so the state this job was dispatched for no longer holds and re-deciding belongs to the
+        // observer rather than here.
+        /** @var HubspotObjectLink|null $existing */
+        $existing = $this->model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
+
+        if ($existing !== null) {
+            Log::info(
+                'A HubSpot recreate was skipped because a link already exists again: another sync '
+                .'linked this model after the restore decided there was nothing to point at.',
+                ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+            );
+
+            return;
+        }
+
         $binding = $bindings->for(get_class($this->model));
 
         /** @var array<string, string|Closure> $map */
@@ -139,12 +163,13 @@ final class RecreateHubspotObjectJob implements ShouldQueue
                 'model_type' => $morphClass,
                 'hubspot_id' => $object->id,
                 'synced_at' => Carbon::now(),
-                // The fork is complete, so the link is current rather than stale. Written
-                // explicitly because this job can reach an EXISTING row: the observer drops the old
-                // link before dispatching, but a retry of this job arrives after the first attempt
-                // has already written a fresh one.
+                // The fork is complete, so the link is current rather than stale and this package
+                // has not archived the new record. `updateOrCreate` rather than `create` because
+                // the local write should not fail on a row the guard above raced past, even though
+                // that guard means it is a create in every path a test can reach.
                 'is_stale' => false,
                 'stale_at' => null,
+                'archived_at' => null,
             ],
         );
     }
