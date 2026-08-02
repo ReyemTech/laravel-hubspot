@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -389,7 +390,22 @@ final class HubspotObserver
         // Written first, cleared on failure, the marker means what it says in both directions: an
         // archive was issued, or it was not. `dispatchSync()` surfaces a synchronous failure here,
         // and a queued dispatch fails only if the queue backend itself does.
-        $link->update(['archived_at' => Carbon::now()]);
+        //
+        // Through `DB::afterCommit()`, so the marker and the dispatch share ONE transaction's fate
+        // (Codex, PR #49). The link table lives on the DEFAULT connection whatever connection the
+        // model is on, so a cross-connection model deleted inside its own transaction wrote the
+        // marker outside that transaction while the job was deferred by `afterCommit()`. A rollback
+        // then discarded the job and kept the marker: a live local model whose HubSpot record was
+        // never archived, and which `SyncHubspotObjectJob` would skip forever on the strength of a
+        // marker describing an archive that never happened.
+        //
+        // The queued dispatch below defers through the very same `DatabaseTransactionsManager::
+        // addCallback()`, so registering here first also preserves the ordering finding 18 is
+        // about: outside a transaction the callback runs immediately, and inside one both callbacks
+        // run at commit, in registration order.
+        DB::afterCommit(function () use ($link): void {
+            $link->update(['archived_at' => Carbon::now()]);
+        });
 
         try {
             $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id));
