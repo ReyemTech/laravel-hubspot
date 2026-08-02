@@ -1,17 +1,85 @@
 name: tests
 
 on:
+  # `ready_for_review` is NOT one of the default activity types (those are `opened`, `synchronize`
+  # and `reopened`), and naming it here is load-bearing rather than tidy. The draft gate on the
+  # `tests` job below skips eleven of the twelve matrix cells while a pull request is a draft; a
+  # skipped required check reports `skipped`, which SATISFIES branch protection. So without this
+  # trigger, marking a draft ready fires no run at all, those eleven cells keep the skipped status
+  # they were given as a draft, and the pull request becomes mergeable having never run the support
+  # matrix it promises. Adding the type is what makes the draft optimisation safe instead of a
+  # silent hole in the gate.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
 permissions:
   contents: read
 
+# One run per ref per workflow, for pull requests. A pull request that is pushed to again
+# supersedes its own in-flight run rather than paying for both -- 18 pushes on PR #49 each
+# started a full set of jobs while the previous set was still running.
+#
+# Non-pull-request runs are keyed on the COMMIT, not the ref, and that is not cosmetic
+# (Codex, local review). `cancel-in-progress: false` does not mean "never superseded": GitHub
+# keeps at most ONE pending run per group, so a third push arriving while one run is in
+# progress and another is queued REPLACES the queued one. Keyed on the ref, a burst of merges
+# to main would silently leave release-candidate commits with no CI run at all. Keyed on the
+# sha, every commit gets its own group and can never be superseded by another.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.event_name == 'pull_request'
+    && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     name: PHP ${{ matrix.php }} - Laravel ${{ matrix.laravel }} - ${{ matrix.stability }}
     runs-on: ubuntu-latest
+
+    # While a pull request is a DRAFT, only the reference cell does any work; the other eleven start,
+    # skip every step and report green in seconds. Marking it ready for review, or pushing to it
+    # afterwards, runs all twelve for real.
+    #
+    # ## Why this is computed into `env` and applied per STEP
+    #
+    # The obvious shape -- a job-level `if:` naming `matrix.*` -- does not work, and fails in the
+    # worst available direction (caught by `codex review` locally before this was ever pushed).
+    # `jobs.<job_id>.if` is evaluated BEFORE the matrix is expanded, so the contexts available to it
+    # are `github`, `needs`, `vars` and `inputs` -- and NOT `matrix`. The expression either fails
+    # workflow validation outright or silently skips all twelve cells on every draft. `env` at job
+    # level, by contrast, does have the `matrix` context, and so do step-level conditions.
+    #
+    # All twelve cells are REQUIRED status checks, and the three ways of not doing work are not
+    # interchangeable:
+    #
+    # | mechanism | reports | required check | runner cost |
+    # |---|---|---|---|
+    # | workflow-level `paths:` filter | never reports | blocks the PR for ever | none |
+    # | job-level `if:` false | `skipped` | satisfied | none, but cannot see `matrix` |
+    # | step-level `if:` false | `success` | satisfied | ~20s of startup |
+    #
+    # So the eleven idle cells cost about twenty seconds of runner startup each rather than nothing,
+    # and that is the price of a mechanism that can actually see which cell it is in. Against two to
+    # three minutes of composer install and test run per cell, it is still the overwhelming majority
+    # of the saving.
+    #
+    # The matrix itself is untouched, deliberately: `tests/Ci/MatrixShapeTest.php` expands it to
+    # exactly twelve and asserts the support matrix is rectangular. Shrinking the matrix for drafts
+    # would have made that test parse a shape the repository does not actually promise.
+    #
+    # The reference cell is the LOWEST supported PHP against the NEWEST Laravel on prefer-stable:
+    # the one most likely to catch an ordinary mistake, and the pair a contributor is most likely
+    # to be developing against. It is a smoke test, not the support-matrix guarantee -- that
+    # guarantee is what marking the PR ready re-establishes, before any merge can happen.
+    env:
+      RUN_CELL: >-
+        ${{ (github.event_name != 'pull_request'
+        || github.event.pull_request.draft != true
+        || (matrix.php == '8.3' && matrix.laravel == '13.*' && matrix.stability == 'prefer-stable'))
+        && 'true' || 'false' }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -24,10 +92,15 @@ jobs:
           - laravel: '13.*'
             testbench: '11.*'
     steps:
+      # Every step of this job carries the same condition. See RUN_CELL above: on a draft pull
+      # request only the reference cell does real work, and the other eleven skip each step, report
+      # success and satisfy branch protection in about twenty seconds.
       - name: Checkout code
+        if: env.RUN_CELL == 'true'
         uses: actions/checkout@v7
 
       - name: Setup PHP
+        if: env.RUN_CELL == 'true'
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
@@ -42,6 +115,7 @@ jobs:
       # resolved constraint for this run, inside a *full* update, which needs
       # no lock at all.
       - name: Install dependencies
+        if: env.RUN_CELL == 'true'
         run: >
           bash scripts/ci/composer-retry.sh
           update
@@ -59,6 +133,7 @@ jobs:
           --no-interaction
 
       - name: Run tests with coverage
+        if: env.RUN_CELL == 'true'
         run: vendor/bin/pest --coverage --min=95
 
   composer-validate:

@@ -12,7 +12,12 @@ permissions:
 # in Astro/Starlight, which need a newer Node than resources/js's Vitest floor, so the two
 # workspaces are installed and built in isolation from each other on purpose.
 concurrency:
-  group: docs-${{ github.workflow }}-${{ github.ref }}
+  # Keyed on the COMMIT for non-pull-request runs: GitHub keeps at most one PENDING run per
+  # group, so a ref-keyed group silently drops queued runs during a burst of merges even with
+  # cancel-in-progress false (Codex, local review).
+  group: >-
+    docs-${{ github.workflow }}-${{ github.event_name == 'pull_request'
+    && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -26,23 +31,75 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          # scripts/ci/paths-changed.sh diffs against the base branch, so the default shallow
+          # clone is not enough.
+          fetch-depth: 0
+
+      # This job is a REQUIRED status check, so it must always report -- which is why the skip is a
+      # step-level condition rather than a workflow-level `paths:` filter. A required check that
+      # never reports leaves the pull request stuck on "Expected -- waiting for status to be
+      # reported" for ever, with no run to open and nothing to re-run. The job still runs and still
+      # reports green; it just does not build an Astro site for a pull request that changed no docs.
+      #
+      # No `|| true`: the script already fails OPEN by design, and a suppression here would turn a
+      # hard failure of the script itself into a silent skip of a real gate.
+      - name: Decide whether this pull request touches the docs site
+        id: scope
+        run: |
+          # The mode is named because the two events ask different questions of git: a pull
+          # request wants "what does this branch change since it forked" (three-dot), a push
+          # wants "what did this push do to this ref" (two-dot). See paths-changed.sh.
+          mode=""
+          base=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin \
+              "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+            mode="branch"
+          else
+            # The whole PUSHED RANGE, not just its tip (Codex, local review). A push can carry
+            # several commits, and `HEAD^` would compare against the one before the tip -- so a
+            # push whose earlier commit changes what this gate covers and whose tip does not would
+            # silently skip a required gate. `github.event.before` is the ref's previous tip.
+            #
+            # No special case for the all-zero sha of a first push, nor for a force-push whose old
+            # tip has been garbage collected: paths-changed.sh already fails OPEN on any ref it
+            # cannot resolve, which is the correct answer for both.
+            base="${{ github.event.before }}"
+            mode="push"
+          fi
+
+          if bash scripts/ci/paths-changed.sh "$mode" "$base" \
+            'site/*' 'package.json' 'pnpm-lock.yaml' 'pnpm-workspace.yaml' '.npmrc' \
+            '.github/workflows/docs.yml' 'scripts/ci/paths-changed.sh'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No docs-site file changed, so there is nothing to build."
+          fi
 
       - name: Setup pnpm
+        if: steps.scope.outputs.run == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 11.17.0
 
       - name: Setup Node
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: pnpm
 
       - name: Install dependencies (site only)
+        if: steps.scope.outputs.run == 'true'
         run: pnpm install --frozen-lockfile --filter './site...'
 
       - name: Build docs site
+        if: steps.scope.outputs.run == 'true'
         run: pnpm --filter './site' build
 
       - name: Verify build artifact
+        if: steps.scope.outputs.run == 'true'
         run: test -f site/dist/index.html

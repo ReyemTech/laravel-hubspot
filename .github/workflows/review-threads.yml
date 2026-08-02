@@ -36,6 +36,22 @@ permissions:
   contents: read
   pull-requests: read
 
+# One run per ref per workflow, for pull requests. A pull request that is pushed to again
+# supersedes its own in-flight run rather than paying for both -- 18 pushes on PR #49 each
+# started a full set of jobs while the previous set was still running.
+#
+# Non-pull-request runs are keyed on the COMMIT, not the ref, and that is not cosmetic
+# (Codex, local review). `cancel-in-progress: false` does not mean "never superseded": GitHub
+# keeps at most ONE pending run per group, so a third push arriving while one run is in
+# progress and another is queued REPLACES the queued one. Keyed on the ref, a burst of merges
+# to main would silently leave release-candidate commits with no CI run at all. Keyed on the
+# sha, every commit gets its own group and can never be superseded by another.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.event_name == 'pull_request'
+    && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   review-threads:
     name: Review threads (resolved threads need a human reply)
