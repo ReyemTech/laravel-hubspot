@@ -9,6 +9,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
@@ -54,7 +55,22 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      * `SerializesModels::__unserialize()` restores them via `ReflectionProperty::setValue()` on a
      * freshly-deserialized instance the constructor never ran for.
      */
-    public function __construct(public string $objectType, public string $hubspotId) {}
+    /**
+     * `$linkId` is OPTIONAL, and optional for a compatibility reason rather than a design one: this
+     * class is public API of a released package, and `roave/backward-compatibility-check` counts a
+     * new REQUIRED constructor parameter as a breaking change. A job serialised by an older release
+     * and run by a newer one also arrives without it, which is the same case.
+     *
+     * When it is present, this job can take back the archive marker its own dispatch wrote. See
+     * {@see handle()}.
+     */
+    public function __construct(
+        public string $objectType,
+        public string $hubspotId,
+        public ?int $linkId = null,
+        public ?bool $wasStale = null,
+        public ?string $staleAt = null,
+    ) {}
 
     /**
      * The gateway is a method parameter resolved by the container PER CALL, never a
@@ -84,6 +100,17 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      */
     public function handle(ObjectGatewayContract $gateway): void
     {
+        // Asked AGAIN here, having already been asked at dispatch, and the repetition is the point
+        // (SYNC-05). `withoutSyncing()` is in-process state that does not survive the queue, so a
+        // worker holding a job from before the block knows nothing about it; `HUBSPOT_DISABLED` is
+        // read from the environment on both sides of that boundary. This is the check that stops a
+        // job queued before the switch was flipped.
+        if (! App::make(SyncGate::class)->permits()) {
+            $this->takeBackTheMarker();
+
+            return;
+        }
+
         try {
             $gateway->archive($this->objectType, $this->hubspotId);
         } catch (ApiException $exception) {
@@ -98,5 +125,80 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
                 ['object_type' => $this->objectType, 'hubspot_id' => $this->hubspotId],
             );
         }
+    }
+
+    /**
+     * Said once so the two skip paths cannot drift, and a method rather than a constant because
+     * `pest --mutate` reports a mutation on a constant declaration as UNCOVERED -- a constant is not
+     * an executed line coverage can attribute a test to.
+     */
+    /**
+     * A suppressed archive must WITHDRAW the marker its own dispatch wrote (Codex, PR #56).
+     *
+     * `HubspotObserver::archive()` stamps `archived_at` before dispatching, so that a restore racing
+     * the request can see an archive was issued. If this job then completes without archiving
+     * anything, that stamp is left describing an archive that never happened -- and `archived_at` is
+     * what every read path downstream of a delete trusts. Property pushes skip a link carrying it, a
+     * later delete declines to archive twice on its strength, and `pendingHubspotSync()` cannot
+     * report it. A live HubSpot record would be removed from every sync path there is, permanently
+     * and silently, by the very switch an operator flipped to be careful.
+     *
+     * So the marker goes back, exactly as it does when publication FAILS -- a refused archive and a
+     * failed one leave the same truth behind: this package did not archive that record.
+     *
+     * Logged at WARNING rather than info, unlike the sync job's own suppression. This one is not
+     * merely "work skipped": the local row is deleted while the HubSpot record is still live, and
+     * nothing will revisit it. An operator should see that divergence.
+     *
+     * A job carrying no `$linkId` is one serialised before this parameter existed. It cannot find
+     * its marker without guessing -- `hubspot_id` alone may match more than one link row -- and
+     * guessing wrong would clear a marker belonging to somebody else's legitimate archive. It says
+     * so instead.
+     */
+    private function takeBackTheMarker(): void
+    {
+        $context = [
+            'object_type' => $this->objectType,
+            'hubspot_id' => $this->hubspotId,
+            'link_id' => $this->linkId,
+        ];
+
+        if ($this->linkId === null) {
+            Log::warning(self::strandedMessage(), $context);
+
+            return;
+        }
+
+        // The stale flag goes back too, not just the marker (Codex, PR #56). A restore landing
+        // between this job's dispatch and a disabled worker picking it up sees the marker, concludes
+        // an archive was issued and flags the link. Clearing only `archived_at` would then leave a
+        // live local model pointing at a live HubSpot record while `pendingHubspotSync()` reported it
+        // as stale for ever, with nothing to clear it.
+        //
+        // The pre-marker values travel WITH the job rather than being blanked here, for the reason
+        // the synchronous failure path snapshots them: a flag that was already set for some other
+        // reason had nothing to do with this refusal and must survive it.
+        HubspotObjectLink::query()->whereKey($this->linkId)->update([
+            'archived_at' => null,
+            'is_stale' => (bool) $this->wasStale,
+            'stale_at' => $this->staleAt,
+        ]);
+
+        Log::warning(self::suppressedMessage(), $context);
+    }
+
+    private static function suppressedMessage(): string
+    {
+        return 'A HubSpot archive was skipped on the worker because syncing is switched off, and '
+            .'its archive marker has been taken back. The local row is deleted and the HubSpot '
+            .'record is still live; nothing will revisit it while hubspot.disabled is true.';
+    }
+
+    private static function strandedMessage(): string
+    {
+        return 'A HubSpot archive was skipped on the worker because syncing is switched off, and '
+            .'its archive marker could NOT be taken back: this job was queued by an older release '
+            .'that did not record which link row it came from. Clear archived_at on that link by '
+            .'hand, or the record is treated as archived while it is still live.';
     }
 }

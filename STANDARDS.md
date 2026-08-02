@@ -19,6 +19,40 @@ bar than an application nobody else has to integrate with.
 | PHP | `^8.3` | Pest 4 requires it — see the tooling note below. Raised from `^8.2` on 2026-07-26 |
 | Laravel | 12.x, 13.x | Laravel 11 dropped 2026-07-27 — see the EOL note below |
 | HubSpot SDK | `hubspot/api-client:^14.1` | Matches what `apps/laravel` already runs |
+| Server runtime | PHP-FPM **and Laravel Octane** | Octane is first-party Laravel tooling; a package that quietly breaks on it is broken |
+
+**Octane is supported, and that is a commitment with a test behind it** (owner decision 2026-08-02,
+issue #55). It is ordinary Laravel tooling, so "we do not support it" is not a position this package
+may take by omission — which is what it was doing.
+
+The whole of the exposure is state on container singletons. On PHP-FPM a process handles one request
+and dies, so a singleton cannot leak into anything; Octane keeps the worker alive, so anything mutable
+on a singleton becomes the next request's starting point. A `withoutSyncing()` block left open by a
+fatal, or a test fake installed by one request, would then silently answer for every later request
+that worker served — and a silently dropped sync is the worst failure this package has, because
+nothing downstream reports it.
+
+The rule that follows: **no container singleton this package binds may hold mutable state unless it
+also resets that state at Octane's entry-point boundaries.** `HubspotManager` is the only one that
+does hold any (`$fake` since 02-xx, `$syncingSuppressed` since 04-07), and it exposes `flushState()`
+for exactly this. `ServiceProvider` listens on the three TERMINATION boundaries — `RequestTerminated`,
+`TaskTerminated`, `TickTerminated` — **by class-string**, because `laravel/octane` is not a dependency
+and D-03's vendor allow-list would not admit one.
+
+**Termination, never reception**, and this document is normative so the distinction has to live here
+rather than only in the code. Resetting on `*Received` destroys state deliberately prepared FOR the
+incoming work: an application or a test that installs `Hubspot::fake()` during boot, or immediately
+before sending a request, has it flushed before the request runs — and in the testing environment the
+consequence is silent and total, because `SyncGate` then suppresses every sync on the grounds that no
+fake is bound. Cleaning up after the work is also Octane's own convention, and costs nothing in
+safety: work that hard-crashes before its termination event takes the worker with it, so no surviving
+process inherits anything.
+
+This makes state per-entry-point, which is the granularity Octane schedules at: Swoole and RoadRunner
+hand each worker one request at a time. It does **not** make state coroutine-local, so genuinely
+parallel coroutines inside a single request would still share it. That is not how Laravel handles
+ordinary requests, and closing it would mean a context abstraction every PHP-FPM deployment pays for.
+Stated here rather than left to be discovered.
 
 **Laravel 11 dropped 2026-07-27, reversing the 2026-07-26 "reach over tidiness" sign-off.** Every
 published Laravel `11.x` release is blocked by live security advisories — `PKSA-m5cs-t1y6-qpcs`,

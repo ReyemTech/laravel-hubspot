@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot;
 
+use Closure;
+use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Support\Facades\App;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
+use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
 use ReyemTech\Hubspot\Testing\HubspotFake;
@@ -20,11 +25,90 @@ use RuntimeException;
  * (not `Gateway`) — it must never name a `HubSpot\*` SDK class (R1); a single reference here
  * would break the rule in a layer that is not allowed to carry it.
  */
-final class HubspotManager
+final class HubspotManager implements SyncStateContract
 {
     private ?HubspotFake $fake = null;
 
-    public function __construct(private readonly Container $container) {}
+    /**
+     * Initialised in the CONSTRUCTOR rather than here, and that is a mutation-testing decision
+     * rather than a style one -- the same trade {@see ServiceProvider} makes by
+     * expressing its supported stores as a method instead of a constant.
+     *
+     * A property declaration is not an executed statement, so coverage cannot attribute a test to
+     * it and `pest --mutate` reports flipping this default as UNCOVERED rather than running it. The
+     * default is a real behaviour -- `true` here would suppress every sync in the process from boot
+     * -- so it is written where a test can kill the mutant.
+     */
+    private bool $syncingSuppressed;
+
+    /**
+     * What was bound as the transport before a fake replaced it, so that flushing the fake puts the
+     * application's own choice back rather than the package's config-built default.
+     */
+    private ?HubspotClientFactory $factoryBeforeTheFake = null;
+
+    public function __construct(private readonly Container $container)
+    {
+        $this->syncingSuppressed = false;
+    }
+
+    /**
+     * Returns this singleton to the state a freshly booted process would have.
+     *
+     * Called at construction, and again at every Octane request, task and tick boundary -- see
+     * `ServiceProvider::registerOctaneStateReset()`. On PHP-FPM the process ends with the request
+     * and this never runs a second time; on a long-lived worker it is what stops one request's
+     * state from becoming the next request's starting point.
+     *
+     * BOTH properties are reset, not just the newer one. `$fake` has the same process-wide shape and
+     * has had it since 02-xx; resetting only the property this plan happened to add would have been
+     * arbitrary, and would leave a fake installed by one request answering for the next.
+     */
+    public function flushState(): void
+    {
+        // Whether a fake was installed decides whether the TRANSPORT needs putting back (Codex,
+        // PR #56). An application may bind its own `HubspotClientFactory` at boot through the public
+        // `forTransport()` seam; forgetting it unconditionally would discard that at every Octane
+        // boundary and silently fall back to the config-built client -- a different transport than
+        // the one the application chose, restored on its behalf.
+        $hadFake = $this->fake instanceof HubspotFake;
+
+        $this->fake = null;
+        $this->syncingSuppressed = false;
+
+        if (! $hadFake) {
+            return;
+        }
+
+        // An application that bound its own transport at boot gets THAT back, not the config-built
+        // default. Forgetting the binding is only right when there was nothing there before the fake
+        // (Codex, PR #56) -- otherwise the fake's cleanup silently substitutes a different transport
+        // for the one the application chose.
+        if ($this->factoryBeforeTheFake instanceof HubspotClientFactory) {
+            App::instance(HubspotClientFactory::class, $this->factoryBeforeTheFake);
+            $this->factoryBeforeTheFake = null;
+
+            return;
+        }
+
+        // The TRANSPORT too, not just the flag that describes it (Codex, PR #56).
+        //
+        // `HubspotFake` does not only live on this object: its constructor calls
+        // `$container->instance(HubspotClientFactory::class, ...)`, replacing the container's
+        // singleton with one wired to canned responses. Clearing `$this->fake` alone would leave
+        // that factory bound, so the next request would read `isFaked() === false` while every
+        // gateway it resolved still answered from the previous request's mock. That is worse than
+        // no reset at all: an inconsistent state is harder to diagnose than a stale one, because
+        // the object you would ask says the right thing.
+        //
+        // `forgetInstance()` rather than re-binding a real factory: the ServiceProvider's own
+        // singleton closure is the one place that knows how to build one from config, and the next
+        // resolution runs it. Reached through the `App` facade because
+        // `Illuminate\Contracts\Container\Container` declares `instance()` but not
+        // `forgetInstance()`, and narrowing this class's constructor to the concrete container to
+        // reach it would be a breaking change under `roave/backward-compatibility-check`.
+        App::forgetInstance(HubspotClientFactory::class);
+    }
 
     public function objects(): ObjectGatewayContract
     {
@@ -69,6 +153,17 @@ final class HubspotManager
      */
     public function fake(array $responses = []): HubspotFake
     {
+        // Captured BEFORE the fake replaces it, and only when there is not already a fake in place
+        // -- a second `fake()` call must not record the first fake's factory as the thing to
+        // restore (Codex, PR #56).
+        //
+        // `resolved()` first, because `make()` on an unresolved binding would BUILD the real factory
+        // and that throws when no token is configured, which is the ordinary case in a test suite.
+        // Asking whether one already exists is the only safe way to look.
+        if (! $this->fake instanceof HubspotFake) {
+            $this->factoryBeforeTheFake = $this->transportBoundBeforeTheFake();
+        }
+
         return $this->fake = new HubspotFake($this->container, $responses);
     }
 
@@ -136,6 +231,98 @@ final class HubspotManager
     public function assertAssociated(AssociationPair $pair, ?string $label = null): void
     {
         $this->fakeOrFail()->assertAssociated($pair, $label);
+    }
+
+    /**
+     * Runs the callback with auto-sync suppressed, and returns whatever the callback returns.
+     *
+     * For seeders, imports and backfills: `migrate:fresh --seed` over a bound model would otherwise
+     * fire one API call per row (SYNC-05, ROADMAP SC5).
+     *
+     * It stops the DISPATCH rather than the request. Refusing at the far end would still queue every
+     * job, leaving a backlog that fires the moment the worker drains -- which is the failure a
+     * seeder is protected from, not a tidier version of it.
+     *
+     * The previous value is SAVED and restored, never cleared, and the two are not interchangeable.
+     * Clearing un-suppresses at the inner call's exit while an outer call is still running, so
+     * nesting would silently stop working. `finally` covers the throwing callback, whose exception
+     * propagates unchanged.
+     *
+     * In-process only. A queue worker in another process knows nothing about this block, which is
+     * why `HUBSPOT_DISABLED` exists beside it and why the jobs re-check {@see Sync\SyncGate} in
+     * `handle()`.
+     *
+     * PROCESS-scoped rather than request-scoped, which matters only on a runtime that keeps the
+     * process alive between requests. Octane is supported (STANDARDS 1, issue #55), and
+     * {@see flushState()} is what makes it safe: `ServiceProvider` calls it at every Octane request,
+     * task and tick boundary, so no request ever inherits a block another request left open.
+     * `finally` already covers any single sequential flow, including one that throws.
+     *
+     * What remains open is genuinely parallel COROUTINES inside one request, which would still share
+     * the flag. That is not how Laravel handles ordinary requests -- Swoole and RoadRunner hand each
+     * worker one request at a time -- and closing it would mean a context abstraction every PHP-FPM
+     * deployment pays for. Stated in STANDARDS 1 rather than left to be discovered.
+     *
+     * @template TReturn
+     *
+     * @param  Closure(): TReturn  $callback
+     * @return TReturn
+     */
+    public function withoutSyncing(Closure $callback): mixed
+    {
+        $previous = $this->syncingSuppressed;
+        $this->syncingSuppressed = true;
+
+        try {
+            return $callback();
+        } finally {
+            $this->syncingSuppressed = $previous;
+        }
+    }
+
+    public function syncingSuppressed(): bool
+    {
+        return $this->syncingSuppressed;
+    }
+
+    /**
+     * Whether a fake is installed, asked by {@see Sync\SyncGate} for the testing-environment
+     * default.
+     *
+     * Public rather than reusing {@see fakeOrFail()}, which is private and THROWS: the gate needs a
+     * question, not an assertion, and a gate that raised an exception on the ordinary case of "no
+     * fake here" would break every non-sync test in the suite.
+     */
+    public function isFaked(): bool
+    {
+        return $this->fake instanceof HubspotFake;
+    }
+
+    /**
+     * The transport instance the container already holds, or null if it holds none yet.
+     *
+     * Asked through `resolved()` rather than `bound()`: the ServiceProvider registers a singleton
+     * BINDING for this class, so `bound()` is true from boot and `make()` would then BUILD the real
+     * factory -- which throws when no token is configured, the ordinary case in a test suite. Only
+     * `resolved()` distinguishes "an instance exists" from "one could be made".
+     *
+     * `resolved()` lives on the concrete container and not on
+     * `Illuminate\Contracts\Container\Container`, hence the narrowing. It is deliberately NOT
+     * reached through the `App` facade: `Facade::resolved()` is the facade's OWN static method for
+     * registering resolution callbacks, so `App::resolved($class)` type-errors on a string rather
+     * than proxying to the container. That collision cost a full suite run to find.
+     */
+    private function transportBoundBeforeTheFake(): ?HubspotClientFactory
+    {
+        if (! $this->container instanceof IlluminateContainer
+            || ! $this->container->resolved(HubspotClientFactory::class)) {
+            return null;
+        }
+
+        /** @var HubspotClientFactory $factory */
+        $factory = $this->container->make(HubspotClientFactory::class);
+
+        return $factory;
     }
 
     private function fakeOrFail(): HubspotFake

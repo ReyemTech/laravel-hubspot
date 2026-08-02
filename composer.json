@@ -11,6 +11,7 @@
         "hubspot/api-client": "^14.1",
         "illuminate/bus": "^12.0|^13.0",
         "illuminate/collections": "^12.0|^13.0",
+        "illuminate/container": "^12.0|^13.0",
         "illuminate/console": "^12.0|^13.0",
         "illuminate/contracts": "^12.0|^13.0",
         "illuminate/database": "^12.0|^13.0",

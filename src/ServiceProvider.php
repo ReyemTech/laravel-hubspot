@@ -29,6 +29,8 @@ use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
+use ReyemTech\Hubspot\Sync\SyncGate;
+use ReyemTech\Hubspot\Sync\SyncStateContract;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -137,10 +139,21 @@ final class ServiceProvider extends BaseServiceProvider
 
         $this->app->singleton(HubspotManager::class);
 
+        // Intentionally NOT shared, for the reason the gateways below are not: a gate that captured
+        // the manager or the config at construction would answer from stale state after
+        // Hubspot::fake() swapped the container's bindings underneath it.
+        $this->app->bind(SyncGate::class);
+
+        // The inverted arrow R3 requires: `Sync` declares what it needs, the root namespace
+        // implements it, and this line is the only place the two meet. See `Sync\SyncStateContract`.
+        $this->app->bind(SyncStateContract::class, HubspotManager::class);
+
         // Read fresh from config by every collaborator that resolves it (HubspotObserver,
         // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport
         // Hubspot::fake() would ever need to invalidate, unlike the gateways below.
         $this->app->singleton(ModelBindings::class);
+
+        $this->registerOctaneStateReset();
 
         // Intentionally non-shared: HubspotFake replaces the HubspotClientFactory singleton
         // instance and relies on every subsequent resolution constructing a fresh gateway
@@ -283,5 +296,61 @@ final class ServiceProvider extends BaseServiceProvider
         $files = glob($path.'/*_*.php');
 
         return $files === false ? [] : $files;
+    }
+
+    /**
+     * Makes the package safe on Laravel Octane, which is ordinary Laravel tooling rather than an
+     * exotic deployment (issue #55).
+     *
+     * On PHP-FPM a process handles one request and dies, so a container singleton cannot leak into
+     * anything. Octane keeps the worker -- and therefore the singleton -- alive across many
+     * requests, so `HubspotManager`'s two mutable properties would otherwise carry state forward:
+     * a `withoutSyncing()` block left open by a fatal, or a fake installed by one request, would
+     * silently answer for every later request that worker served. A silently dropped sync is the
+     * worst failure this package has, because nothing downstream reports it.
+     *
+     * ## Listening by CLASS-STRING, with no dependency on Octane
+     *
+     * `laravel/octane` is not a dependency and could not become one: D-03's vendor allow-list admits
+     * `php`, `hubspot/api-client`, `illuminate/*` and `laravel/prompts`, and nothing else. So the
+     * event names are written as strings rather than imported. Laravel's dispatcher keys listeners
+     * on the event's class name, so a string registration fires for the real object when Octane
+     * dispatches it, and costs nothing at all when Octane is absent -- the events are simply never
+     * dispatched.
+     *
+     * All three worker entry points are covered, not just requests: Octane runs tasks and ticks in
+     * the same long-lived process, and a tick that ran with suppression left on would be as silent
+     * as a request that did.
+     *
+     * ## `*Terminated`, never `*Received` (Codex, PR #56)
+     *
+     * An earlier revision listened on `RequestReceived` too, reasoning that a request should START
+     * clean. That destroys state deliberately prepared FOR the incoming request: an application or
+     * a test installing `Hubspot::fake()` during boot, or immediately before sending a request, has
+     * it flushed before the request runs. In the testing environment the consequence is silent and
+     * total -- `SyncGate` then suppresses every sync because no fake is bound, and the assertions
+     * afterwards report that none ever was.
+     *
+     * Cleaning up AFTER the work is both the safe order and Octane's own convention. A request that
+     * hard-crashes before its terminate event takes the worker with it, so no surviving process
+     * inherits anything.
+     *
+     * ## What this does and does not close
+     *
+     * It makes state PER-ENTRY-POINT, which is the granularity Octane actually schedules at: Swoole
+     * and RoadRunner hand each worker one request at a time. It does not make state coroutine-local,
+     * so genuinely parallel coroutines inside a single request would still share it -- that is not
+     * how Laravel handles ordinary requests, and closing it would mean a context abstraction every
+     * PHP-FPM deployment pays for. Stated here rather than discovered later.
+     */
+    private function registerOctaneStateReset(): void
+    {
+        $this->app->make('events')->listen([
+            'Laravel\Octane\Events\RequestTerminated',
+            'Laravel\Octane\Events\TaskTerminated',
+            'Laravel\Octane\Events\TickTerminated',
+        ], function (): void {
+            $this->app->make(HubspotManager::class)->flushState();
+        });
     }
 }

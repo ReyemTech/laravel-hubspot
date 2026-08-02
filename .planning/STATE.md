@@ -61,6 +61,24 @@ one deferred unit put a whole transaction between deciding to archive and archiv
 fits inside that. The callback now rechecks that the soft delete still exists, and a failed archive
 puts back the stale flag its own marker caused rather than clearing archived_at alone.
 
+04-07 (2026-08-02) shipped the two escape hatches and Octane support. `Sync\SyncGate` is consulted
+at dispatch and again on the worker; `withoutSyncing()` restores the SAVED value in a `finally`, which
+is what makes nesting and throwing callbacks correct. R3 forbade `Sync` depending on the root
+namespace, so the arrow was inverted rather than the rule relaxed: `Sync\SyncStateContract` is
+declared by the layer that needs it and implemented by `HubspotManager`.
+
+Octane is now a supported runtime by owner decision (#55): the package's whole exposure was mutable
+state on container singletons, and `HubspotManager::flushState()` is called at the three Octane
+TERMINATION boundaries -- never at `*Received`, which would destroy state prepared for the incoming
+work. STANDARDS 1 carries the commitment and the rule it implies.
+
+The kill switch does NOT reach a running `queue:work` daemon; `queue:restart` is part of flipping it.
+The plan's must_have claimed otherwise and the smaller, true promise is now documented in three
+places. 853 tests, 3056 assertions, 100.0% coverage, CI-scoped MSI 89.30%.
+
+**#57 is the debt this plan leaves:** six of its eight review findings were one defect -- a lifecycle
+owned by two places that drifted. Take it before 04-08.
+
 Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the query scopes,
 `ModelBindings::for()`'s unbound-model exception and the multi-binding fixtures; **04-05**
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override

@@ -8,6 +8,7 @@ use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Bus;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
+use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
@@ -29,6 +30,18 @@ mutates(HubspotObserver::class);
 
 final class HubspotObserverTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // A fake is bound for every test in this class, and that is a statement rather than
+        // boilerplate: from 04-07 the testing environment refuses to sync unless one is, so that a
+        // test which forgot cannot reach a real portal with no credentials. Binding it is how a
+        // test says it intends to exercise the sync path. The alternative -- loosening the gate so
+        // these pass -- would make the suite green by removing the protection it exists to provide.
+        Hubspot::fake();
+    }
+
     public function test_created_dispatches_the_sync_job_for_a_bound_model(): void
     {
         Bus::fake();

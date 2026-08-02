@@ -8,6 +8,7 @@ use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -392,9 +393,10 @@ final class HubspotObserver
         // carrying it, a restore flags one carrying it, a later delete declines to archive twice on
         // its strength -- so a marker describing an archive that never happened does not merely
         // mislead. It removes a live model from every sync path there is, silently.
-        $job = new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id);
-
-        DB::afterCommit(function () use ($link, $job, $event, $model): void {
+        // The link's KEY travels with the job so that a suppressed archive can take this marker
+        // back on the worker (Codex, PR #56). Without it the job completes, the marker survives, and
+        // a live HubSpot record is treated as archived by every read path there is.
+        DB::afterCommit(function () use ($link, $event, $model): void {
             // The deletion this archive answers for must still exist by the time the archive goes
             // out (Codex, PR #49). Deferring to commit is what opens this: a model soft deleted and
             // RESTORED inside one transaction fires `restored` before this callback runs, and that
@@ -430,6 +432,18 @@ final class HubspotObserver
             // the row's true state at this moment: any link reaching here carries no marker, so the
             // restore path cannot have flagged it since it was read.
             $flagBeforeTheMarker = ['is_stale' => $link->is_stale, 'stale_at' => $link->stale_at];
+
+            // Built HERE rather than above the callback, so it can carry the snapshot with it. The
+            // worker may refuse this archive -- the kill switch survives the queue where a
+            // suppression block does not -- and a refused archive has to put the row back exactly as
+            // a FAILED one does. Both paths withdraw the same three columns; only the moment differs.
+            $job = new ArchiveHubspotObjectJob(
+                $link->object_type,
+                $link->hubspot_id,
+                $link->id,
+                $link->is_stale,
+                $link->stale_at?->toIso8601String(),
+            );
 
             $link->update(['archived_at' => Carbon::now()]);
 
@@ -507,6 +521,16 @@ final class HubspotObserver
         };
 
         if ($initiator === null) {
+            return;
+        }
+
+        // The escape hatches gate the DISPATCH and nothing else (Codex, PR #56). An earlier
+        // revision asked this question at the top of `restored()`, which also suppressed
+        // {@see flagStale()} -- and that is local bookkeeping, not an outbound call. Suppressing it
+        // left `archived_at` set with `is_stale` false, so once syncing was re-enabled property
+        // pushes skipped the link while `pendingHubspotSync()` could not report it. The restored
+        // model was stranded by the very switch that was meant to be careful.
+        if (! $this->syncGate()->permits()) {
             return;
         }
 
@@ -662,7 +686,31 @@ final class HubspotObserver
         // class ServiceProvider::boot() had not, in fact, bound.
         $this->bindings->for(get_class($model));
 
-        return true;
+        // Last, deliberately. The three operands above are statements about whether this event
+        // mirrors at all; this one is about whether ANY sync may reach HubSpot right now. Asking it
+        // first would hide an unbound model behind a suppression block -- and an unbound model is a
+        // misconfiguration, not a refusal, which is why the line above throws rather than returning
+        // false.
+        //
+        // Asked at DISPATCH, which is the whole point: refusing at the far end would still queue
+        // every job, leaving a backlog that fires the moment the worker drains. That is the failure
+        // a seeder is protected from, not a tidier version of it.
+        return $this->syncGate()->permits();
+    }
+
+    /**
+     * Resolved from the container at call time rather than injected.
+     *
+     * A third constructor argument would be a BREAKING CHANGE: `roave/backward-compatibility-check`
+     * has been live since 0.4.0 with no advisory opt-out, and counts a new required constructor
+     * parameter as one. The `App` facade resolves against the current container on every call, so a
+     * per-test `Hubspot::fake()` is picked up exactly as an injected instance would be -- the same
+     * argument this class's docblock already makes for reading config through the `Config` facade,
+     * and the idiom {@see SyncsToHubspot} and {@see SyncHubspotObjectJob} already use.
+     */
+    private function syncGate(): SyncGate
+    {
+        return App::make(SyncGate::class);
     }
 
     private function syncOn(string $event, Model $model): void
