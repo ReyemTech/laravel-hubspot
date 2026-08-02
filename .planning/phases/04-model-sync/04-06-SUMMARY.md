@@ -663,6 +663,28 @@ neither. Outside a transaction the callback runs immediately, leaving finding 18
 `tests/Feature/Sync/CrossConnectionDeleteTest.php` pins it on the tenant-connection fixture where
 the split is real, and was verified to fail against the eager marker.
 
+## Findings 24-25: the archive is one deferred unit, not three steps
+
+Deferring only the marker (finding 23) opened two more seams, both found immediately:
+
+24. **An inline archive did not wait for the commit.** With `queue => false` inside a transaction,
+    the marker deferred while `dispatchSync()` issued the irreversible archive at once — a rollback
+    then left a live local model whose HubSpot record was gone, and no marker to show for it.
+25. **The failure cleanup could not see a deferred publication.** Inside a transaction the queued
+    dispatch only registers its own callback, so the surrounding `try` finished before the push ran.
+
+Both close the same way: **marker, archive and cleanup are one `DB::afterCommit()` callback.**
+
+| property | why |
+|---|---|
+| after commit | a rolled-back delete archives nothing; the archive is irreversible |
+| together | the marker cannot outlive the archive, nor the archive the marker |
+| marker first *within* | a restore racing the request still sees an archive was issued (finding 18) |
+| catch inside | publication happens in the callback, not where it was registered |
+
+`queue => false` is honoured, not overridden: it asks for the call to happen in the request, not for
+it to happen before the delete is real.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -686,7 +708,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **85.38% MSI** (257 tested, 44 untested), floor 80. Every
+Scoped run over the changed classes: **85.20% MSI** (259 tested, 45 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
