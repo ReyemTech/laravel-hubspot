@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot;
 
+use Closure;
 use Illuminate\Contracts\Container\Container;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
 use ReyemTech\Hubspot\Testing\HubspotFake;
@@ -20,9 +22,11 @@ use RuntimeException;
  * (not `Gateway`) — it must never name a `HubSpot\*` SDK class (R1); a single reference here
  * would break the rule in a layer that is not allowed to carry it.
  */
-final class HubspotManager
+final class HubspotManager implements SyncStateContract
 {
     private ?HubspotFake $fake = null;
+
+    private bool $syncingSuppressed = false;
 
     public function __construct(private readonly Container $container) {}
 
@@ -136,6 +140,60 @@ final class HubspotManager
     public function assertAssociated(AssociationPair $pair, ?string $label = null): void
     {
         $this->fakeOrFail()->assertAssociated($pair, $label);
+    }
+
+    /**
+     * Runs the callback with auto-sync suppressed, and returns whatever the callback returns.
+     *
+     * For seeders, imports and backfills: `migrate:fresh --seed` over a bound model would otherwise
+     * fire one API call per row (SYNC-05, ROADMAP SC5).
+     *
+     * It stops the DISPATCH rather than the request. Refusing at the far end would still queue every
+     * job, leaving a backlog that fires the moment the worker drains -- which is the failure a
+     * seeder is protected from, not a tidier version of it.
+     *
+     * The previous value is SAVED and restored, never cleared, and the two are not interchangeable.
+     * Clearing un-suppresses at the inner call's exit while an outer call is still running, so
+     * nesting would silently stop working. `finally` covers the throwing callback, whose exception
+     * propagates unchanged.
+     *
+     * In-process only. A queue worker in another process knows nothing about this block, which is
+     * why `HUBSPOT_DISABLED` exists beside it and why the jobs re-check {@see Sync\SyncGate} in
+     * `handle()`.
+     *
+     * @template TReturn
+     *
+     * @param  Closure(): TReturn  $callback
+     * @return TReturn
+     */
+    public function withoutSyncing(Closure $callback): mixed
+    {
+        $previous = $this->syncingSuppressed;
+        $this->syncingSuppressed = true;
+
+        try {
+            return $callback();
+        } finally {
+            $this->syncingSuppressed = $previous;
+        }
+    }
+
+    public function syncingSuppressed(): bool
+    {
+        return $this->syncingSuppressed;
+    }
+
+    /**
+     * Whether a fake is installed, asked by {@see Sync\SyncGate} for the testing-environment
+     * default.
+     *
+     * Public rather than reusing {@see fakeOrFail()}, which is private and THROWS: the gate needs a
+     * question, not an assertion, and a gate that raised an exception on the ordinary case of "no
+     * fake here" would break every non-sync test in the suite.
+     */
+    public function isFaked(): bool
+    {
+        return $this->fake instanceof HubspotFake;
     }
 
     private function fakeOrFail(): HubspotFake

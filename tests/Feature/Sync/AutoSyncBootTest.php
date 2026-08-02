@@ -71,6 +71,13 @@ final class AutoSyncBootTest extends SyncTestCase
     {
         parent::setUp();
 
+        // A fake is bound for every test in this class, and that is a statement rather than
+        // boilerplate: from 04-07 the testing environment refuses to sync unless one is, so that a
+        // test which forgot cannot reach a real portal with no credentials. Binding it is how a
+        // test says it intends to exercise the sync path. The alternative -- loosening the gate so
+        // these pass -- would make the suite green by removing the protection it exists to provide.
+        Hubspot::fake();
+
         Schema::create('soft_deleting_leads', function (Blueprint $table): void {
             $table->id();
             $table->string('email');

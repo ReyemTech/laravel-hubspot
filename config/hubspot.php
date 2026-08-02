@@ -250,6 +250,22 @@ return [
     | wrong in production silently drops every CRM write; getting it wrong in
     | a test or CI environment fires real API calls with no credentials.
     |
+    | Checked at DISPATCH and again on the WORKER, so a job queued before the
+    | switch was flipped does not fire either. Hubspot::withoutSyncing() is the
+    | other half of that pair: it is in-process and cannot reach a worker, which
+    | is why both exist. See Sync\SyncGate.
+    |
+    | The inbound half is not implemented yet. No webhook path exists before
+    | Phase 5; this key is written to govern both from the start rather than
+    | being widened later, so treat the sentence above as the contract and not
+    | as a description of what ships today.
+    |
+    | A plain bool from env(), and it must stay one. A closure default here
+    | works under `artisan serve` and THROWS under `php artisan config:cache`,
+    | which serialises with var_export() -- a production-breaking regression
+    | that is invisible until somebody deploys. The testing-environment default
+    | is runtime logic in Sync\SyncGate for exactly that reason.
+    |
     */
     'disabled' => (bool) env('HUBSPOT_DISABLED', false),
 

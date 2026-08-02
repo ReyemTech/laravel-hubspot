@@ -8,6 +8,7 @@ use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -235,6 +236,14 @@ final class HubspotObserver
         // about the model itself rather than about which events an application mirrors -- so it
         // outranks the evidence an archived link carries.
         if ($this->declaredAutoSyncOf($model) === false) {
+            return;
+        }
+
+        // A restore does not ride the event list, but it does ride the two escape hatches: a
+        // `withoutSyncing()` block covering a bulk restore must not dispatch a sync per row, and the
+        // kill switch means what it says. Placed before the link is read so that a suppressed
+        // restore performs no work at all.
+        if (! $this->syncGate()->permits()) {
             return;
         }
 
@@ -662,7 +671,31 @@ final class HubspotObserver
         // class ServiceProvider::boot() had not, in fact, bound.
         $this->bindings->for(get_class($model));
 
-        return true;
+        // Last, deliberately. The three operands above are statements about whether this event
+        // mirrors at all; this one is about whether ANY sync may reach HubSpot right now. Asking it
+        // first would hide an unbound model behind a suppression block -- and an unbound model is a
+        // misconfiguration, not a refusal, which is why the line above throws rather than returning
+        // false.
+        //
+        // Asked at DISPATCH, which is the whole point: refusing at the far end would still queue
+        // every job, leaving a backlog that fires the moment the worker drains. That is the failure
+        // a seeder is protected from, not a tidier version of it.
+        return $this->syncGate()->permits();
+    }
+
+    /**
+     * Resolved from the container at call time rather than injected.
+     *
+     * A third constructor argument would be a BREAKING CHANGE: `roave/backward-compatibility-check`
+     * has been live since 0.4.0 with no advisory opt-out, and counts a new required constructor
+     * parameter as one. The `App` facade resolves against the current container on every call, so a
+     * per-test `Hubspot::fake()` is picked up exactly as an injected instance would be -- the same
+     * argument this class's docblock already makes for reading config through the `Config` facade,
+     * and the idiom {@see SyncsToHubspot} and {@see SyncHubspotObjectJob} already use.
+     */
+    private function syncGate(): SyncGate
+    {
+        return App::make(SyncGate::class);
     }
 
     private function syncOn(string $event, Model $model): void

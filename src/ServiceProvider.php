@@ -29,6 +29,8 @@ use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
+use ReyemTech\Hubspot\Sync\SyncGate;
+use ReyemTech\Hubspot\Sync\SyncStateContract;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -136,6 +138,15 @@ final class ServiceProvider extends BaseServiceProvider
         $this->app->singleton(AssociationTypeResolver::class, AssociationTypeRegistry::class);
 
         $this->app->singleton(HubspotManager::class);
+
+        // Intentionally NOT shared, for the reason the gateways below are not: a gate that captured
+        // the manager or the config at construction would answer from stale state after
+        // Hubspot::fake() swapped the container's bindings underneath it.
+        $this->app->bind(SyncGate::class);
+
+        // The inverted arrow R3 requires: `Sync` declares what it needs, the root namespace
+        // implements it, and this line is the only place the two meet. See `Sync\SyncStateContract`.
+        $this->app->bind(SyncStateContract::class, HubspotManager::class);
 
         // Read fresh from config by every collaborator that resolves it (HubspotObserver,
         // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport

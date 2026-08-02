@@ -81,6 +81,20 @@ final class SyncHubspotObjectJob implements ShouldQueue
      */
     public function handle(ModelBindings $bindings, PropertyMapper $mapper, ObjectGatewayContract $gateway): void
     {
+        // Asked AGAIN here, having already been asked at dispatch, and the repetition is the point
+        // (SYNC-05). `withoutSyncing()` is in-process state that does not survive the queue, so a
+        // worker holding a job from before the block knows nothing about it; `HUBSPOT_DISABLED` is
+        // read from the environment on both sides of that boundary. This is the check that stops a
+        // job queued before the switch was flipped.
+        if (! App::make(SyncGate::class)->permits()) {
+            Log::info(
+                self::suppressedMessage(),
+                ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+            );
+
+            return;
+        }
+
         /** @var HubspotObjectLink|null $link */
         $link = $this->model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
 
@@ -329,5 +343,16 @@ final class SyncHubspotObjectJob implements ShouldQueue
         // precondition PHPStan cannot express. D-04 forbids a baseline, not a justified per-line
         // ignore.
         return $this->model->trashed() === true; // @phpstan-ignore-line method.notFound
+    }
+
+    /**
+     * Said once so the two skip paths cannot drift, and a method rather than a constant because
+     * `pest --mutate` reports a mutation on a constant declaration as UNCOVERED -- a constant is not
+     * an executed line coverage can attribute a test to.
+     */
+    private static function suppressedMessage(): string
+    {
+        return 'A HubSpot sync was skipped on the worker because syncing is switched off. '
+            .'hubspot.disabled is true, so this job was queued before the switch was flipped.';
     }
 }

@@ -130,18 +130,21 @@ final class SyncSuppressionTest extends SyncTestCase
     {
         Hubspot::fake();
 
-        $caught = null;
+        // The MESSAGE is captured rather than the exception object, and asserted rather than merely
+        // checked for null. PHPStan proves the closure always throws, so `assertNotNull` on the
+        // caught exception is tautological and it says so; comparing the message covers both halves
+        // of the claim -- that it reached the caller, and that it arrived unchanged.
+        $message = null;
 
         try {
             Hubspot::withoutSyncing(function (): void {
                 throw new RuntimeException('the callback exploded');
             });
         } catch (RuntimeException $exception) {
-            $caught = $exception;
+            $message = $exception->getMessage();
         }
 
-        self::assertNotNull($caught, 'The exception must reach the caller.');
-        self::assertSame('the callback exploded', $caught->getMessage());
+        self::assertSame('the callback exploded', $message);
 
         SyncedLead::create(['email' => 'afterthrow@example.com', 'first_name' => 'Ada']);
 
@@ -200,6 +203,38 @@ final class SyncSuppressionTest extends SyncTestCase
             HubspotObjectLink::query()->sole()->archived_at,
             'A suppressed delete must leave no archive marker: the marker is what every later read '
             .'path trusts, and it would report an archive that never happened.'
+        );
+    }
+
+    /**
+     * A restore is gated separately from every other event -- it answers for an archive that already
+     * happened, so it deliberately ignores `auto_sync.on` -- but it does ride both escape hatches.
+     * A bulk restore inside `withoutSyncing()` must not flag a link per row.
+     *
+     * The stale flag is what makes the difference observable: an unsuppressed restore of an archived
+     * link sets it, and issues no request either way.
+     */
+    public function test_without_syncing_suppresses_the_response_a_restore_would_have_made(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'suppressrestore@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        self::assertNotNull(
+            HubspotObjectLink::query()->sole()->archived_at,
+            'The delete must actually have archived, or the restore has nothing to respond to.'
+        );
+
+        Hubspot::fake();
+
+        Hubspot::withoutSyncing(function () use ($lead): void {
+            $lead->restore();
+        });
+
+        Hubspot::assertRequestCount(0);
+        self::assertFalse(
+            HubspotObjectLink::query()->sole()->is_stale,
+            'A suppressed restore must leave the link exactly as it found it.'
         );
     }
 

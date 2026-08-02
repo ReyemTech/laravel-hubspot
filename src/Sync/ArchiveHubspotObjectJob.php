@@ -9,6 +9,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
@@ -84,6 +85,20 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      */
     public function handle(ObjectGatewayContract $gateway): void
     {
+        // Asked AGAIN here, having already been asked at dispatch, and the repetition is the point
+        // (SYNC-05). `withoutSyncing()` is in-process state that does not survive the queue, so a
+        // worker holding a job from before the block knows nothing about it; `HUBSPOT_DISABLED` is
+        // read from the environment on both sides of that boundary. This is the check that stops a
+        // job queued before the switch was flipped.
+        if (! App::make(SyncGate::class)->permits()) {
+            Log::info(
+                self::suppressedMessage(),
+                ['object_type' => $this->objectType, 'hubspot_id' => $this->hubspotId],
+            );
+
+            return;
+        }
+
         try {
             $gateway->archive($this->objectType, $this->hubspotId);
         } catch (ApiException $exception) {
@@ -98,5 +113,16 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
                 ['object_type' => $this->objectType, 'hubspot_id' => $this->hubspotId],
             );
         }
+    }
+
+    /**
+     * Said once so the two skip paths cannot drift, and a method rather than a constant because
+     * `pest --mutate` reports a mutation on a constant declaration as UNCOVERED -- a constant is not
+     * an executed line coverage can attribute a test to.
+     */
+    private static function suppressedMessage(): string
+    {
+        return 'A HubSpot sync was skipped on the worker because syncing is switched off. '
+            .'hubspot.disabled is true, so this job was queued before the switch was flipped.';
     }
 }
