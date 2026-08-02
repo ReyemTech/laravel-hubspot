@@ -26,9 +26,9 @@ use RuntimeException;
  *
  * SYNC-05, and ROADMAP SC5's last clause.
  *
- * `Hubspot::withoutSyncing()` is IN-PROCESS and stops a dispatch. `HUBSPOT_DISABLED` is
- * ENVIRONMENT-level and survives any process boundary, including a queue worker that started before
- * the switch was flipped. Neither substitutes for the other:
+ * `Hubspot::withoutSyncing()` is IN-PROCESS and stops a dispatch. `HUBSPOT_DISABLED` is read from
+ * CONFIG on both sides of the queue boundary, so it also stops the job when a worker picks it up.
+ * Neither substitutes for the other:
  *
  * | hatch | stops | cannot stop |
  * |---|---|---|
@@ -36,7 +36,11 @@ use RuntimeException;
  * | `HUBSPOT_DISABLED` | the dispatch AND the worker | a daemon that has not restarted |
  *
  * Without the first, `migrate:fresh --seed` fires thousands of API calls. Without the second,
- * nothing protects a worker that is already running.
+ * nothing stops the jobs already sitting on the queue.
+ *
+ * The second is smaller than it first looks, and the tests say so rather than overselling it:
+ * `Config::get()` re-reads the running PROCESS's repository, so a `queue:work` daemon keeps what it
+ * booted with and `queue:restart` is part of flipping the switch.
  *
  * ## Suppression has to stop the DISPATCH, not the request
  *
