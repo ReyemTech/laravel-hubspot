@@ -9,6 +9,7 @@ use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\HubspotManager;
@@ -287,9 +288,16 @@ final class SyncSuppressionTest extends SyncTestCase
         Hubspot::fake();
         config()->set('hubspot.disabled', true);
 
+        $log = Log::spy();
+
         app()->call([$job, 'handle']);
 
         Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info', [
+            'A HubSpot sync was skipped on the worker because syncing is switched off. '
+            .'hubspot.disabled is true, so this job was queued before the switch was flipped.',
+            ['model' => SyncedLead::class, 'model_id' => $lead->getKey()],
+        ]);
     }
 
     /**
@@ -307,6 +315,98 @@ final class SyncSuppressionTest extends SyncTestCase
         app()->call([$job, 'handle']);
 
         Hubspot::assertRequestCount(0);
+    }
+
+    /**
+     * A suppressed archive takes its OWN marker back, and this is the failure mode that makes the
+     * worker-side gate dangerous rather than merely cautious (Codex, PR #56).
+     *
+     * `HubspotObserver::archive()` stamps `archived_at` BEFORE dispatching, so a restore racing the
+     * request can see an archive was issued. If the job then completes without archiving anything,
+     * that stamp describes an archive that never happened -- and every read path downstream of a
+     * delete trusts it. Property pushes skip the link, later deletes decline to archive twice on its
+     * strength, and `pendingHubspotSync()` cannot report it. The kill switch an operator flipped to
+     * be careful would permanently and silently strand a live HubSpot record.
+     *
+     * A refused archive and a failed one leave the same truth behind, so they leave the same row
+     * behind.
+     */
+    public function test_a_suppressed_archive_takes_its_own_marker_back(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'strandedmarker@example.com', 'first_name' => 'Ada']);
+
+        // Deleted through the query builder, so the observer does not run its own archive path: this
+        // test is about the job the observer ALREADY dispatched, picked up by a worker later.
+        SoftDeletingLead::query()->whereKey($lead->id)->update(['deleted_at' => now()]);
+
+        $link = HubspotObjectLink::query()->sole();
+        $job = new ArchiveHubspotObjectJob('contacts', $link->hubspot_id, $link->id);
+
+        // The state the observer leaves behind between stamping and the worker picking the job up.
+        $link->update(['archived_at' => now()]);
+
+        Hubspot::fake();
+        $log = Log::spy();
+        config()->set('hubspot.disabled', true);
+
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(0);
+        // Verbatim, which is this repository's answer to Concat mutators on a long message: the
+        // wording is the operator's only notice that local and remote state have diverged.
+        $log->shouldHaveReceived('warning', [
+            'A HubSpot archive was skipped on the worker because syncing is switched off, and its '
+            .'archive marker has been taken back. The local row is deleted and the HubSpot record '
+            .'is still live; nothing will revisit it while hubspot.disabled is true.',
+            ['object_type' => 'contacts', 'hubspot_id' => $link->hubspot_id, 'link_id' => $link->id],
+        ]);
+        self::assertNull(
+            HubspotObjectLink::query()->sole()->archived_at,
+            'A marker left behind by a suppressed archive removes a LIVE record from every sync '
+            .'path there is, and nothing later revisits it.'
+        );
+        self::assertSame(
+            0,
+            SoftDeletingLead::query()->count(),
+            'The local row stays deleted -- the divergence is real, which is why it is logged at '
+            .'warning rather than info.'
+        );
+    }
+
+    /**
+     * A job serialised by an older release carries no link id and cannot find its marker without
+     * guessing -- `hubspot_id` alone may match more than one link row, and clearing the wrong one
+     * would destroy somebody else's legitimate archive. It says so loudly instead of guessing.
+     */
+    public function test_an_archive_job_without_a_link_id_says_so_rather_than_guessing(): void
+    {
+        Hubspot::fake();
+        SoftDeletingLead::create(['email' => 'oldrelease@example.com', 'first_name' => 'Ada']);
+
+        $link = HubspotObjectLink::query()->sole();
+        $link->update(['archived_at' => now()]);
+
+        $job = new ArchiveHubspotObjectJob('contacts', $link->hubspot_id);
+
+        Hubspot::fake();
+        $log = Log::spy();
+        config()->set('hubspot.disabled', true);
+
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(0);
+        self::assertNotNull(
+            HubspotObjectLink::query()->sole()->archived_at,
+            'Without the link id the marker is left alone -- clearing a guess would be worse.'
+        );
+        $log->shouldHaveReceived('warning', [
+            'A HubSpot archive was skipped on the worker because syncing is switched off, and its '
+            .'archive marker could NOT be taken back: this job was queued by an older release that '
+            .'did not record which link row it came from. Clear archived_at on that link by hand, '
+            .'or the record is treated as archived while it is still live.',
+            ['object_type' => 'contacts', 'hubspot_id' => $link->hubspot_id, 'link_id' => null],
+        ]);
     }
 
     /**

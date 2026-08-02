@@ -401,7 +401,10 @@ final class HubspotObserver
         // carrying it, a restore flags one carrying it, a later delete declines to archive twice on
         // its strength -- so a marker describing an archive that never happened does not merely
         // mislead. It removes a live model from every sync path there is, silently.
-        $job = new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id);
+        // The link's KEY travels with the job so that a suppressed archive can take this marker
+        // back on the worker (Codex, PR #56). Without it the job completes, the marker survives, and
+        // a live HubSpot record is treated as archived by every read path there is.
+        $job = new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id, $link->id);
 
         DB::afterCommit(function () use ($link, $job, $event, $model): void {
             // The deletion this archive answers for must still exist by the time the archive goes
