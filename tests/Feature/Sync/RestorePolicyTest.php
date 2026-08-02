@@ -272,6 +272,7 @@ final class RestorePolicyTest extends SyncTestCase
         $lead->delete();
 
         Hubspot::fake();
+        $log = Log::spy();
         $lead->restore();
 
         Hubspot::assertRequestCount(1);
@@ -279,19 +280,79 @@ final class RestorePolicyTest extends SyncTestCase
             HubspotObjectLink::query()->value('id'),
             'The restore must leave the model synced, not merely un-deleted.'
         );
+        $log->shouldHaveReceived('info', [
+            'A restored model has no HubSpot link, so the first sync this application configures is '
+            .'being dispatched now. That sync was skipped because the model was already deleted by '
+            .'the time its job ran.',
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'restored',
+                // Named, because `created` and `updated` are separately sufficient here and the
+                // context is the only place the difference between them is observable.
+                'action' => 'created',
+            ],
+        ]);
     }
 
     /**
-     * ...unless this application does not sync on `created` at all, in which case an absent link is
-     * absent for an innocent reason and manufacturing one would create a CRM record nobody asked
-     * for.
+     * `updated` initiates a first link exactly as `created` does, and gating the repair on `created`
+     * alone lost it (Codex, PR #49).
+     *
+     * An application syncing on `['updated', 'deleted']` dispatches the same upserting job on an
+     * ordinary edit, and that job CREATES the CRM record when no link exists yet. Delete the model
+     * before the job runs and it skips for being trashed; the restore then refused to replay it
+     * solely because `created` was absent from a list that had never been the question. The
+     * configured update was permanently lost, with auto-sync fully enabled.
      */
-    public function test_a_restore_creates_nothing_when_the_application_does_not_sync_on_created(): void
+    public function test_a_restore_dispatches_the_first_sync_an_update_would_have_made(): void
     {
         config()->set('hubspot.auto_sync.on', ['updated', 'deleted']);
 
         Hubspot::fake();
         $lead = SoftDeletingLead::create(['email' => 'nevercreated@example.com', 'first_name' => 'Ada']);
+        $lead->delete();
+
+        self::assertNull(HubspotObjectLink::query()->value('id'), 'The create must not have linked.');
+
+        Hubspot::fake();
+        $log = Log::spy();
+        $lead->restore();
+
+        Hubspot::assertRequestCount(1);
+        self::assertNotNull(
+            HubspotObjectLink::query()->value('id'),
+            'The restore must leave the model synced, not merely un-deleted.'
+        );
+        $log->shouldHaveReceived('info', [
+            'A restored model has no HubSpot link, so the first sync this application configures is '
+            .'being dispatched now. That sync was skipped because the model was already deleted by '
+            .'the time its job ran.',
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'restored',
+                // The event that WOULD have linked it, which is what makes the repair legitimate.
+                // Asserted because it is the only thing separating this case from the `created` one.
+                'action' => 'updated',
+            ],
+        ]);
+    }
+
+    /**
+     * ...unless no configured event would ever have linked this model, in which case an absent link
+     * is absent for an innocent reason and manufacturing one would create a CRM record nobody asked
+     * for.
+     *
+     * `['deleted']` alone is the only shape that means that now: neither of the two events able to
+     * bring a CRM record into existence is enabled.
+     */
+    public function test_a_restore_creates_nothing_when_no_configured_event_would_have_linked_it(): void
+    {
+        config()->set('hubspot.auto_sync.on', ['deleted']);
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'neverlinked@example.com', 'first_name' => 'Ada']);
         $lead->delete();
 
         self::assertNull(HubspotObjectLink::query()->value('id'));
