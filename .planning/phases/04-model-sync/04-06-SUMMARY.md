@@ -55,6 +55,7 @@ key-files:
     - tests/Unit/Sync/DeletePolicyTest.php
     - tests/Feature/Sync/DeletePolicyTest.php
     - tests/Feature/Sync/RestorePolicyTest.php
+    - tests/Feature/Sync/CrossConnectionDeleteTest.php
     - tests/Support/Sync/DisabledSoftDeletingLead.php
   modified:
     - src/Sync/HubspotObserver.php
@@ -643,6 +644,25 @@ three delete events are not interchangeable, and any code that picks one on the 
 to justify which. Replaying "a delete happened" is not enough — *which* delete happened decides
 whether `hard_delete` is consulted.
 
+## Finding 23: the marker and the archive now share one transaction
+
+The link table lives on the DEFAULT connection whatever connection a bound model is on — a shipped,
+deliberate split. So a cross-connection model deleted inside its OWN transaction wrote `archived_at`
+outside that transaction while the queued archive was deferred by `afterCommit()`. A rollback
+discarded the job and kept the marker.
+
+`archived_at` is what every read path downstream of a delete trusts — pushes skip a link carrying
+it, a restore flags one carrying it, a later delete declines to archive twice on its strength — so a
+marker describing an archive that never happened silently and permanently removes a live model from
+every sync path there is.
+
+It is now registered through `DB::afterCommit()`, which defers through the very same
+`DatabaseTransactionsManager::addCallback()` the queued dispatch uses, so a rollback takes both or
+neither. Outside a transaction the callback runs immediately, leaving finding 18's ordering intact.
+
+`tests/Feature/Sync/CrossConnectionDeleteTest.php` pins it on the tenant-connection fixture where
+the split is real, and was verified to fail against the eager marker.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -666,7 +686,7 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **85.33% MSI** (256 tested, 44 untested), floor 80. Every
+Scoped run over the changed classes: **85.38% MSI** (257 tested, 44 untested), floor 80. Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
