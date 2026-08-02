@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Schema;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\HubspotManager;
 use ReyemTech\Hubspot\Sync\ArchiveHubspotObjectJob;
+use ReyemTech\Hubspot\Sync\ArchiveMarker;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectJob;
@@ -371,11 +372,10 @@ final class SyncSuppressionTest extends SyncTestCase
         // test is about the job the observer ALREADY dispatched, picked up by a worker later.
         SoftDeletingLead::query()->whereKey($lead->id)->update(['deleted_at' => now()]);
 
+        // Exactly what the observer does between deciding to archive and the worker picking the job
+        // up: stamp() writes the marker and hands back the thing that can take it back.
         $link = HubspotObjectLink::query()->sole();
-        $job = new ArchiveHubspotObjectJob('contacts', $link->hubspot_id, $link->id);
-
-        // The state the observer leaves behind between stamping and the worker picking the job up.
-        $link->update(['archived_at' => now()]);
+        $job = new ArchiveHubspotObjectJob('contacts', $link->hubspot_id, ArchiveMarker::stamp($link));
 
         Hubspot::fake();
         $log = Log::spy();
@@ -421,11 +421,11 @@ final class SyncSuppressionTest extends SyncTestCase
 
         $link = HubspotObjectLink::query()->sole();
 
-        // The job carries the state as it was BEFORE the marker: not stale.
-        $job = new ArchiveHubspotObjectJob('contacts', $link->hubspot_id, $link->id, false, null);
+        // The marker snapshots the row as it is NOW -- not stale -- and writes `archived_at`.
+        $job = new ArchiveHubspotObjectJob('contacts', $link->hubspot_id, ArchiveMarker::stamp($link));
 
         // ...and then a restore raced it, on the strength of the marker the dispatch wrote.
-        $link->update(['archived_at' => now(), 'is_stale' => true, 'stale_at' => now()]);
+        $link->update(['is_stale' => true, 'stale_at' => now()]);
 
         Hubspot::fake();
         config()->set('hubspot.disabled', true);
@@ -443,11 +443,12 @@ final class SyncSuppressionTest extends SyncTestCase
     }
 
     /**
-     * A job serialised by an older release carries no link id and cannot find its marker without
-     * guessing -- `hubspot_id` alone may match more than one link row, and clearing the wrong one
-     * would destroy somebody else's legitimate archive. It says so loudly instead of guessing.
+     * A job serialised by a release that predates {@see ArchiveMarker} carries none, and cannot
+     * find its marker without guessing -- `hubspot_id` alone may match more than one link row, and
+     * clearing the wrong one would destroy somebody else's legitimate archive. It says so loudly
+     * instead of guessing.
      */
-    public function test_an_archive_job_without_a_link_id_says_so_rather_than_guessing(): void
+    public function test_an_archive_job_without_a_marker_says_so_rather_than_guessing(): void
     {
         Hubspot::fake();
         SoftDeletingLead::create(['email' => 'oldrelease@example.com', 'first_name' => 'Ada']);
@@ -466,7 +467,7 @@ final class SyncSuppressionTest extends SyncTestCase
         Hubspot::assertRequestCount(0);
         self::assertNotNull(
             HubspotObjectLink::query()->sole()->archived_at,
-            'Without the link id the marker is left alone -- clearing a guess would be worse.'
+            'Without a marker the row is left alone -- clearing a guess would be worse.'
         );
         $log->shouldHaveReceived('warning', [
             'A HubSpot archive was skipped on the worker because syncing is switched off, and its '

@@ -9,6 +9,7 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Promise\Create as PromiseCreate;
 use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Container\Container;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -42,6 +43,12 @@ final class HubspotFake
     private array $history = [];
 
     /**
+     * The container's transport instance as it was before this fake replaced it, so that
+     * {@see restoreTransport()} can put back the application's own choice rather than a default.
+     */
+    private ?HubspotClientFactory $factoryBeforeThisFake = null;
+
+    /**
      * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by route key —
      *                                                                            see {@see self::routeKeyOf()}
      */
@@ -61,11 +68,51 @@ final class HubspotFake
 
         $client = new Client(['handler' => $stack]);
 
+        // What was there BEFORE, so that this object can put it back (issue #57). The thing that
+        // installs is the thing that reverses: an earlier arrangement had `HubspotManager` capture
+        // this separately and undo it from state it kept in parallel, and the two drifted -- a fake
+        // installed over an application's own boot-time transport was cleaned up by REPLACING that
+        // transport with the config-built default.
+        //
+        // `resolved()` and not `bound()`: `ServiceProvider` registers a singleton BINDING for this
+        // class, so `bound()` is true from boot and `make()` would then BUILD the real factory --
+        // which throws when no token is configured, the ordinary case in a test suite. Only
+        // `resolved()` separates "an instance exists" from "one could be made".
+        if ($container instanceof IlluminateContainer && $container->resolved(HubspotClientFactory::class)) {
+            /** @var HubspotClientFactory $existing */
+            $existing = $container->make(HubspotClientFactory::class);
+            $this->factoryBeforeThisFake = $existing;
+        }
+
         // Replace the container's singleton HubspotClientFactory instance with one wired to
         // this mock transport. ObjectGatewayContract is bound non-shared (see
         // ServiceProvider::register()), so every subsequent Hubspot::objects() resolution
         // constructs a fresh gateway against this factory — no stale cached instance to forget.
         $container->instance(HubspotClientFactory::class, HubspotClientFactory::forTransport($client));
+    }
+
+    /**
+     * Undoes what this fake did to the container's transport binding.
+     *
+     * An application that bound its own `HubspotClientFactory` at boot -- a proxy, a recording
+     * transport, a shared Guzzle handler -- gets THAT back. Only when there was nothing there before
+     * is the binding forgotten, so that `ServiceProvider`'s own singleton closure builds a fresh one
+     * on the next resolution.
+     *
+     * Called at Octane's termination boundaries, where a worker outlives the request that installed
+     * the fake. On PHP-FPM the process ends with the request and nothing needs undoing.
+     */
+    public function restoreTransport(): void
+    {
+        if ($this->factoryBeforeThisFake instanceof HubspotClientFactory) {
+            $this->container->instance(HubspotClientFactory::class, $this->factoryBeforeThisFake);
+
+            return;
+        }
+
+        if ($this->container instanceof IlluminateContainer) {
+            $this->container->forgetInstance(HubspotClientFactory::class);
+        }
     }
 
     /**

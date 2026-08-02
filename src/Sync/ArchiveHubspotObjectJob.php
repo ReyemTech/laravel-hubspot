@@ -56,20 +56,18 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      * freshly-deserialized instance the constructor never ran for.
      */
     /**
-     * `$linkId` is OPTIONAL, and optional for a compatibility reason rather than a design one: this
-     * class is public API of a released package, and `roave/backward-compatibility-check` counts a
-     * new REQUIRED constructor parameter as a breaking change. A job serialised by an older release
-     * and run by a newer one also arrives without it, which is the same case.
+     * `$marker` is what lets this job take back the `archived_at` its own dispatch wrote, and it is
+     * ONE parameter rather than the three columns it describes -- see {@see ArchiveMarker}, which
+     * owns that lifecycle for both this class and {@see HubspotObserver}. A fourth column added
+     * there needs no change here at all, which is the point.
      *
-     * When it is present, this job can take back the archive marker its own dispatch wrote. See
-     * {@see handle()}.
+     * Optional, because a job serialised by a release that predates it arrives without one. It says
+     * so rather than guessing; see {@see takeBackTheMarker()}.
      */
     public function __construct(
         public string $objectType,
         public string $hubspotId,
-        public ?int $linkId = null,
-        public ?bool $wasStale = null,
-        public ?string $staleAt = null,
+        public ?ArchiveMarker $marker = null,
     ) {}
 
     /**
@@ -160,29 +158,16 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
         $context = [
             'object_type' => $this->objectType,
             'hubspot_id' => $this->hubspotId,
-            'link_id' => $this->linkId,
+            'link_id' => $this->marker?->linkId,
         ];
 
-        if ($this->linkId === null) {
+        if (! $this->marker instanceof ArchiveMarker) {
             Log::warning(self::strandedMessage(), $context);
 
             return;
         }
 
-        // The stale flag goes back too, not just the marker (Codex, PR #56). A restore landing
-        // between this job's dispatch and a disabled worker picking it up sees the marker, concludes
-        // an archive was issued and flags the link. Clearing only `archived_at` would then leave a
-        // live local model pointing at a live HubSpot record while `pendingHubspotSync()` reported it
-        // as stale for ever, with nothing to clear it.
-        //
-        // The pre-marker values travel WITH the job rather than being blanked here, for the reason
-        // the synchronous failure path snapshots them: a flag that was already set for some other
-        // reason had nothing to do with this refusal and must survive it.
-        HubspotObjectLink::query()->whereKey($this->linkId)->update([
-            'archived_at' => null,
-            'is_stale' => (bool) $this->wasStale,
-            'stale_at' => $this->staleAt,
-        ]);
+        $this->marker->withdraw();
 
         Log::warning(self::suppressedMessage(), $context);
     }
