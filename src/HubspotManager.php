@@ -174,6 +174,18 @@ final class HubspotManager implements SyncStateContract
      * why `HUBSPOT_DISABLED` exists beside it and why the jobs re-check {@see Sync\SyncGate} in
      * `handle()`.
      *
+     * PROCESS-scoped, not request-scoped, and that distinction only becomes visible on a runtime
+     * where two requests share one container CONCURRENTLY -- Octane with coroutines, not Octane as
+     * ordinarily deployed, where each Swoole or RoadRunner worker handles one request at a time.
+     * There, one request's block would suppress another's events. `finally` makes the flag correct
+     * for any single sequential flow, including a request that throws, so nothing leaks between
+     * consecutive requests on the same worker.
+     *
+     * Making it coroutine-local is a package-wide decision rather than this method's to take: the
+     * `$fake` property above has the same shape and has since 02-xx, and the fix would mean either
+     * an Octane event listener or a context abstraction that a plain PHP-FPM deployment pays for.
+     * Tracked rather than silently accepted.
+     *
      * @template TReturn
      *
      * @param  Closure(): TReturn  $callback
