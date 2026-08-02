@@ -9,6 +9,7 @@ use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\HubspotManager;
+use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
 use ReyemTech\Hubspot\Testing\HubspotFake;
@@ -51,6 +52,17 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * to writing the stated direction only, because the same probe measured that HubSpot maintains the
  * opposite direction itself.
  *
+ * `withoutSyncing()` suppresses auto-sync for the duration of a callback -- seeders, imports and
+ * backfills -- and returns whatever the callback returns. It stops the DISPATCH, so nothing is left
+ * on the queue to fire later, and it restores the previous state even when the callback throws:
+ *
+ * ```php
+ * Hubspot::withoutSyncing(fn () => Lead::factory()->count(10_000)->create());
+ * ```
+ *
+ * It is in-process only. `HUBSPOT_DISABLED` is the other half of that pair, and reaches a queue
+ * worker where this cannot -- see {@see SyncGate}.
+ *
  * @method static ObjectGatewayContract objects()
  * @method static AssociationGatewayContract associations()
  * @method static AssociationDefinitionsGatewayContract associationDefinitions()
@@ -61,6 +73,12 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * @method static void assertSynced(string $objectType, array<string, mixed> $properties = [])
  * @method static void assertNothingSynced()
  * @method static void assertAssociated(\ReyemTech\Hubspot\Gateway\AssociationPair $pair, ?string $label = null)
+ * @method static bool syncingSuppressed()
+ * @method static bool isFaked()
+ *
+ * @template TWithoutSyncing
+ *
+ * @method static TWithoutSyncing withoutSyncing(\Closure(): TWithoutSyncing $callback)
  *
  * @see HubspotManager
  */
