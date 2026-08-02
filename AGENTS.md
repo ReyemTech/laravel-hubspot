@@ -1,7 +1,7 @@
-# CLAUDE.md — reyemtech/laravel-hubspot
+# AGENTS.md — reyemtech/laravel-hubspot
 
-Instructions for Claude agents working in this repository. `AGENTS.md` is the same contract
-written for non-Claude agents; **the two must not diverge.** If you change a rule here, change it
+Instructions for any coding agent working in this repository. `CLAUDE.md` is the same contract
+written for one particular tool; **the two must not diverge.** If you change a rule here, change it
 there in the same commit.
 
 Read in this order: `BRIEF.md` → `docs/superpowers/specs/2026-07-26-laravel-hubspot-design.md` →

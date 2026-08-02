@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 4
 current_phase_name: Model Sync
 status: executing
-stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-07-31T11:11:41.139Z"
-last_activity: 2026-07-31
-last_activity_desc: "executed 04-03-PLAN.md. PropertyMapper::map() resolves all three $hubspotMap forms (literal, dot-notation, closure) through one data_get()/Closure dispatch with null-omits-the-key as the shared filter step; mapForUpdate() adds the $hubspotUpdateMap selection rule; SyncHubspotObjectJob::handle() updates an already-linked model by its stored hubspot_id instead of re-upserting it. Fixed R3 (architecture rule) to admit the bare global function data_get, which pest-plugin-arch's existing 'Illuminate' allow-list entry never covered since the function is declared with no namespace statement. 709 tests, 2724 assertions, 100.0% coverage. MSI 95.24% measured over the three classes this plan changed (PropertyMapper, SyncHubspotObjectJob, SyncsToHubspot) — a SCOPED figure, not comparable to a whole-tree MSI, and stated that way rather than swapped in as if it were. $hubspotUpdateMap IS honoured end to end: SyncsToHubspot::getHubspotUpdateMap() reads it and the job passes it. This was first deferred to 04-04 and Codex rejected the deferral as a P1 on PR #42 -- passing [] made mapForUpdate() fall back to the FULL create map, so a consumer's update map was silently ignored and every update overwrote the properties it existed to protect. WINDOWS.md entry 4 is fixed."
+stopped_at: "Completed 04-07-PLAN.md; issue #57 refactor merged (PR #65). 04-08 and 04-09 remain."
+last_updated: "2026-08-02T22:16:55.000Z"
+last_activity: 2026-08-02
+last_activity_desc: "closed issue #57, the debt 04-07 left, on PR #65 (merge dd3089c). Sync\\ArchiveMarker now owns the archived_at lifecycle for BOTH callers -- stamp() snapshots the row before writing the marker, withdraw() restores all three columns -- and Testing\\HubspotFake owns installing AND reversing its own transport swap, so HubspotManager no longer keeps a parallel copy of what to put back. ArchiveHubspotObjectJob's constructor is one nullable ?ArchiveMarker instead of three loose scalars. No behaviour change was intended; three defects were found anyway and all three are the same shape -- a lifecycle split across two owners keeps the WEAKER half when it is consolidated. (1) A second Hubspot::fake() recorded the outgoing fake's mock as its predecessor, so flushing restored a fake while isFaked() reported false; a replacing fake now inherits its predecessor's original. (2) $marker was a PROMOTED constructor parameter, whose default belongs to the parameter and not the property -- so SerializesModels::__unserialize(), which skips absent payload keys on an instance built by newInstanceWithoutConstructor(), left it UNINITIALIZED rather than null and the stranded-marker warning threw Error before it could log. It is a declared property with its own default now. (3) main's synchronous withdrawal used newQueryWithoutScopes() and its queued withdrawal did not; consolidating took the scoped one, so an application global scope such as whereNull('archived_at') -- which the marker itself makes the row stop matching -- silently updated zero rows. Both callers write unscoped now. 856 tests, 3067 assertions, 100.0% coverage, scoped MSI 92.34%. Three Codex rounds, all threads replied to before resolving. Issue #66 filed for the rest of that seam (the archived-link guard and updateOrCreate read links scoped too), which is PRE-EXISTING on main and fails loudly against the unique index rather than corrupting."
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 20
+  completed_plans: 23
 ---
 
 # Project State
@@ -31,9 +31,12 @@ request lifecycle.
 
 ## Current Position
 
-Phase: 4 of 9 (Model Sync) — 5 of 9 plans executed and merged (04-01…04-05); 04-06 in flight
-Plan: 6 of 9 in current phase, on branch `feat/04-06-delete-policy` (not yet merged). 0.5.0 is
-released and tagged.
+Phase: 4 of 9 (Model Sync) — 7 of 9 plans executed and merged (04-01…04-07). 04-08 and 04-09 are
+the only work left in the phase, and they are the phase's one PARALLEL pair (wave 7, disjoint
+files), so they need not run back to back.
+Plan: none in flight. Working tree is on `main`; nothing is unmerged. 0.5.0 is released and tagged,
+and `ArchiveHubspotObjectJob` is in NO tag — 0.6.0 (release-please PR #52, owner-gated) would be
+the first release to contain it.
 Status: **Deletes cannot surprise anyone.** `Sync\DeletePolicy` resolves design spec §7's table
 from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
 Three DISTINCT events drive it — `trashed`, `forceDeleted`, and plain `deleted` gated on the
@@ -76,15 +79,27 @@ The kill switch does NOT reach a running `queue:work` daemon; `queue:restart` is
 The plan's must_have claimed otherwise and the smaller, true promise is now documented in three
 places. 853 tests, 3056 assertions, 100.0% coverage, CI-scoped MSI 89.30%.
 
-**#57 is the debt this plan leaves:** six of its eight review findings were one defect -- a lifecycle
-owned by two places that drifted. Take it before 04-08.
+~~**#57 is the debt this plan leaves:** six of its eight review findings were one defect -- a lifecycle
+owned by two places that drifted. Take it before 04-08.~~ **DONE 2026-08-02, PR #65 (merge `dd3089c`).**
+`Sync\ArchiveMarker` owns the `archived_at` lifecycle for both callers and `Testing\HubspotFake` owns
+its own transport swap in both directions.
+
+**The lesson from #65 is worth more than the refactor.** Consolidating a lifecycle that lived in two
+places silently kept the WEAKER of the two behaviours, three separate times -- most sharply where
+`main`'s synchronous withdrawal wrote through `newQueryWithoutScopes()` and its queued withdrawal did
+not, so the merged owner inherited the scoped query and an application's own global scope could strand
+a marker. One owner only pays if the surviving behaviour is the stronger one, and nothing in the test
+suite asserted that until Codex asked. Expect the same question of any future consolidation.
+
+**Open owner decision, still outstanding:** does `archived_at` record INTENT or CONFIRMATION? It blocks
+the redelivery-window fix recorded on #57; the options are written up there.
 
 Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the query scopes,
 `ModelBindings::for()`'s unbound-model exception and the multi-binding fixtures; **04-05**
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
 and the `auto_sync` config block.
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -216,7 +231,21 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ### Pending Todos
 
-None yet.
+- **#66 — an application global scope on `HubspotObjectLink` makes the sync path mis-read archived
+  links.** Filed 2026-08-02 from PR #65's sweep. Pre-existing on `main`, not caused by #65. The
+  archived-link guard (`SyncHubspotObjectJob:317`) reads the link through a `morphOne`, so a scope
+  like `whereNull('archived_at')` resolves an archived link to `null` and the guard declines to
+  skip — reopening PR #49's "`archived_at`, not `trashed()`" defect by another route. The
+  `updateOrCreate` at :197 then fails LOUDLY against the unique index on
+  `(lookup_hash, model_id, object_type)` rather than writing a duplicate, which is why it is a
+  follow-up and not a blocker. Worth deciding as one rule (the package reads its own link table
+  unscoped) rather than patching call sites.
+- **#50 and #51 — 04-06 follow-ups, both on the delete path.** Check whether #65 subsumed part of
+  #51 before planning either.
+- **Owner decision: `archived_at` — intent or confirmation?** Blocks the redelivery-window fix.
+  Options on #57.
+- **#52 — release-please 0.6.0.** Owner-gated. First release that would contain
+  `ArchiveHubspotObjectJob`.
 
 ### Blockers/Concerns
 
@@ -296,8 +325,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-31T11:11:41.103Z
-Stopped at: Completed 04-04-PLAN.md
+Last session: 2026-08-02T22:16:55.000Z
+Stopped at: Completed 04-07-PLAN.md; issue #57 closed by PR #65 (merge `dd3089c`). 04-08 and 04-09 remain.
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**
