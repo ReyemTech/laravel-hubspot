@@ -2,7 +2,23 @@
 #
 # Answers one question: did this change touch any path matching the given patterns?
 #
-#   paths-changed.sh <base-ref> <pattern> [<pattern>...]
+#   paths-changed.sh <mode> <ref> <pattern> [<pattern>...]
+#
+# `mode` is `branch` or `push`, and naming it is mandatory because the two ask genuinely different
+# questions of git (Codex, local review):
+#
+#   branch <base>   ->  git diff <base>...HEAD   (three dot: merge-base to tip)
+#                       "what does this branch change relative to where it forked?" -- the right
+#                       question for a pull request, because it ignores whatever main did meanwhile.
+#   push <before>   ->  git diff <before>..HEAD  (two dot: old tip to new tip)
+#                       "what did this push do to this ref?" -- the right question for a push event.
+#                       Three-dot is WRONG here: if the previous tip is no longer an ancestor of the
+#                       new one, as after a divergent force-push, three-dot silently drops every file
+#                       that only ever changed on the old side. A force-push that REVERTS a docs
+#                       change would then skip the docs gate.
+#
+# main forbids force pushes today, so the second case is currently unreachable there. It is still
+# spelled correctly rather than left to a repository setting that is not this script's to rely on.
 #
 # Exit 0 -> yes, at least one matching path changed (or the answer could not be trusted; see
 #           "failing open" below).
@@ -91,10 +107,10 @@ if [ "${1:-}" = "--self-test" ]; then
 
     (cd "$work" && echo changed > other/unrelated.txt && git add -A && git commit -qm unrelated)
     require_ref base-ref \
-        && check "an unrelated change does not match" 1 base-ref 'site/*'
+        && check "an unrelated change does not match" 1 branch base-ref 'site/*'
 
     (cd "$work" && echo more >> site/page.ts && git add -A && git commit -qm sitechange)
-    check "a change inside the gated directory matches" 0 base-ref 'site/*'
+    check "a change inside the gated directory matches" 0 branch base-ref 'site/*'
 
     # The rename case, which is why `--no-renames` is on the diff. With detection enabled git
     # reports the DESTINATION only, so the source directory losing a file would look like no
@@ -107,16 +123,33 @@ if [ "${1:-}" = "--self-test" ]; then
     # nothing. Verified the other way now: strip the flag and this check fails.
     (cd "$work" && git branch pre-rename && git mv site/pure.ts other/pure.ts && git commit -qm renameout)
     require_ref pre-rename \
-        && check "a file renamed OUT of the gated directory still matches" 0 pre-rename 'site/*'
+        && check "a file renamed OUT of the gated directory still matches" 0 branch pre-rename 'site/*'
 
     # `*` in a `case` pattern spans slashes, which is what makes one pattern cover a whole tree.
     # The file has to actually CHANGE to appear in the diff: the first draft of this check asserted
     # against a file that only ever existed in the base commit, and the self-test caught it.
     (cd "$work" && echo deeper >> nested/deep/file.ts && git add -A && git commit -qm nested)
-    check "a nested path matches the directory glob" 0 base-ref 'nested/*'
+    check "a nested path matches the directory glob" 0 branch base-ref 'nested/*'
 
-    check "an unreachable base ref fails OPEN" 0 no-such-ref 'site/*'
-    check "a missing pattern argument fails OPEN" 0 base-ref
+    # The divergent case: a ref that is reachable but is NOT an ancestor of HEAD, which is what a
+    # force-push leaves behind. `branch` mode compares merge-base to tip and cannot see the file
+    # that only ever existed on the abandoned side; `push` mode compares tip to tip and can.
+    (
+        cd "$work" || exit 1
+        git checkout -q --detach base-ref
+        mkdir -p site
+        echo forced > site/only-on-the-old-side.ts
+        git add -A && git commit -qm oldside
+        git branch old-tip
+        git checkout -q -
+    )
+    require_ref old-tip \
+        && check "a divergent old tip is invisible to branch mode" 1 branch old-tip 'site/only-on-the-old-side.ts' \
+        && check "a divergent old tip IS seen by push mode" 0 push old-tip 'site/only-on-the-old-side.ts'
+
+    check "an unreachable base ref fails OPEN" 0 branch no-such-ref 'site/*'
+    check "an unknown mode fails OPEN" 0 sideways base-ref 'site/*'
+    check "a missing pattern argument fails OPEN" 0 branch base-ref
 
     if [ "$failures" -ne 0 ]; then
         echo "paths-changed --self-test: $failures failure(s)."
@@ -127,13 +160,23 @@ if [ "${1:-}" = "--self-test" ]; then
     exit 0
 fi
 
-if [ "$#" -lt 2 ]; then
-    echo "usage: paths-changed.sh <base-ref> <pattern> [<pattern>...]" >&2
+if [ "$#" -lt 3 ]; then
+    echo "usage: paths-changed.sh <branch|push> <ref> <pattern> [<pattern>...]" >&2
     exit 0
 fi
 
-base="$1"
-shift
+mode="$1"
+base="$2"
+shift 2
+
+case "$mode" in
+    branch) range_separator="..." ;;
+    push)   range_separator=".." ;;
+    *)
+        echo "paths-changed: unknown mode \"$mode\", assuming the paths changed." >&2
+        exit 0
+        ;;
+esac
 
 if [ -z "$base" ]; then
     echo "paths-changed: no base ref given, assuming the paths changed." >&2
@@ -150,7 +193,7 @@ fi
 # `archive/page.ts` prints just `archive/page.ts` -- which matches no `site/*` pattern, and the docs
 # gate would report green having never rebuilt a site that just lost a file. Disabling detection
 # lists the deletion and the addition separately, so the source path is seen too.
-if ! changed="$(git diff --name-only --no-renames "$base"...HEAD 2>/dev/null)"; then
+if ! changed="$(git diff --name-only --no-renames "${base}${range_separator}HEAD" 2>/dev/null)"; then
     echo "paths-changed: git diff against \"$base\" failed, assuming the paths changed." >&2
     exit 0
 fi

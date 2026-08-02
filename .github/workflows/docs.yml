@@ -47,11 +47,16 @@ jobs:
       - name: Decide whether this pull request touches the docs site
         id: scope
         run: |
+          # The mode is named because the two events ask different questions of git: a pull
+          # request wants "what does this branch change since it forked" (three-dot), a push
+          # wants "what did this push do to this ref" (two-dot). See paths-changed.sh.
+          mode=""
           base=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git fetch --no-tags origin \
               "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
             base="origin/${{ github.base_ref }}"
+            mode="branch"
           else
             # The whole PUSHED RANGE, not just its tip (Codex, local review). A push can carry
             # several commits, and `HEAD^` would compare against the one before the tip -- so a
@@ -62,9 +67,10 @@ jobs:
             # tip has been garbage collected: paths-changed.sh already fails OPEN on any ref it
             # cannot resolve, which is the correct answer for both.
             base="${{ github.event.before }}"
+            mode="push"
           fi
 
-          if bash scripts/ci/paths-changed.sh "$base" \
+          if bash scripts/ci/paths-changed.sh "$mode" "$base" \
             'site/*' 'package.json' 'pnpm-lock.yaml' 'pnpm-workspace.yaml' \
             '.github/workflows/docs.yml' 'scripts/ci/paths-changed.sh'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
