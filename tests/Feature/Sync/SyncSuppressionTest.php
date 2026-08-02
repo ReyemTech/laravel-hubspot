@@ -33,7 +33,7 @@ use RuntimeException;
  * | hatch | stops | cannot stop |
  * |---|---|---|
  * | `withoutSyncing()` | the dispatch, in this process | a job already on the queue |
- * | `HUBSPOT_DISABLED` | the dispatch AND the worker | nothing, but it is all-or-nothing |
+ * | `HUBSPOT_DISABLED` | the dispatch AND the worker | a daemon that has not restarted |
  *
  * Without the first, `migrate:fresh --seed` fires thousands of API calls. Without the second,
  * nothing protects a worker that is already running.
@@ -253,9 +253,14 @@ final class SyncSuppressionTest extends SyncTestCase
 
     /**
      * The case `withoutSyncing()` cannot cover, and the entire reason there are two hatches: a job
-     * that was already queued when the switch was flipped must not fire when the worker reaches it.
-     * Suppression is in-process state and does not survive that boundary; the kill switch is
-     * environment-level and does.
+     * already sitting on the queue must not fire when a worker reaches it. Suppression is in-process
+     * state that does not survive that boundary; the kill switch is read from config on both sides.
+     *
+     * What this models is a worker whose CONFIG says disabled, which is the state after
+     * `queue:restart`. It deliberately does not claim more: `Config::get()` re-reads the running
+     * process's own repository, so editing `.env` alone never reaches a `queue:work` daemon that is
+     * already up -- see {@see SyncGate}'s docblock, which states that limit rather than implying it
+     * away.
      */
     public function test_the_kill_switch_stops_a_job_that_was_already_queued(): void
     {

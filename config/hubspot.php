@@ -250,10 +250,19 @@ return [
     | wrong in production silently drops every CRM write; getting it wrong in
     | a test or CI environment fires real API calls with no credentials.
     |
-    | Checked at DISPATCH and again on the WORKER, so a job queued before the
-    | switch was flipped does not fire either. Hubspot::withoutSyncing() is the
-    | other half of that pair: it is in-process and cannot reach a worker, which
-    | is why both exist. See Sync\SyncGate.
+    | Checked at DISPATCH and again on the WORKER. The second check is what
+    | stops jobs already sitting on the queue from firing as workers drain them.
+    | Hubspot::withoutSyncing() is the other half of the pair: it is in-process
+    | and cannot reach a worker at all, which is why both exist.
+    |
+    | It does NOT reach a queue:work daemon that is already running -- that
+    | process keeps the config it booted with, as it does for every other config
+    | value. Flipping this means both steps:
+    |
+    |     HUBSPOT_DISABLED=true      (+ php artisan config:cache if cached)
+    |     php artisan queue:restart
+    |
+    | See Sync\SyncGate, which states the limit rather than implying it away.
     |
     | The inbound half is not implemented yet. No webhook path exists before
     | Phase 5; this key is written to govern both from the start rather than

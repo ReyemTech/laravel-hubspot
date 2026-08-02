@@ -28,9 +28,33 @@ use Illuminate\Support\Facades\Config;
  * | `HUBSPOT_DISABLED` | the dispatch AND the worker | nothing, but it is all-or-nothing |
  *
  * `withoutSyncing()` is in-process state and does not survive a process boundary, so a worker that
- * started before the block was entered knows nothing about it. `HUBSPOT_DISABLED` is read from the
- * environment on both sides of that boundary, which is why the jobs consult this gate again in
- * `handle()` rather than trusting the check made at dispatch.
+ * started before the block was entered knows nothing about it. `HUBSPOT_DISABLED` is read from
+ * CONFIG on both sides of that boundary, which is why the jobs consult this gate again in `handle()`
+ * rather than trusting the check made at dispatch.
+ *
+ * ## What the worker-side check does NOT do, stated plainly
+ *
+ * It does not reach into a `queue:work` daemon that is already running. `env()` is read while
+ * configuration is loaded, and `Config::get()` re-reads that PROCESS's in-memory repository -- so a
+ * long-lived worker keeps whatever it booted with, exactly as it does for every other config value.
+ * Editing `.env` alone stops nothing that is already running, and with cached config it stops
+ * nothing at all until the cache is rebuilt.
+ *
+ * Flipping the switch therefore means BOTH steps:
+ *
+ * ```
+ * HUBSPOT_DISABLED=true          # and `php artisan config:cache` if config is cached
+ * php artisan queue:restart      # workers finish the current job and exit for the supervisor
+ * ```
+ *
+ * With that done, the re-check is what stops the jobs ALREADY SITTING ON THE QUEUE from firing as
+ * the restarted workers drain them -- which is the case the dispatch-time check cannot reach and the
+ * reason this second call exists. It also covers `queue:listen`, the `sync` driver and
+ * `queue:work --once`, each of which loads config per job.
+ *
+ * This is a smaller promise than "flip the env var and everything stops", and it is the true one.
+ * A switch that claimed to reach a running daemon and did not would be worse than no switch, because
+ * an operator would stop watching.
  *
  * ## The testing default is RUNTIME logic and must never move into `config/hubspot.php`
  *
