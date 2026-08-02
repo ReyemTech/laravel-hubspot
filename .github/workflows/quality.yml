@@ -133,6 +133,12 @@ jobs:
       - name: Prove the composer retry wrapper retries a transient failure and still fails a permanent one
         run: bash scripts/ci/composer-retry.sh --self-test
 
+      # Here for the same reason: it needs no dependencies, and the js and docs gates now SKIP their
+      # own work on this script's answer. A script that decides whether a required gate runs has to
+      # be proven to fail open, and to see a file renamed out of the directory it guards.
+      - name: Prove the path scope resolver fails open and sees a rename out of its directory
+        run: bash scripts/ci/paths-changed.sh --self-test
+
   vendor-namespaces:
     name: vendor namespaces (Illuminate backed, no unapproved third party)
     # This workflow also answers a weekly `schedule` and a manual `workflow_dispatch`, and

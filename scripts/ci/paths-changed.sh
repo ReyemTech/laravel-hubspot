@@ -36,6 +36,97 @@
 
 set -uo pipefail
 
+# `--self-test` proves the four behaviours this script promises, against a real throwaway
+# repository rather than a mocked git. Every other CI script here carries one for the same reason:
+# a gate nobody has watched fail is a gate nobody knows works.
+if [ "${1:-}" = "--self-test" ]; then
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    failures=0
+
+    # A ref the fixture failed to create resolves to nothing, and this script FAILS OPEN on an
+    # unresolvable ref -- so a broken fixture would make every check pass for the wrong reason.
+    # That is not hypothetical: `git tag` needs a message under some global configs, the tag was
+    # never created, and the rename check passed with the fix removed. Assert the fixture.
+    require_ref() {
+        if ! (cd "$work" && git rev-parse --verify --quiet "$1" >/dev/null); then
+            echo "  FAIL self-test fixture: ref \"$1\" was never created."
+            failures=$((failures + 1))
+            return 1
+        fi
+    }
+
+    check() {
+        local label="$1" expected="$2"
+        shift 2
+        (cd "$work" && bash "$OLDPWD/scripts/ci/paths-changed.sh" "$@" >/dev/null 2>&1)
+        local actual=$?
+
+        if [ "$actual" = "$expected" ]; then
+            echo "  ok   $label (exit $actual)"
+        else
+            echo "  FAIL $label: expected exit $expected, got $actual"
+            failures=$((failures + 1))
+        fi
+    }
+
+    (
+        cd "$work" || exit 1
+        git init -q .
+        git config user.email ci@example.com
+        git config user.name CI
+        mkdir -p site nested/deep other
+        echo a > site/page.ts
+        # Renamed UNMODIFIED below, and given enough content to be an unambiguous 100%-similarity
+        # move. Git's rename detection needs that similarity to fire at all, and a rename it does
+        # not detect proves nothing about a flag that only matters when it does.
+        printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 > site/pure.ts
+        echo b > nested/deep/file.ts
+        echo c > other/unrelated.txt
+        git add -A && git commit -qm base
+        git branch base-ref
+    ) || { echo "self-test: could not build the fixture repository"; exit 1; }
+
+    echo "paths-changed --self-test:"
+
+    (cd "$work" && echo changed > other/unrelated.txt && git add -A && git commit -qm unrelated)
+    require_ref base-ref \
+        && check "an unrelated change does not match" 1 base-ref 'site/*'
+
+    (cd "$work" && echo more >> site/page.ts && git add -A && git commit -qm sitechange)
+    check "a change inside the gated directory matches" 0 base-ref 'site/*'
+
+    # The rename case, which is why `--no-renames` is on the diff. With detection enabled git
+    # reports the DESTINATION only, so the source directory losing a file would look like no
+    # change at all and a required gate would skip.
+    #
+    # Checked against its OWN base, immediately before the rename, and on a file that moves
+    # UNMODIFIED. The first draft did neither -- it reused the shared base, whose accumulated diff
+    # already matched for other reasons, and renamed a file it had just edited, which git scored
+    # below the similarity threshold. It passed with `--no-renames` removed, which means it pinned
+    # nothing. Verified the other way now: strip the flag and this check fails.
+    (cd "$work" && git branch pre-rename && git mv site/pure.ts other/pure.ts && git commit -qm renameout)
+    require_ref pre-rename \
+        && check "a file renamed OUT of the gated directory still matches" 0 pre-rename 'site/*'
+
+    # `*` in a `case` pattern spans slashes, which is what makes one pattern cover a whole tree.
+    # The file has to actually CHANGE to appear in the diff: the first draft of this check asserted
+    # against a file that only ever existed in the base commit, and the self-test caught it.
+    (cd "$work" && echo deeper >> nested/deep/file.ts && git add -A && git commit -qm nested)
+    check "a nested path matches the directory glob" 0 base-ref 'nested/*'
+
+    check "an unreachable base ref fails OPEN" 0 no-such-ref 'site/*'
+    check "a missing pattern argument fails OPEN" 0 base-ref
+
+    if [ "$failures" -ne 0 ]; then
+        echo "paths-changed --self-test: $failures failure(s)."
+        exit 1
+    fi
+
+    echo "paths-changed --self-test: all checks passed."
+    exit 0
+fi
+
 if [ "$#" -lt 2 ]; then
     echo "usage: paths-changed.sh <base-ref> <pattern> [<pattern>...]" >&2
     exit 0
@@ -54,7 +145,12 @@ if ! git rev-parse --verify --quiet "$base" >/dev/null; then
     exit 0
 fi
 
-if ! changed="$(git diff --name-only "$base"...HEAD 2>/dev/null)"; then
+# `--no-renames` is load-bearing, not tidy (Codex, local review). With rename detection on,
+# `--name-only` reports a rename as its DESTINATION only, so moving `site/page.ts` to
+# `archive/page.ts` prints just `archive/page.ts` -- which matches no `site/*` pattern, and the docs
+# gate would report green having never rebuilt a site that just lost a file. Disabling detection
+# lists the deletion and the addition separately, so the source path is seen too.
+if ! changed="$(git diff --name-only --no-renames "$base"...HEAD 2>/dev/null)"; then
     echo "paths-changed: git diff against \"$base\" failed, assuming the paths changed." >&2
     exit 0
 fi
