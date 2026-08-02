@@ -110,7 +110,9 @@ final class HubspotManager implements SyncStateContract
      */
     public function fake(array $responses = []): HubspotFake
     {
-        return $this->fake = new HubspotFake($this->container, $responses);
+        // The outgoing fake is handed to the incoming one, so a second `fake()` call inherits the
+        // ORIGINAL transport as its predecessor rather than recording the first fake's mock.
+        return $this->fake = new HubspotFake($this->container, $responses, $this->fake);
     }
 
     /**

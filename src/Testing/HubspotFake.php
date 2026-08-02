@@ -55,6 +55,7 @@ final class HubspotFake
     public function __construct(
         private readonly Container $container,
         private readonly array $responses,
+        ?self $replacing = null,
     ) {
         // Constructed per fake, which is what restarts the id counter it owns on every
         // Hubspot::fake() call (02-CONTEXT.md: "ids from a counter").
@@ -78,7 +79,16 @@ final class HubspotFake
         // class, so `bound()` is true from boot and `make()` would then BUILD the real factory --
         // which throws when no token is configured, the ordinary case in a test suite. Only
         // `resolved()` separates "an instance exists" from "one could be made".
-        if ($container instanceof IlluminateContainer && $container->resolved(HubspotClientFactory::class)) {
+        // A fake REPLACING another inherits that one's predecessor rather than capturing it
+        // (Codex, PR #65). Capturing here would record the outgoing FAKE's mock factory as the
+        // thing to restore, so flushing would leave requests mocked while `isFaked()` reported
+        // false -- the inconsistent state this whole lifecycle exists to avoid.
+        //
+        // This is the guard `HubspotManager::fake()` used to carry, and moving the capture is
+        // exactly how it was lost. It now lives beside the capture it protects.
+        if ($replacing instanceof self) {
+            $this->factoryBeforeThisFake = $replacing->factoryBeforeThisFake;
+        } elseif ($container instanceof IlluminateContainer && $container->resolved(HubspotClientFactory::class)) {
             /** @var HubspotClientFactory $existing */
             $existing = $container->make(HubspotClientFactory::class);
             $this->factoryBeforeThisFake = $existing;
