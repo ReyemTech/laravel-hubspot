@@ -163,6 +163,57 @@ final class ArchiveMarkerTest extends SyncTestCase
     }
 
     /**
+     * ...and it takes it back through an UNSCOPED query, so an application's own global scope
+     * cannot strand the marker (Codex, PR #65).
+     *
+     * `HubspotObjectLink` is a public model, and an application may put a global scope on it --
+     * `whereNull('archived_at')` being the obvious one, since a scope that hides archived links is
+     * the natural thing to write. Stamping the marker is precisely what makes the row stop matching
+     * that scope, so a SCOPED withdrawal matches zero rows and silently updates nothing. The
+     * exception still reaches the caller, so nothing looks wrong, while `archived_at` stays set on a
+     * record that was never archived -- removing a live model from every sync path there is.
+     *
+     * The synchronous path on `main` used `newQueryWithoutScopes()` for exactly this reason. Giving
+     * the marker one owner is only an improvement if that owner keeps the STRONGER of the two
+     * behaviours it replaced; this test is what holds it to that.
+     */
+    public function test_a_failed_archive_takes_its_marker_back_through_an_application_global_scope(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'scopedarchive@example.com', 'first_name' => 'Ada']);
+
+        // Registered AFTER the link exists, so the scope is in force for the withdrawal alone --
+        // exactly how an application's own boot-time scope would behave here.
+        HubspotObjectLink::addGlobalScope('unarchived', function ($query): void {
+            $query->whereNull('archived_at');
+        });
+
+        try {
+            Hubspot::fake(['contacts' => Hubspot::response(['message' => 'boom'], 500)]);
+
+            try {
+                $lead->delete();
+            } catch (Throwable) {
+                // The failure reaching the caller is the subject of the test above.
+            }
+
+            $row = DB::table('hubspot_object_links')->sole();
+
+            self::assertNull(
+                $row->archived_at,
+                'A scoped withdrawal matches zero rows once the marker itself has hidden the link, '
+                .'so the marker outlives the failed archive with nothing to report it.'
+            );
+        } finally {
+            // The scope lives on the MODEL CLASS, which outlives this test's container.
+            HubspotObjectLink::clearBootedModels();
+        }
+    }
+
+    /**
      * A soft delete UNDONE before its own transaction commits archives nothing (Codex, PR #49).
      *
      * Deferring the archive to commit is what makes this reachable. `restored()` runs inside the

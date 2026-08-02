@@ -431,35 +431,19 @@ final class HubspotObserver
             // -- had nothing to do with this failure and must survive it. The in-memory values are
             // the row's true state at this moment: any link reaching here carries no marker, so the
             // restore path cannot have flagged it since it was read.
-            $flagBeforeTheMarker = ['is_stale' => $link->is_stale, 'stale_at' => $link->stale_at];
+            // One object owns the marker's whole lifecycle (issue #57). `stamp()` takes the
+            // snapshot, writes `archived_at`, and hands back the thing that can undo both. The job
+            // carries that same marker, so the worker's refusal path and this failure path cannot
+            // drift apart -- which they did three times before this class existed.
+            $marker = ArchiveMarker::stamp($link);
 
-            // Built HERE rather than above the callback, so it can carry the snapshot with it. The
-            // worker may refuse this archive -- the kill switch survives the queue where a
-            // suppression block does not -- and a refused archive has to put the row back exactly as
-            // a FAILED one does. Both paths withdraw the same three columns; only the moment differs.
-            $job = new ArchiveHubspotObjectJob(
-                $link->object_type,
-                $link->hubspot_id,
-                $link->id,
-                $link->is_stale,
-                $link->stale_at?->toIso8601String(),
-            );
-
-            $link->update(['archived_at' => Carbon::now()]);
+            $job = new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id, $marker);
 
             try {
                 // Already past the commit, so the job does not defer itself a second time.
                 $this->dispatchJob($job, deferToCommit: false);
             } catch (Throwable $exception) {
-                // Written through the query builder rather than through `$link->update()`, and that
-                // is the difference between putting the flag back and only appearing to. A racing
-                // restore's flag lives in the ROW; this in-memory instance still believes what it
-                // read before the marker, so filling `is_stale` with that same value leaves the
-                // attribute CLEAN and `save()` writes no column at all. `archived_at` is dirty
-                // either way, which is exactly why the marker half of this cleanup never showed it.
-                $link->newQueryWithoutScopes()
-                    ->whereKey($link->getKey())
-                    ->update(['archived_at' => null, ...$flagBeforeTheMarker]);
+                $marker->withdraw();
 
                 throw $exception;
             }

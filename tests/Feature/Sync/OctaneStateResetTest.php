@@ -201,6 +201,35 @@ final class OctaneStateResetTest extends SyncTestCase
     }
 
     /**
+     * A SECOND `Hubspot::fake()` before the boundary still restores the ORIGINAL transport
+     * (Codex, PR #65).
+     *
+     * Faking twice in one request is ordinary -- a test installs a default fake and then re-fakes
+     * with canned responses. If the second fake recorded the first fake's mock factory as its
+     * predecessor, flushing would restore a MOCK: requests still answered from canned responses
+     * while `isFaked()` reported false, which is the inconsistent state this lifecycle exists to
+     * prevent.
+     */
+    public function test_a_second_fake_still_restores_the_original_transport(): void
+    {
+        config()->set('hubspot.token', 'pat-na1-test-token');
+
+        $custom = HubspotClientFactory::fromConfig('pat-na1-custom', 5.0, 2.0, false);
+        app()->instance(HubspotClientFactory::class, $custom);
+
+        Hubspot::fake();
+        Hubspot::fake(['contacts' => Hubspot::response(['id' => '1'])]);
+
+        Event::dispatch('Laravel\Octane\Events\RequestTerminated');
+
+        self::assertSame(
+            $custom,
+            app(HubspotClientFactory::class),
+            'The second fake must inherit the ORIGINAL predecessor, not record the first fake.'
+        );
+    }
+
+    /**
      * The consequence, rather than the flag: a model created in the "next request" syncs normally
      * once the boundary has cleared what the previous one left behind.
      */

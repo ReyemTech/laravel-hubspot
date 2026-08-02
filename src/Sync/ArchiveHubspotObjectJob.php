@@ -56,21 +56,38 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      * freshly-deserialized instance the constructor never ran for.
      */
     /**
-     * `$linkId` is OPTIONAL, and optional for a compatibility reason rather than a design one: this
-     * class is public API of a released package, and `roave/backward-compatibility-check` counts a
-     * new REQUIRED constructor parameter as a breaking change. A job serialised by an older release
-     * and run by a newer one also arrives without it, which is the same case.
+     * `$marker` is what lets this job take back the `archived_at` its own dispatch wrote, and it is
+     * ONE parameter rather than the three columns it describes -- see {@see ArchiveMarker}, which
+     * owns that lifecycle for both this class and {@see HubspotObserver}. A fourth column added
+     * there needs no change here at all, which is the point.
      *
-     * When it is present, this job can take back the archive marker its own dispatch wrote. See
-     * {@see handle()}.
+     * Optional, because an in-flight payload serialised before markers existed arrives without one.
+     * It says so rather than guessing; see {@see takeBackTheMarker()}.
+     *
+     * Note what that case is NOT. This class ships for the first time in 0.6.0 -- it is absent from
+     * every tag up to and including v0.5.0 -- so no RELEASE ever wrote a marker-less payload, and
+     * every release that dispatches this job at all writes one. The reachable case is a job queued
+     * by a development build between 04-06 and issue #57 and picked up by a worker running newer
+     * code. Defensive, deliberately kept, and deliberately not described as a compatibility promise.
+     *
+     * Declared here with its default rather than promoted in the constructor, and that is
+     * load-bearing (Codex, PR #65). A PROMOTED parameter's default belongs to the parameter, not to
+     * the property -- `ReflectionProperty::hasDefaultValue()` is false for one. So on the instance
+     * `SerializesModels` builds with `newInstanceWithoutConstructor()`, a payload carrying no
+     * `marker` key leaves this typed property UNINITIALIZED, not null, and the first read of it
+     * throws `Error`. The job would then burn its retries and fail, stranding exactly the marker the
+     * warning below exists to report. A real property default is initialized before any constructor
+     * runs, which is what makes that branch reachable from the queue at all.
      */
+    public ?ArchiveMarker $marker = null;
+
     public function __construct(
         public string $objectType,
         public string $hubspotId,
-        public ?int $linkId = null,
-        public ?bool $wasStale = null,
-        public ?string $staleAt = null,
-    ) {}
+        ?ArchiveMarker $marker = null,
+    ) {
+        $this->marker = $marker;
+    }
 
     /**
      * The gateway is a method parameter resolved by the container PER CALL, never a
@@ -150,7 +167,7 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      * merely "work skipped": the local row is deleted while the HubSpot record is still live, and
      * nothing will revisit it. An operator should see that divergence.
      *
-     * A job carrying no `$linkId` is one serialised before this parameter existed. It cannot find
+     * A job carrying no `$marker` is one serialised before that parameter existed. It cannot find
      * its marker without guessing -- `hubspot_id` alone may match more than one link row -- and
      * guessing wrong would clear a marker belonging to somebody else's legitimate archive. It says
      * so instead.
@@ -160,29 +177,16 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
         $context = [
             'object_type' => $this->objectType,
             'hubspot_id' => $this->hubspotId,
-            'link_id' => $this->linkId,
+            'link_id' => $this->marker?->linkId,
         ];
 
-        if ($this->linkId === null) {
+        if (! $this->marker instanceof ArchiveMarker) {
             Log::warning(self::strandedMessage(), $context);
 
             return;
         }
 
-        // The stale flag goes back too, not just the marker (Codex, PR #56). A restore landing
-        // between this job's dispatch and a disabled worker picking it up sees the marker, concludes
-        // an archive was issued and flags the link. Clearing only `archived_at` would then leave a
-        // live local model pointing at a live HubSpot record while `pendingHubspotSync()` reported it
-        // as stale for ever, with nothing to clear it.
-        //
-        // The pre-marker values travel WITH the job rather than being blanked here, for the reason
-        // the synchronous failure path snapshots them: a flag that was already set for some other
-        // reason had nothing to do with this refusal and must survive it.
-        HubspotObjectLink::query()->whereKey($this->linkId)->update([
-            'archived_at' => null,
-            'is_stale' => (bool) $this->wasStale,
-            'stale_at' => $this->staleAt,
-        ]);
+        $this->marker->withdraw();
 
         Log::warning(self::suppressedMessage(), $context);
     }
@@ -197,8 +201,9 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
     private static function strandedMessage(): string
     {
         return 'A HubSpot archive was skipped on the worker because syncing is switched off, and '
-            .'its archive marker could NOT be taken back: this job was queued by an older release '
-            .'that did not record which link row it came from. Clear archived_at on that link by '
-            .'hand, or the record is treated as archived while it is still live.';
+            .'its archive marker could NOT be taken back: this job was serialised before archive '
+            .'markers existed, so it does not record which link row it came from. Clear '
+            .'archived_at on that link by hand, or the record is treated as archived while it is '
+            .'still live.';
     }
 }
