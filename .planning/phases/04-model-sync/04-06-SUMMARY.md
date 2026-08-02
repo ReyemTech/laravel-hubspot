@@ -742,6 +742,15 @@ the only place the two accepted answers are observably different, and what an op
 the repair against their own config. Neither configured is still a refusal: an absent link is then
 absent for an innocent reason, and manufacturing one would create a CRM record nobody asked for.
 
+### The second file split
+
+Three more tests pushed `tests/Feature/Sync/DeletePolicyTest.php` through the 500-line code-shape
+ceiling — CI caught it, not the local run that preceded the log assertion. Split rather than
+compressed, on the seam the findings themselves drew: **`tests/Feature/Sync/ArchiveMarkerTest.php`**
+now holds findings 18 and 23-27, everything about what `archived_at` promises once the decision to
+archive is made, while `DeletePolicyTest` keeps the decision itself. A pure move — 824 tests and
+2984 assertions before and after. This is the same split `RestorePolicyTest` came from.
+
 `tests/Feature/Sync/RestorePolicyTest.php`'s old no-`created` case used `['updated', 'deleted']`,
 which is now a case that SHOULD dispatch. It was replaced by `['deleted']` — the only shape where no
 configured event would ever have linked the model.
