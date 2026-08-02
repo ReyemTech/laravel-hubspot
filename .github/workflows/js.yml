@@ -81,7 +81,7 @@ jobs:
           fi
 
           if bash scripts/ci/paths-changed.sh "$mode" "$base" \
-            'resources/js/*' 'package.json' 'pnpm-lock.yaml' 'pnpm-workspace.yaml' \
+            'resources/js/*' 'package.json' 'pnpm-lock.yaml' 'pnpm-workspace.yaml' '.npmrc' \
             '.github/workflows/js.yml' 'scripts/ci/paths-changed.sh'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
