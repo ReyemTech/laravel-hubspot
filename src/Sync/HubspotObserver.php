@@ -394,18 +394,86 @@ final class HubspotObserver
         // mislead. It removes a live model from every sync path there is, silently.
         $job = new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id);
 
-        DB::afterCommit(function () use ($link, $job): void {
+        DB::afterCommit(function () use ($link, $job, $event, $model): void {
+            // The deletion this archive answers for must still exist by the time the archive goes
+            // out (Codex, PR #49). Deferring to commit is what opens this: a model soft deleted and
+            // RESTORED inside one transaction fires `restored` before this callback runs, and that
+            // handler correctly declines to flag a link carrying no marker -- because there is none
+            // yet, by design. Without this recheck the commit then archives the HubSpot record of a
+            // model that is live again, and nothing repairs it: no further event fires, and
+            // `archived_at` removes it from every sync path there is.
+            //
+            // Asked of `trashed` alone, because a soft delete is the only one of the three that can
+            // be undone locally. A hard delete's row is gone for good, so the same question would be
+            // a wasted query -- and on a model without `SoftDeletes` there is no delete column to
+            // ask it of at all.
+            if ($event === 'trashed' && $this->isLiveAgain($model)) {
+                Log::info(
+                    'A soft-deleted model was restored before its delete committed, so the archive '
+                    .'that delete had scheduled was cancelled. Nothing was sent to HubSpot and the '
+                    .'link is untouched.',
+                    $this->logContext($event, $model, 'archive-cancelled'),
+                );
+
+                return;
+            }
+
+            // What the stale flag was BEFORE this marker existed, so a failure can put back exactly
+            // that (Codex, PR #49). A restore racing the request below reads this marker, concludes
+            // an archive was issued and flags the link stale; if the request then fails, the archive
+            // never happened and a live HubSpot record is left reported as stale by
+            // `pendingHubspotSync()`, with no later write able to clear it.
+            //
+            // A snapshot rather than a blanket clear, because a flag that was already set for some
+            // other reason -- an earlier archive that a restore answered, or an operator's own hand
+            // -- had nothing to do with this failure and must survive it. The in-memory values are
+            // the row's true state at this moment: any link reaching here carries no marker, so the
+            // restore path cannot have flagged it since it was read.
+            $flagBeforeTheMarker = ['is_stale' => $link->is_stale, 'stale_at' => $link->stale_at];
+
             $link->update(['archived_at' => Carbon::now()]);
 
             try {
                 // Already past the commit, so the job does not defer itself a second time.
                 $this->dispatchJob($job, deferToCommit: false);
             } catch (Throwable $exception) {
-                $link->update(['archived_at' => null]);
+                // Written through the query builder rather than through `$link->update()`, and that
+                // is the difference between putting the flag back and only appearing to. A racing
+                // restore's flag lives in the ROW; this in-memory instance still believes what it
+                // read before the marker, so filling `is_stale` with that same value leaves the
+                // attribute CLEAN and `save()` writes no column at all. `archived_at` is dirty
+                // either way, which is exactly why the marker half of this cleanup never showed it.
+                $link->newQueryWithoutScopes()
+                    ->whereKey($link->getKey())
+                    ->update(['archived_at' => null, ...$flagBeforeTheMarker]);
 
                 throw $exception;
             }
         });
+    }
+
+    /**
+     * Whether a row that was soft deleted is un-deleted again, asked of the DATABASE rather than of
+     * the in-memory model.
+     *
+     * The model instance this observer holds is the one the delete ran on, and a restore that
+     * happened on another instance -- inside the same transaction, or in another request -- leaves
+     * it untouched. Only the row can answer.
+     *
+     * Scopes are dropped because `SoftDeletingScope` would hide exactly the rows this asks about,
+     * and the question is phrased positively -- "is there a LIVE row with this key" -- so that a row
+     * which has since vanished entirely answers false and the archive proceeds. A purge between the
+     * delete and the commit still leaves a HubSpot record that ought to be archived.
+     *
+     * The caller guarantees `SoftDeletes` by asking this of the `trashed` event alone, which is the
+     * only one `SoftDeletes::runSoftDelete()` dispatches.
+     */
+    private function isLiveAgain(Model $model): bool
+    {
+        return $model->newQueryWithoutScopes()
+            ->whereKey($model->getKey())
+            ->whereNull($this->deletedAtColumnOf($model))
+            ->exists();
     }
 
     /**

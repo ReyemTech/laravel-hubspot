@@ -376,6 +376,7 @@ final class DeletePolicyTest extends SyncTestCase
         $lead = SoftDeletingLead::create(['email' => 'undeleted@example.com', 'first_name' => 'Ada']);
 
         Hubspot::fake();
+        $log = Log::spy();
 
         DB::transaction(function () use ($lead): void {
             $lead->delete();
@@ -383,6 +384,17 @@ final class DeletePolicyTest extends SyncTestCase
         });
 
         Hubspot::assertRequestCount(0);
+        $log->shouldHaveReceived('info', [
+            'A soft-deleted model was restored before its delete committed, so the archive that '
+            .'delete had scheduled was cancelled. Nothing was sent to HubSpot and the link is '
+            .'untouched.',
+            [
+                'model' => SoftDeletingLead::class,
+                'model_id' => $lead->getKey(),
+                'event' => 'trashed',
+                'action' => 'archive-cancelled',
+            ],
+        ]);
 
         $link = HubspotObjectLink::query()->sole();
         self::assertNull(
