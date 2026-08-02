@@ -40,6 +40,24 @@ final class HubspotManager implements SyncStateContract
 
     public function __construct(private readonly Container $container)
     {
+        $this->flushState();
+    }
+
+    /**
+     * Returns this singleton to the state a freshly booted process would have.
+     *
+     * Called at construction, and again at every Octane request, task and tick boundary -- see
+     * `ServiceProvider::registerOctaneStateReset()`. On PHP-FPM the process ends with the request
+     * and this never runs a second time; on a long-lived worker it is what stops one request's
+     * state from becoming the next request's starting point.
+     *
+     * BOTH properties are reset, not just the newer one. `$fake` has the same process-wide shape and
+     * has had it since 02-xx; resetting only the property this plan happened to add would have been
+     * arbitrary, and would leave a fake installed by one request answering for the next.
+     */
+    public function flushState(): void
+    {
+        $this->fake = null;
         $this->syncingSuppressed = false;
     }
 
@@ -174,17 +192,16 @@ final class HubspotManager implements SyncStateContract
      * why `HUBSPOT_DISABLED` exists beside it and why the jobs re-check {@see Sync\SyncGate} in
      * `handle()`.
      *
-     * PROCESS-scoped, not request-scoped, and that distinction only becomes visible on a runtime
-     * where two requests share one container CONCURRENTLY -- Octane with coroutines, not Octane as
-     * ordinarily deployed, where each Swoole or RoadRunner worker handles one request at a time.
-     * There, one request's block would suppress another's events. `finally` makes the flag correct
-     * for any single sequential flow, including a request that throws, so nothing leaks between
-     * consecutive requests on the same worker.
+     * PROCESS-scoped rather than request-scoped, which matters only on a runtime that keeps the
+     * process alive between requests. Octane is supported (STANDARDS 1, issue #55), and
+     * {@see flushState()} is what makes it safe: `ServiceProvider` calls it at every Octane request,
+     * task and tick boundary, so no request ever inherits a block another request left open.
+     * `finally` already covers any single sequential flow, including one that throws.
      *
-     * Making it coroutine-local is a package-wide decision rather than this method's to take: the
-     * `$fake` property above has the same shape and has since 02-xx, and the fix would mean either
-     * an Octane event listener or a context abstraction that a plain PHP-FPM deployment pays for.
-     * Tracked rather than silently accepted.
+     * What remains open is genuinely parallel COROUTINES inside one request, which would still share
+     * the flag. That is not how Laravel handles ordinary requests -- Swoole and RoadRunner hand each
+     * worker one request at a time -- and closing it would mean a context abstraction every PHP-FPM
+     * deployment pays for. Stated in STANDARDS 1 rather than left to be discovered.
      *
      * @template TReturn
      *

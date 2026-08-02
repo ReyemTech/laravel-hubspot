@@ -63,6 +63,12 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * It is in-process only. `HUBSPOT_DISABLED` is the other half of that pair, and reaches a queue
  * worker where this cannot -- see {@see SyncGate}.
  *
+ * `flushState()` is an INTEGRATION HOOK rather than everyday API: it returns the manager to the
+ * state a freshly booted process would have. The package already calls it at every Octane request,
+ * task and tick boundary, so an ordinary application never needs to. It is advertised because it is
+ * public and callable through this facade, and a custom long-lived worker is the one case where
+ * calling it by hand is the right thing to do.
+ *
  * @method static ObjectGatewayContract objects()
  * @method static AssociationGatewayContract associations()
  * @method static AssociationDefinitionsGatewayContract associationDefinitions()
@@ -73,6 +79,7 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * @method static void assertSynced(string $objectType, array<string, mixed> $properties = [])
  * @method static void assertNothingSynced()
  * @method static void assertAssociated(\ReyemTech\Hubspot\Gateway\AssociationPair $pair, ?string $label = null)
+ * @method static void flushState()
  * @method static bool syncingSuppressed()
  * @method static bool isFaked()
  *

@@ -1,0 +1,115 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Tests\Feature\Sync;
+
+use Illuminate\Support\Facades\Event;
+use PHPUnit\Framework\Attributes\DataProvider;
+use ReyemTech\Hubspot\Facades\Hubspot;
+use ReyemTech\Hubspot\HubspotManager;
+use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
+use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
+
+/**
+ * # The package survives a worker that outlives the request (issue #55)
+ *
+ * On PHP-FPM a process handles one request and dies, so a container singleton cannot leak into
+ * anything. Octane keeps the worker alive across many requests, and `HubspotManager` is a singleton
+ * with two mutable properties -- so without this, a `withoutSyncing()` block left open by a fatal,
+ * or a fake installed by one request, would answer for every later request that worker served.
+ *
+ * A silently dropped sync is the worst failure this package has: nothing downstream reports it.
+ *
+ * ## Why the events are named as strings
+ *
+ * `laravel/octane` is not a dependency and cannot become one -- D-03's vendor allow-list admits
+ * `php`, `hubspot/api-client`, `illuminate/*` and `laravel/prompts`. Laravel's dispatcher keys
+ * listeners on the event's class NAME, so a string registration fires for Octane's real event object
+ * and costs nothing when Octane is absent. These tests dispatch by the same string, which is exactly
+ * what the dispatcher would do with the real object.
+ */
+final class OctaneStateResetTest extends SyncTestCase
+{
+    /**
+     * @return list<array{string}>
+     */
+    public static function octaneBoundaries(): array
+    {
+        return [
+            ['Laravel\Octane\Events\RequestReceived'],
+            ['Laravel\Octane\Events\RequestTerminated'],
+            ['Laravel\Octane\Events\TaskReceived'],
+            ['Laravel\Octane\Events\TickReceived'],
+        ];
+    }
+
+    /**
+     * Every entry point, not just requests. Octane runs tasks and ticks in the same long-lived
+     * process, and a tick that ran with suppression left on would be as silent as a request that did.
+     */
+    #[DataProvider('octaneBoundaries')]
+    public function test_an_octane_boundary_clears_suppression_left_behind(string $event): void
+    {
+        $manager = app(HubspotManager::class);
+
+        // Left open the way a fatal inside the callback would leave it, rather than by calling
+        // withoutSyncing() -- whose own `finally` is what makes that impossible in a single flow.
+        // The state under test is the one a NEXT request inherits, however it got there.
+        (function (): void {
+            $this->syncingSuppressed = true;
+        })->call($manager);
+
+        self::assertTrue($manager->syncingSuppressed(), 'The fixture must actually leave it open.');
+
+        Event::dispatch($event);
+
+        self::assertFalse(
+            $manager->syncingSuppressed(),
+            'A request inheriting an open suppression block silently drops every sync it makes.'
+        );
+    }
+
+    /**
+     * `$fake` is reset by the same boundary, and for the same reason. It has the identical
+     * process-wide shape and has had it since 02-xx; resetting only the newer property would have
+     * been arbitrary, and would leave one request's fake answering for the next.
+     */
+    public function test_an_octane_boundary_clears_a_fake_left_behind(): void
+    {
+        Hubspot::fake();
+
+        $manager = app(HubspotManager::class);
+        self::assertTrue($manager->isFaked());
+
+        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+
+        self::assertFalse(
+            $manager->isFaked(),
+            'A fake surviving the request that installed it makes every later request in that '
+            .'worker assert against a transport nobody asked for.'
+        );
+    }
+
+    /**
+     * The consequence, rather than the flag: a model created in the "next request" syncs normally
+     * once the boundary has cleared what the previous one left behind.
+     */
+    public function test_syncing_works_again_in_the_request_after_the_boundary(): void
+    {
+        $manager = app(HubspotManager::class);
+
+        (function (): void {
+            $this->syncingSuppressed = true;
+        })->call($manager);
+
+        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+
+        // The "next request" installs its own fake, exactly as the first one would have.
+        Hubspot::fake();
+
+        SyncedLead::create(['email' => 'nextrequest@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::assertRequestCount(1);
+    }
+}
