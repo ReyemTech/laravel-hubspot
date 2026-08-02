@@ -257,22 +257,8 @@ final class HubspotObserver
         // anything because `SyncHubspotObjectJob` refuses to bring a CRM record into existence for
         // a trashed model. Nothing else would ever pick it up -- D-17 suppresses the restore's own
         // `updated` event, and there is no link for anything to flag.
-        //
-        // Gated on `'created'` because that is the consumer's statement that this model syncs when
-        // it comes into existence. A model whose application never syncs on create has no link for
-        // an innocent reason, and manufacturing one here would create a CRM record nobody asked
-        // for.
         if ($link === null) {
-            if (in_array('created', $this->eventsFor($model), true)) {
-                Log::info(
-                    'A restored model has no HubSpot link, so the sync its creation would have '
-                    .'made is being dispatched now. Its initial sync was skipped because the model '
-                    .'was already deleted by the time that job ran.',
-                    $this->logContext('restored', $model, 'created'),
-                );
-
-                $this->dispatchJob(new SyncHubspotObjectJob($model));
-            }
+            $this->replayTheFirstSyncThatNeverLanded($model);
 
             return;
         }
@@ -420,6 +406,50 @@ final class HubspotObserver
                 throw $exception;
             }
         });
+    }
+
+    /**
+     * The first sync a restored model never got, dispatched now -- if any configured event would
+     * have made it.
+     *
+     * The gate is the consumer's statement that this model syncs at all, and BOTH events able to
+     * make that statement count (Codex, PR #49). `created` is the obvious one; `updated` initiates
+     * a first link just as surely, because an ordinary edit dispatches the same upserting
+     * {@see SyncHubspotObjectJob} and that job CREATES the CRM record when no link exists yet.
+     * Reading only `created` therefore lost the update an application configured -- permanently,
+     * since nothing revisits a restored model afterwards.
+     *
+     * A model whose application enables NEITHER has no link for an innocent reason, and
+     * manufacturing one here would create a CRM record nobody asked for. That is the case this
+     * returns on.
+     *
+     * The initiating event is carried into the log context rather than inferred by the reader,
+     * because "which configured event this repair is standing in for" is the only thing separating
+     * the two accepted answers -- and an operator reading the line needs it to check the repair
+     * against their own config.
+     */
+    private function replayTheFirstSyncThatNeverLanded(Model $model): void
+    {
+        $events = $this->eventsFor($model);
+
+        $initiator = match (true) {
+            in_array('created', $events, true) => 'created',
+            in_array('updated', $events, true) => 'updated',
+            default => null,
+        };
+
+        if ($initiator === null) {
+            return;
+        }
+
+        Log::info(
+            'A restored model has no HubSpot link, so the first sync this application configures is '
+            .'being dispatched now. That sync was skipped because the model was already deleted by '
+            .'the time its job ran.',
+            $this->logContext('restored', $model, $initiator),
+        );
+
+        $this->dispatchJob(new SyncHubspotObjectJob($model));
     }
 
     /**
