@@ -490,6 +490,89 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
+     * An INLINE archive waits for the commit too (Codex, PR #49). `queue => false` asks for the API
+     * call to happen in the request, not for it to happen before the delete is real -- and the
+     * archive is irreversible, so issuing it inside a transaction that then rolls back leaves a
+     * live local model whose HubSpot record is gone, with no marker to show for it.
+     *
+     * Deferring costs nothing a consumer asked for: the call still happens in the request, at
+     * commit rather than before it.
+     */
+    public function test_an_inline_archive_waits_for_the_delete_to_commit(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'rolledback@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake();
+
+        DB::beginTransaction();
+        $lead->delete();
+        DB::rollBack();
+
+        Hubspot::assertRequestCount(0);
+        self::assertNull(HubspotObjectLink::query()->sole()->archived_at);
+    }
+
+    /**
+     * The committed case, so the test above cannot pass merely because an inline archive never
+     * fires at all.
+     */
+    public function test_an_inline_archive_fires_once_the_delete_commits(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'committedinline@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake();
+
+        DB::beginTransaction();
+        $lead->delete();
+        DB::commit();
+
+        Hubspot::assertRequestCount(1);
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+    }
+
+    /**
+     * Publication failing at COMMIT still takes the marker back. The `catch` lives inside the
+     * deferred callback for exactly this reason: a `try` wrapped around the registration would have
+     * finished long before the push ran (Codex, PR #49).
+     */
+    public function test_a_publication_that_fails_at_commit_takes_its_marker_back(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'failedatcommit@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake(['contacts' => Hubspot::response(['message' => 'boom'], 500)]);
+
+        $reachedTheCaller = false;
+
+        DB::beginTransaction();
+        $lead->delete();
+
+        try {
+            DB::commit();
+        } catch (Throwable) {
+            $reachedTheCaller = true;
+        }
+
+        self::assertTrue($reachedTheCaller, 'A failure at commit must reach the caller.');
+        self::assertNull(
+            HubspotObjectLink::query()->sole()->archived_at,
+            'A marker left by a publication that failed at commit would be as permanent as one '
+            .'left by any other failed publication.'
+        );
+    }
+
+    /**
      * A record HubSpot no longer has is a record that is archived. The redundant archive a purge
      * issues must not become a failed job for saying so, which is `04-06-PLAN.md`'s own rule for a
      * missing link row applied to the record instead of the row.

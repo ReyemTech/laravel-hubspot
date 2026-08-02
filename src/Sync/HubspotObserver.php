@@ -380,40 +380,46 @@ final class HubspotObserver
         // cannot report it. That is the same silent stranding the restore path was regated to
         // avoid, arriving through a different door.
         //
-        // The marker is TAKEN BACK when publication fails, and that half is not optional (Codex,
-        // PR #49). An earlier revision justified writing first by calling the failure "recoverable
-        // because a restore flags it", and that was wrong: a marker left behind by a failed
-        // dispatch makes a repeated delete skip -- the marker says this package already archived --
-        // while ordinary pushes refuse the link for the same reason, so the still-live HubSpot
-        // record could only be recovered by editing the link row by hand.
+        // **The marker, the archive and their failure handling are ONE unit, deferred together**
+        // (Codex, PR #49, four times over -- each half of this was found separately).
         //
-        // Written first, cleared on failure, the marker means what it says in both directions: an
-        // archive was issued, or it was not. `dispatchSync()` surfaces a synchronous failure here,
-        // and a queued dispatch fails only if the queue backend itself does.
+        // Everything sits inside a single `DB::afterCommit()` callback, and each part of that
+        // sentence is load-bearing:
         //
-        // Through `DB::afterCommit()`, so the marker and the dispatch share ONE transaction's fate
-        // (Codex, PR #49). The link table lives on the DEFAULT connection whatever connection the
-        // model is on, so a cross-connection model deleted inside its own transaction wrote the
-        // marker outside that transaction while the job was deferred by `afterCommit()`. A rollback
-        // then discarded the job and kept the marker: a live local model whose HubSpot record was
-        // never archived, and which `SyncHubspotObjectJob` would skip forever on the strength of a
-        // marker describing an archive that never happened.
+        // - AFTER COMMIT, so a delete that rolls back archives nothing. The archive is
+        //   irreversible, and `queue => false` would otherwise have issued it inline, inside the
+        //   transaction, leaving a live local model whose HubSpot record is gone. Deferring is not
+        //   in tension with asking for a synchronous sync: the call still happens in the request,
+        //   at commit rather than before it.
+        // - TOGETHER, so the marker cannot outlive the archive it describes, nor the archive the
+        //   marker. The link table lives on the DEFAULT connection whatever connection the model is
+        //   on, so a cross-connection delete inside its own transaction previously committed a
+        //   marker the transaction could not take back.
+        // - MARKER FIRST WITHIN the callback, so a restore racing the request can see that an
+        //   archive was issued. Outside a transaction the callback runs immediately, so this is the
+        //   same ordering as a plain sequential write.
+        // - CLEARED ON FAILURE, and the `catch` is INSIDE the callback because that is where
+        //   publication actually happens. A `try` wrapped around the registration would finish
+        //   before the push ever ran.
         //
-        // The queued dispatch below defers through the very same `DatabaseTransactionsManager::
-        // addCallback()`, so registering here first also preserves the ordering finding 18 is
-        // about: outside a transaction the callback runs immediately, and inside one both callbacks
-        // run at commit, in registration order.
-        DB::afterCommit(function () use ($link): void {
+        // `archived_at` is what every read path downstream of a delete trusts -- pushes skip a link
+        // carrying it, a restore flags one carrying it, a later delete declines to archive twice on
+        // its strength -- so a marker describing an archive that never happened does not merely
+        // mislead. It removes a live model from every sync path there is, silently.
+        $job = new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id);
+
+        DB::afterCommit(function () use ($link, $job): void {
             $link->update(['archived_at' => Carbon::now()]);
+
+            try {
+                // Already past the commit, so the job does not defer itself a second time.
+                $this->dispatchJob($job, deferToCommit: false);
+            } catch (Throwable $exception) {
+                $link->update(['archived_at' => null]);
+
+                throw $exception;
+            }
         });
-
-        try {
-            $this->dispatchJob(new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id));
-        } catch (Throwable $exception) {
-            $link->update(['archived_at' => null]);
-
-            throw $exception;
-        }
     }
 
     /**
@@ -587,8 +593,10 @@ final class HubspotObserver
      * running this inside a transaction gets the call before the commit -- which is inherent to
      * asking for a synchronous sync, not something this method can paper over.
      */
-    private function dispatchJob(ArchiveHubspotObjectJob|SyncHubspotObjectJob $job): void
-    {
+    private function dispatchJob(
+        ArchiveHubspotObjectJob|SyncHubspotObjectJob $job,
+        bool $deferToCommit = true,
+    ): void {
         if (Config::get('hubspot.auto_sync.queue', true) === false) {
             $this->dispatcher->dispatchSync($job);
 
@@ -608,7 +616,7 @@ final class HubspotObserver
         // This is set on the job rather than left to the queue connection's own `after_commit`
         // option because the package cannot assume a consumer has enabled it, and the failure it
         // prevents is invisible.
-        $this->dispatcher->dispatch($job->afterCommit());
+        $this->dispatcher->dispatch($deferToCommit ? $job->afterCommit() : $job);
     }
 
     /**
