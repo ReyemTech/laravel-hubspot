@@ -63,12 +63,25 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      *
      * Optional, because a job serialised by a release that predates it arrives without one. It says
      * so rather than guessing; see {@see takeBackTheMarker()}.
+     *
+     * Declared here with its default rather than promoted in the constructor, and that is
+     * load-bearing (Codex, PR #65). A PROMOTED parameter's default belongs to the parameter, not to
+     * the property -- `ReflectionProperty::hasDefaultValue()` is false for one. So on the instance
+     * `SerializesModels` builds with `newInstanceWithoutConstructor()`, a payload carrying no
+     * `marker` key leaves this typed property UNINITIALIZED, not null, and the first read of it
+     * throws `Error`. The job would then burn its retries and fail, stranding exactly the marker the
+     * warning below exists to report. A real property default is initialized before any constructor
+     * runs, which is what makes that branch reachable from the queue at all.
      */
+    public ?ArchiveMarker $marker = null;
+
     public function __construct(
         public string $objectType,
         public string $hubspotId,
-        public ?ArchiveMarker $marker = null,
-    ) {}
+        ?ArchiveMarker $marker = null,
+    ) {
+        $this->marker = $marker;
+    }
 
     /**
      * The gateway is a method parameter resolved by the container PER CALL, never a
