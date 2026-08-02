@@ -48,12 +48,18 @@ scalars rather than the model — after a hard delete the local row is gone, and
 exists to mirror. `SyncHubspotObjectJob` returns early when its model arrives trashed, closing
 `04-CONTEXT.md`'s deferred update-racing-a-soft-delete item. `illuminate/log` is now a declared
 production require — these are the package's first log calls.
-Last activity: 2026-08-01 — executed 04-06-PLAN.md. 795 tests, 2905 assertions, 100.0% coverage.
-MSI 87.86% measured over the five classes this plan changed (ConfigurationException,
-ArchiveHubspotObjectJob, DeletePolicy, HubspotObserver, SyncHubspotObjectJob) — a SCOPED figure,
-not comparable to a whole-tree MSI, and stated that way rather than swapped in as if it were.
-Every remaining mutation survivor is a Concat mutator on a log MESSAGE string; the log LEVEL and
-CONTEXT are both asserted, which is what D-21 reduces to.
+Last activity: 2026-08-02 — executed 04-06-PLAN.md and closed fourteen rounds of Codex review on
+PR #49 (28 findings). 824 tests, 2984 assertions, 100.0% coverage. MSI 88.13% measured over the six
+classes this plan changed (ConfigurationException, ArchiveHubspotObjectJob, DeletePolicy,
+HubspotObjectLink, HubspotObserver, SyncHubspotObjectJob) — a SCOPED figure, not comparable to a
+whole-tree MSI, and stated that way rather than swapped in as if it were. Every remaining mutation
+survivor is a Concat or RemoveArrayItem mutator on a log MESSAGE string or log CONTEXT array; the
+log LEVEL and the context KEYS that identify the record are both asserted, which is what D-21
+reduces to.
+The last three findings are the shape to remember: making the marker, the archive and their cleanup
+one deferred unit put a whole transaction between deciding to archive and archiving, and a restore
+fits inside that. The callback now rechecks that the soft delete still exists, and a failed archive
+puts back the stale flag its own marker caused rather than clearing archived_at alone.
 
 Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the query scopes,
 `ModelBindings::for()`'s unbound-model exception and the multi-binding fixtures; **04-05**

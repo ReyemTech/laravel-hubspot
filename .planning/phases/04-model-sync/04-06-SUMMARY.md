@@ -685,6 +685,67 @@ Both close the same way: **marker, archive and cleanup are one `DB::afterCommit(
 `queue => false` is honoured, not overridden: it asks for the call to happen in the request, not for
 it to happen before the delete is real.
 
+## Findings 26-28: the restore beats the deferred archive two ways, and `updated` links too
+
+Round fourteen, all three on `HubspotObserver`. Two are the cost of findings 23-25 — making the
+archive one deferred unit put a whole transaction's worth of time between the decision to archive and
+the archive itself, and a restore fits inside that. The third is finding 20's fix having been drawn
+too narrowly.
+
+26. **A restore inside the deleting transaction still archived.** `restored()` runs before the
+    deferred callback and sees a link carrying no marker — there is none yet, by design — so it
+    correctly declines to flag. The transaction then commits and the callback archives the HubSpot
+    record of a model that is live again. Nothing repairs it afterwards: no further event fires, and
+    `archived_at` then removes the model from every sync path there is.
+27. **A failed archive left behind a stale flag its own marker caused.** With `queue => false` a
+    restore racing the in-flight request reads the marker, concludes an archive was issued and flags
+    the link stale. The request then fails, and a cleanup clearing only `archived_at` leaves a LIVE
+    record reported by `pendingHubspotSync()` for ever, with no later write able to clear it.
+28. **`updated` initiates a first link exactly as `created` does.** An application on
+    `['updated', 'deleted']` links a model through the same upserting `SyncHubspotObjectJob` an
+    ordinary edit dispatches, and that job CREATES the CRM record when no link exists. Delete before
+    the job runs and it skips for being trashed; the restore then refused to replay it solely because
+    `created` was absent from a list that had never been the question.
+
+### 26: the recheck, and why it is asked of `trashed` alone
+
+The callback now asks the DATABASE — not the in-memory model, which the delete ran on and which a
+restore on another instance leaves untouched — whether a LIVE row with this key exists, and cancels
+before stamping anything if one does. Phrased positively on purpose: a row that has since vanished
+entirely answers false and the archive proceeds, because a purge between the delete and the commit
+still leaves a HubSpot record that ought to go.
+
+Only `trashed` is asked. A hard delete's row is gone for good, so the question is a wasted query
+there — and on a model without `SoftDeletes` there is no delete column to ask it of at all, so an
+ungated recheck raises `BadMethodCallException` from inside an event handler. That is what kills the
+mutant on the event comparison rather than a test written for it.
+
+### 27: put the flag BACK, do not blank it
+
+The cleanup snapshots `is_stale`/`stale_at` immediately before the marker and restores exactly that
+on failure. A blanket clear would have destroyed a flag set for some other reason — an earlier
+archive that a restore already answered, or an operator's own hand — which had nothing to do with
+this failure. The in-memory values are the row's true state at that moment: any link reaching the
+marker carries none, so the restore path cannot have flagged it since it was read.
+
+**Written through the query builder, not `$link->update()`,** and that is the difference between
+putting the flag back and appearing to. Eloquent writes only DIRTY attributes: the racing restore's
+flag lives in the row while this instance still believes what it read before the marker, so filling
+`is_stale` with that same value leaves it clean and `save()` writes no column at all. `archived_at`
+is dirty either way, which is exactly why the marker half of this cleanup never showed the problem.
+The first draft of the fix used `$link->update()` and the test caught it.
+
+### 28: two events can be the first one
+
+The repair gate accepts `created` or `updated`, and the log context NAMES which one it stood in for —
+the only place the two accepted answers are observably different, and what an operator needs to check
+the repair against their own config. Neither configured is still a refusal: an absent link is then
+absent for an innocent reason, and manufacturing one would create a CRM record nobody asked for.
+
+`tests/Feature/Sync/RestorePolicyTest.php`'s old no-`created` case used `['updated', 'deleted']`,
+which is now a case that SHOULD dispatch. It was replaced by `['deleted']` — the only shape where no
+configured event would ever have linked the model.
+
 ## A correction to `04-RESEARCH.md` Common Pitfall 2
 
 Fixing the purge meant relying on `trashed()` inside `forceDeleted()`, which the research says is
@@ -708,7 +769,13 @@ wrong mechanism now carry the measured one.
 
 ## Mutation note
 
-Scoped run over the changed classes: **85.20% MSI** (259 tested, 45 untested), floor 80. Every
+Scoped run over the changed classes after findings 26-28: **88.13% MSI** (282 tested, 38 untested),
+floor 80. The rise came from the log-context assertions the `created`/`updated` split needed anyway —
+naming the initiating event made two arms observably different, and pinning the cancellation message
+verbatim killed its `Concat` mutants. Survivors are unchanged in kind: `Concat*` and
+`RemoveArrayItem` on log message strings and log context arrays.
+
+The figure before those findings, for comparison: **85.20% MSI** (259 tested, 45 untested). Every
 remaining survivor is a `Concat*` mutator on a multi-line log MESSAGE string, plus one pre-existing
 `RemoveStringCast` on `SyncHubspotObjectJob`'s `(string) getKey()` from 04-02. Log wording is not a
 behaviour worth pinning by string equality; the log **level** and the log **context** are, and both
