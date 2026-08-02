@@ -125,6 +125,11 @@ if [ "${1:-}" = "--self-test" ]; then
     require_ref pre-rename \
         && check "a file renamed OUT of the gated directory still matches" 0 branch pre-rename 'site/*'
 
+    # Non-ASCII, which git C-quotes under its default core.quotePath. A Canadian company writes
+    # accented filenames; this is not an exotic case here.
+    (cd "$work" && printf 'accented\n' > "site/caf\xc3\xa9.mdx" && git add -A && git commit -qm accented)
+    check "an accented filename still matches its directory glob" 0 branch base-ref 'site/*'
+
     # `*` in a `case` pattern spans slashes, which is what makes one pattern cover a whole tree.
     # The file has to actually CHANGE to appear in the diff: the first draft of this check asserted
     # against a file that only ever existed in the base commit, and the self-test caught it.
@@ -188,24 +193,38 @@ if ! git rev-parse --verify --quiet "$base" >/dev/null; then
     exit 0
 fi
 
-# `--no-renames` is load-bearing, not tidy (Codex, local review). With rename detection on,
-# `--name-only` reports a rename as its DESTINATION only, so moving `site/page.ts` to
-# `archive/page.ts` prints just `archive/page.ts` -- which matches no `site/*` pattern, and the docs
-# gate would report green having never rebuilt a site that just lost a file. Disabling detection
-# lists the deletion and the addition separately, so the source path is seen too.
-if ! changed="$(git diff --name-only --no-renames "${base}${range_separator}HEAD" 2>/dev/null)"; then
+# Two flags, each load-bearing, each found by review rather than by thinking about it.
+#
+# `--no-renames`: with rename detection on, `--name-only` reports a rename as its DESTINATION only,
+# so moving `site/page.ts` to `archive/page.ts` prints just `archive/page.ts` -- which matches no
+# `site/*` pattern, and the docs gate would report green having never rebuilt a site that just lost
+# a file. Disabling detection lists the deletion and the addition separately.
+#
+# `-z`: git C-QUOTES any path outside plain ASCII under its default `core.quotePath`, so
+# `site/café.mdx` arrives as the 24-character string `"site/caf\303\251.mdx"` -- LEADING DOUBLE
+# QUOTE included, which is why it matches no `site/*` pattern either. `-z` emits raw pathnames
+# terminated by NUL and does no quoting at all. Measured, not assumed.
+#
+# The output goes to a FILE rather than a variable because bash discards NUL bytes in command
+# substitution -- `$(git diff -z ...)` silently concatenates every path into one string, which
+# would be a worse bug than the one being fixed. The file also keeps the distinction the fail-open
+# rule depends on: a diff that FAILED (non-zero exit) is not a diff that is legitimately EMPTY.
+changed_list="$(mktemp)"
+trap 'rm -f "$changed_list"' EXIT
+
+if ! git diff --name-only --no-renames -z "${base}${range_separator}HEAD" >"$changed_list" 2>/dev/null; then
     echo "paths-changed: git diff against \"$base\" failed, assuming the paths changed." >&2
     exit 0
 fi
 
 # A diff that is legitimately empty is not the same as one that could not be computed. An empty
 # diff means nothing changed, which means nothing matching changed -- answer no, and skip.
-if [ -z "$changed" ]; then
+if [ ! -s "$changed_list" ]; then
     echo "paths-changed: no files changed against $base."
     exit 1
 fi
 
-while IFS= read -r file; do
+while IFS= read -r -d '' file; do
     [ -n "$file" ] || continue
 
     for pattern in "$@"; do
@@ -217,7 +236,7 @@ while IFS= read -r file; do
                 ;;
         esac
     done
-done <<<"$changed"
+done <"$changed_list"
 
 echo "paths-changed: nothing matching [$*] changed against $base."
 exit 1
