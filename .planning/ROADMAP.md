@@ -193,8 +193,8 @@ Plans:
 - [x] 04-03-PLAN.md — `PropertyMapper`'s three `$hubspotMap` forms, `$hubspotUpdateMap`'s narrowing, and the job's update-by-stored-id leg
 - [x] 04-04-PLAN.md — Three models on one object type, an API-only type with no binding, and the trait's relation plus three query scopes
 - [ ] 04-05-PLAN.md — The generic observer's event surface, its three independent gates, zero HTTP in a request lifecycle, and D-17's restore guard
-- [ ] 04-06-PLAN.md — The delete-policy table on `trashed` / `forceDeleted` / `deleted`, the archive job, and a restore that flags without nulling
-- [ ] 04-07-PLAN.md — `withoutSyncing()` and `HUBSPOT_DISABLED`, one gate consulted at dispatch and again on the worker
+- [x] 04-06-PLAN.md — The delete-policy table on `trashed` / `forceDeleted` / `deleted`, the archive job, and a restore that flags without nulling
+- [x] 04-07-PLAN.md — `withoutSyncing()` and `HUBSPOT_DISABLED`, one gate consulted at dispatch and again on the worker
 - [ ] 04-08-PLAN.md — `Model::syncManyToHubspot()`: one job, one `upsertMany()`, one request, and `assertSynced` widened to a bound model
 - [ ] 04-09-PLAN.md — `hubspot:doctor`'s real bound-model section (REG-04b), replacing the test that held the opposite, and the phase close-out
 
