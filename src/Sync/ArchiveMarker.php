@@ -71,10 +71,22 @@ final class ArchiveMarker
      * with the value that instance already has leaves the attribute CLEAN, and `save()` then writes
      * no column at all. `archived_at` is dirty either way, which is exactly why an earlier revision
      * of this appeared to work.
+     *
+     * Written WITHOUT GLOBAL SCOPES for a second, independent reason (Codex, PR #65).
+     * {@see HubspotObjectLink} is a public model, and an application may put a global scope on it --
+     * `whereNull('archived_at')` being the obvious one to write. Stamping the marker is exactly what
+     * makes the row stop matching such a scope, so a scoped withdrawal matches ZERO rows and updates
+     * nothing at all, silently: the exception still reaches the caller, while `archived_at` stays
+     * set on a record that was never archived. The primary key is already known here, so there is
+     * nothing a scope could usefully narrow.
+     *
+     * The synchronous path this class absorbed already did this; the queued path did not. Giving the
+     * marker one owner is only an improvement if that owner keeps the STRONGER of the two behaviours
+     * it replaced, so both callers get the unscoped write now.
      */
     public function withdraw(): void
     {
-        HubspotObjectLink::query()->whereKey($this->linkId)->update([
+        (new HubspotObjectLink)->newQueryWithoutScopes()->whereKey($this->linkId)->update([
             'archived_at' => null,
             'is_stale' => $this->wasStale,
             'stale_at' => $this->staleAt,
