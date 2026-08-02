@@ -80,7 +80,9 @@ final class FacadeContractTest extends TestCase
 
         preg_match_all('/@method\s+static\s+\S+\s+(\w+)\s*\(/', $docComment, $matches);
 
-        /** @var list<string> $names */
+        // No `@var` here. PHPStan infers `list<non-empty-string>` from preg_match_all, which is
+        // STRICTER than `list<string>` -- annotating it would widen a type the analyser already had
+        // right, which is the shape of suppression STANDARDS 3 forbids rather than a helpful hint.
         $names = $matches[1];
         sort($names);
 
