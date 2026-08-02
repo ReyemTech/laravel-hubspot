@@ -68,6 +68,8 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
         public string $objectType,
         public string $hubspotId,
         public ?int $linkId = null,
+        public ?bool $wasStale = null,
+        public ?string $staleAt = null,
     ) {}
 
     /**
@@ -167,7 +169,20 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
             return;
         }
 
-        HubspotObjectLink::query()->whereKey($this->linkId)->update(['archived_at' => null]);
+        // The stale flag goes back too, not just the marker (Codex, PR #56). A restore landing
+        // between this job's dispatch and a disabled worker picking it up sees the marker, concludes
+        // an archive was issued and flags the link. Clearing only `archived_at` would then leave a
+        // live local model pointing at a live HubSpot record while `pendingHubspotSync()` reported it
+        // as stale for ever, with nothing to clear it.
+        //
+        // The pre-marker values travel WITH the job rather than being blanked here, for the reason
+        // the synchronous failure path snapshots them: a flag that was already set for some other
+        // reason had nothing to do with this refusal and must survive it.
+        HubspotObjectLink::query()->whereKey($this->linkId)->update([
+            'archived_at' => null,
+            'is_stale' => (bool) $this->wasStale,
+            'stale_at' => $this->staleAt,
+        ]);
 
         Log::warning(self::suppressedMessage(), $context);
     }

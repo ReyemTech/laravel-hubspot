@@ -406,6 +406,43 @@ final class SyncSuppressionTest extends SyncTestCase
     }
 
     /**
+     * The withdrawal restores the stale flag too, not just the marker (Codex, PR #56).
+     *
+     * A restore landing between this job's dispatch and a disabled worker picking it up sees the
+     * marker, concludes an archive was issued and flags the link. Clearing only `archived_at` would
+     * leave a live local model pointing at a live HubSpot record while `pendingHubspotSync()`
+     * reported it stale for ever, with nothing to clear it. The synchronous failure path already
+     * restores the snapshot; a refusal is the same truth as a failure, so it restores the same row.
+     */
+    public function test_a_suppressed_archive_restores_the_stale_flag_a_racing_restore_set(): void
+    {
+        Hubspot::fake();
+        SoftDeletingLead::create(['email' => 'racedsuppression@example.com', 'first_name' => 'Ada']);
+
+        $link = HubspotObjectLink::query()->sole();
+
+        // The job carries the state as it was BEFORE the marker: not stale.
+        $job = new ArchiveHubspotObjectJob('contacts', $link->hubspot_id, $link->id, false, null);
+
+        // ...and then a restore raced it, on the strength of the marker the dispatch wrote.
+        $link->update(['archived_at' => now(), 'is_stale' => true, 'stale_at' => now()]);
+
+        Hubspot::fake();
+        config()->set('hubspot.disabled', true);
+
+        app()->call([$job, 'handle']);
+
+        $fresh = HubspotObjectLink::query()->sole();
+        self::assertNull($fresh->archived_at);
+        self::assertFalse(
+            $fresh->is_stale,
+            'A live record reported as stale for ever is the mirror image of the stranded marker, '
+            .'and nothing later clears it.'
+        );
+        self::assertNull($fresh->stale_at);
+    }
+
+    /**
      * A job serialised by an older release carries no link id and cannot find its marker without
      * guessing -- `hubspot_id` alone may match more than one link row, and clearing the wrong one
      * would destroy somebody else's legitimate archive. It says so loudly instead of guessing.

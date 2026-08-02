@@ -396,9 +396,7 @@ final class HubspotObserver
         // The link's KEY travels with the job so that a suppressed archive can take this marker
         // back on the worker (Codex, PR #56). Without it the job completes, the marker survives, and
         // a live HubSpot record is treated as archived by every read path there is.
-        $job = new ArchiveHubspotObjectJob($link->object_type, $link->hubspot_id, $link->id);
-
-        DB::afterCommit(function () use ($link, $job, $event, $model): void {
+        DB::afterCommit(function () use ($link, $event, $model): void {
             // The deletion this archive answers for must still exist by the time the archive goes
             // out (Codex, PR #49). Deferring to commit is what opens this: a model soft deleted and
             // RESTORED inside one transaction fires `restored` before this callback runs, and that
@@ -434,6 +432,18 @@ final class HubspotObserver
             // the row's true state at this moment: any link reaching here carries no marker, so the
             // restore path cannot have flagged it since it was read.
             $flagBeforeTheMarker = ['is_stale' => $link->is_stale, 'stale_at' => $link->stale_at];
+
+            // Built HERE rather than above the callback, so it can carry the snapshot with it. The
+            // worker may refuse this archive -- the kill switch survives the queue where a
+            // suppression block does not -- and a refused archive has to put the row back exactly as
+            // a FAILED one does. Both paths withdraw the same three columns; only the moment differs.
+            $job = new ArchiveHubspotObjectJob(
+                $link->object_type,
+                $link->hubspot_id,
+                $link->id,
+                $link->is_stale,
+                $link->stale_at?->toIso8601String(),
+            );
 
             $link->update(['archived_at' => Carbon::now()]);
 

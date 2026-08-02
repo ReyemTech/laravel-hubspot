@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot;
 
 use Closure;
+use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\App;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
@@ -40,6 +41,12 @@ final class HubspotManager implements SyncStateContract
      */
     private bool $syncingSuppressed;
 
+    /**
+     * What was bound as the transport before a fake replaced it, so that flushing the fake puts the
+     * application's own choice back rather than the package's config-built default.
+     */
+    private ?HubspotClientFactory $factoryBeforeTheFake = null;
+
     public function __construct(private readonly Container $container)
     {
         $this->syncingSuppressed = false;
@@ -70,6 +77,17 @@ final class HubspotManager implements SyncStateContract
         $this->syncingSuppressed = false;
 
         if (! $hadFake) {
+            return;
+        }
+
+        // An application that bound its own transport at boot gets THAT back, not the config-built
+        // default. Forgetting the binding is only right when there was nothing there before the fake
+        // (Codex, PR #56) -- otherwise the fake's cleanup silently substitutes a different transport
+        // for the one the application chose.
+        if ($this->factoryBeforeTheFake instanceof HubspotClientFactory) {
+            App::instance(HubspotClientFactory::class, $this->factoryBeforeTheFake);
+            $this->factoryBeforeTheFake = null;
+
             return;
         }
 
@@ -135,6 +153,17 @@ final class HubspotManager implements SyncStateContract
      */
     public function fake(array $responses = []): HubspotFake
     {
+        // Captured BEFORE the fake replaces it, and only when there is not already a fake in place
+        // -- a second `fake()` call must not record the first fake's factory as the thing to
+        // restore (Codex, PR #56).
+        //
+        // `resolved()` first, because `make()` on an unresolved binding would BUILD the real factory
+        // and that throws when no token is configured, which is the ordinary case in a test suite.
+        // Asking whether one already exists is the only safe way to look.
+        if (! $this->fake instanceof HubspotFake) {
+            $this->factoryBeforeTheFake = $this->transportBoundBeforeTheFake();
+        }
+
         return $this->fake = new HubspotFake($this->container, $responses);
     }
 
@@ -267,6 +296,33 @@ final class HubspotManager implements SyncStateContract
     public function isFaked(): bool
     {
         return $this->fake instanceof HubspotFake;
+    }
+
+    /**
+     * The transport instance the container already holds, or null if it holds none yet.
+     *
+     * Asked through `resolved()` rather than `bound()`: the ServiceProvider registers a singleton
+     * BINDING for this class, so `bound()` is true from boot and `make()` would then BUILD the real
+     * factory -- which throws when no token is configured, the ordinary case in a test suite. Only
+     * `resolved()` distinguishes "an instance exists" from "one could be made".
+     *
+     * `resolved()` lives on the concrete container and not on
+     * `Illuminate\Contracts\Container\Container`, hence the narrowing. It is deliberately NOT
+     * reached through the `App` facade: `Facade::resolved()` is the facade's OWN static method for
+     * registering resolution callbacks, so `App::resolved($class)` type-errors on a string rather
+     * than proxying to the container. That collision cost a full suite run to find.
+     */
+    private function transportBoundBeforeTheFake(): ?HubspotClientFactory
+    {
+        if (! $this->container instanceof IlluminateContainer
+            || ! $this->container->resolved(HubspotClientFactory::class)) {
+            return null;
+        }
+
+        /** @var HubspotClientFactory $factory */
+        $factory = $this->container->make(HubspotClientFactory::class);
+
+        return $factory;
     }
 
     private function fakeOrFail(): HubspotFake

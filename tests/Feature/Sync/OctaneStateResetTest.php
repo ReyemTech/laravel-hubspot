@@ -147,6 +147,34 @@ final class OctaneStateResetTest extends SyncTestCase
     }
 
     /**
+     * A fake installed OVER an application's own transport puts that transport back, not the
+     * config-built default (Codex, PR #56).
+     *
+     * This is the case the `$hadFake` guard alone did not cover: it stopped the reset from running
+     * when no fake was involved, but when one WAS, `forgetInstance()` still discarded whatever the
+     * application had bound at boot. The next request then silently used a different transport.
+     */
+    public function test_a_boundary_puts_back_the_transport_a_fake_replaced(): void
+    {
+        config()->set('hubspot.token', 'pat-na1-test-token');
+
+        $custom = HubspotClientFactory::fromConfig('pat-na1-custom', 5.0, 2.0, false);
+        app()->instance(HubspotClientFactory::class, $custom);
+
+        Hubspot::fake();
+
+        self::assertNotSame($custom, app(HubspotClientFactory::class), 'The fake must have replaced it.');
+
+        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+
+        self::assertSame(
+            $custom,
+            app(HubspotClientFactory::class),
+            'The application chose that transport; cleaning up a fake must not substitute another.'
+        );
+    }
+
+    /**
      * The consequence, rather than the flag: a model created in the "next request" syncs normally
      * once the boundary has cleared what the previous one left behind.
      */
