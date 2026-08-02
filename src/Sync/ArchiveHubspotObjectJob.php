@@ -61,8 +61,14 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      * owns that lifecycle for both this class and {@see HubspotObserver}. A fourth column added
      * there needs no change here at all, which is the point.
      *
-     * Optional, because a job serialised by a release that predates it arrives without one. It says
-     * so rather than guessing; see {@see takeBackTheMarker()}.
+     * Optional, because an in-flight payload serialised before markers existed arrives without one.
+     * It says so rather than guessing; see {@see takeBackTheMarker()}.
+     *
+     * Note what that case is NOT. This class ships for the first time in 0.6.0 -- it is absent from
+     * every tag up to and including v0.5.0 -- so no RELEASE ever wrote a marker-less payload, and
+     * every release that dispatches this job at all writes one. The reachable case is a job queued
+     * by a development build between 04-06 and issue #57 and picked up by a worker running newer
+     * code. Defensive, deliberately kept, and deliberately not described as a compatibility promise.
      *
      * Declared here with its default rather than promoted in the constructor, and that is
      * load-bearing (Codex, PR #65). A PROMOTED parameter's default belongs to the parameter, not to
@@ -161,7 +167,7 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
      * merely "work skipped": the local row is deleted while the HubSpot record is still live, and
      * nothing will revisit it. An operator should see that divergence.
      *
-     * A job carrying no `$linkId` is one serialised before this parameter existed. It cannot find
+     * A job carrying no `$marker` is one serialised before that parameter existed. It cannot find
      * its marker without guessing -- `hubspot_id` alone may match more than one link row -- and
      * guessing wrong would clear a marker belonging to somebody else's legitimate archive. It says
      * so instead.
@@ -195,8 +201,9 @@ final class ArchiveHubspotObjectJob implements ShouldQueue
     private static function strandedMessage(): string
     {
         return 'A HubSpot archive was skipped on the worker because syncing is switched off, and '
-            .'its archive marker could NOT be taken back: this job was queued by an older release '
-            .'that did not record which link row it came from. Clear archived_at on that link by '
-            .'hand, or the record is treated as archived while it is still live.';
+            .'its archive marker could NOT be taken back: this job was serialised before archive '
+            .'markers existed, so it does not record which link row it came from. Clear '
+            .'archived_at on that link by hand, or the record is treated as archived while it is '
+            .'still live.';
     }
 }

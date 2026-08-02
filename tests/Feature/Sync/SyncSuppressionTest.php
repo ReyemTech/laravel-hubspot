@@ -444,10 +444,14 @@ final class SyncSuppressionTest extends SyncTestCase
     }
 
     /**
-     * A job serialised by a release that predates {@see ArchiveMarker} carries none, and cannot
-     * find its marker without guessing -- `hubspot_id` alone may match more than one link row, and
-     * clearing the wrong one would destroy somebody else's legitimate archive. It says so loudly
-     * instead of guessing.
+     * A job serialised before {@see ArchiveMarker} existed carries none, and cannot find its marker
+     * without guessing -- `hubspot_id` alone may match more than one link row, and clearing the
+     * wrong one would destroy somebody else's legitimate archive. It says so loudly instead of
+     * guessing.
+     *
+     * No released version can produce that payload: this job is absent from every tag up to v0.5.0
+     * and ships first in 0.6.0. The case is a development build's in-flight job, which is why the
+     * warning names the missing marker rather than an "older release".
      */
     public function test_an_archive_job_without_a_marker_says_so_rather_than_guessing(): void
     {
@@ -472,9 +476,10 @@ final class SyncSuppressionTest extends SyncTestCase
         );
         $log->shouldHaveReceived('warning', [
             'A HubSpot archive was skipped on the worker because syncing is switched off, and its '
-            .'archive marker could NOT be taken back: this job was queued by an older release that '
-            .'did not record which link row it came from. Clear archived_at on that link by hand, '
-            .'or the record is treated as archived while it is still live.',
+            .'archive marker could NOT be taken back: this job was serialised before archive '
+            .'markers existed, so it does not record which link row it came from. Clear '
+            .'archived_at on that link by hand, or the record is treated as archived while it is '
+            .'still live.',
             ['object_type' => 'contacts', 'hubspot_id' => $link->hubspot_id, 'link_id' => null],
         ]);
     }
@@ -491,7 +496,7 @@ final class SyncSuppressionTest extends SyncTestCase
      * than null. Reading it throws `Error` before the warning is reached, and the job then burns
      * its retries and fails, leaving the very stranded marker this path exists to report.
      *
-     * The payload below is the one the release before {@see ArchiveMarker} wrote: the three loose
+     * The payload below is the one a build predating {@see ArchiveMarker} wrote: the three loose
      * scalars the marker replaced, and no marker.
      */
     public function test_an_archive_job_deserialised_without_a_marker_says_so_rather_than_erroring(): void
@@ -525,9 +530,10 @@ final class SyncSuppressionTest extends SyncTestCase
         );
         $log->shouldHaveReceived('warning', [
             'A HubSpot archive was skipped on the worker because syncing is switched off, and its '
-            .'archive marker could NOT be taken back: this job was queued by an older release that '
-            .'did not record which link row it came from. Clear archived_at on that link by hand, '
-            .'or the record is treated as archived while it is still live.',
+            .'archive marker could NOT be taken back: this job was serialised before archive '
+            .'markers existed, so it does not record which link row it came from. Clear '
+            .'archived_at on that link by hand, or the record is treated as archived while it is '
+            .'still live.',
             ['object_type' => 'contacts', 'hubspot_id' => $link->hubspot_id, 'link_id' => null],
         ]);
     }
