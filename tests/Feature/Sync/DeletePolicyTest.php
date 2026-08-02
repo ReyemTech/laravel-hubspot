@@ -359,6 +359,119 @@ final class DeletePolicyTest extends SyncTestCase
     }
 
     /**
+     * A soft delete UNDONE before its own transaction commits archives nothing (Codex, PR #49).
+     *
+     * Deferring the archive to commit is what makes this reachable. `restored()` runs inside the
+     * transaction, sees a link carrying no marker -- there is none yet, by design -- and correctly
+     * declines to flag it. The transaction then commits and the deferred callback archives the
+     * HubSpot record of a model that is live again, and nothing later repairs it: no further event
+     * fires, and `archived_at` then removes the model from every sync path there is.
+     *
+     * Only `trashed` can be undone this way. A hard delete's row is gone for good, which is why the
+     * recheck is asked of that event alone.
+     */
+    public function test_a_restore_inside_the_deleting_transaction_cancels_the_deferred_archive(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'undeleted@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake();
+
+        DB::transaction(function () use ($lead): void {
+            $lead->delete();
+            $lead->restore();
+        });
+
+        Hubspot::assertRequestCount(0);
+
+        $link = HubspotObjectLink::query()->sole();
+        self::assertNull(
+            $link->archived_at,
+            'A marker for an archive that was cancelled makes every later push refuse the link and '
+            .'every later delete skip it.'
+        );
+        self::assertFalse($link->is_stale, 'Nothing was archived, so nothing is stale.');
+        self::assertFalse(
+            $lead->fresh()?->trashed() ?? true,
+            'The model must be live again -- the whole premise of the cancellation.'
+        );
+    }
+
+    /**
+     * The committed case, so the test above cannot pass merely because a restore in the same
+     * transaction stops the delete from ever being seen.
+     */
+    public function test_a_delete_committed_without_a_restore_still_archives(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'committedsoft@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake();
+
+        DB::transaction(function () use ($lead): void {
+            $lead->delete();
+        });
+
+        Hubspot::assertRequestCount(1);
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+    }
+
+    /**
+     * A failed archive takes back the stale flag its own marker caused, not merely the marker
+     * (Codex, PR #49).
+     *
+     * With `queue => false` the request goes out inline, so a restore racing it reads the marker
+     * this callback has just written, concludes an archive was issued and flags the link stale. The
+     * request then fails and the archive never happened -- so a cleanup that clears only
+     * `archived_at` leaves a LIVE HubSpot record reported as stale by `pendingHubspotSync()` for
+     * ever, with nothing to clear it.
+     *
+     * The race is made deterministic by firing the restore from the marker's own query, which is
+     * precisely the window the finding describes. The flag is restored to what it was before the
+     * marker rather than blanked, so a stale flag that was already there for some other reason
+     * survives a failure it had nothing to do with.
+     */
+    public function test_a_failed_archive_takes_back_the_stale_flag_its_own_marker_caused(): void
+    {
+        config()->set('hubspot.auto_sync.queue', false);
+
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'racedfail@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::fake(['contacts' => Hubspot::response(['message' => 'boom'], 500)]);
+
+        $restoreRaced = false;
+
+        DB::listen(function (QueryExecuted $query) use (&$restoreRaced, $lead): void {
+            if ($restoreRaced || ! str_contains($query->sql, 'archived_at')) {
+                return;
+            }
+
+            // Set before restoring, so the restore's own queries cannot re-enter this.
+            $restoreRaced = true;
+            $lead->restore();
+        });
+
+        try {
+            $lead->delete();
+        } catch (Throwable) {
+            // The failure reaching the caller is what the test above already pins; this one is
+            // about the row it leaves behind.
+        }
+
+        self::assertTrue($restoreRaced, 'The racing restore must actually have run.');
+
+        $link = HubspotObjectLink::query()->sole();
+        self::assertNull($link->archived_at);
+        self::assertFalse(
+            $link->is_stale,
+            'The archive failed, so the record is still live -- reporting it stale is work no '
+            .'later write would ever clear.'
+        );
+        self::assertNull($link->stale_at);
+    }
+
+    /**
      * A soft delete landing between the sync job's trashed guard and its link write finds NO link
      * -- the job has not written one yet -- so `trashed` has nothing to archive and schedules
      * nothing. The job then records a link for a model that is already deleted, and no later event
