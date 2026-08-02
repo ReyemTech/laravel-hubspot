@@ -239,14 +239,6 @@ final class HubspotObserver
             return;
         }
 
-        // A restore does not ride the event list, but it does ride the two escape hatches: a
-        // `withoutSyncing()` block covering a bulk restore must not dispatch a sync per row, and the
-        // kill switch means what it says. Placed before the link is read so that a suppressed
-        // restore performs no work at all.
-        if (! $this->syncGate()->permits()) {
-            return;
-        }
-
         // `on_restore` is READ rather than assumed, so an unsupported value still throws where an
         // operator can see it. {@see DeletePolicy} answers `flag-stale` for every value it accepts,
         // which is why there is nothing to branch on here: `recreate` is not implemented in this
@@ -519,6 +511,16 @@ final class HubspotObserver
         };
 
         if ($initiator === null) {
+            return;
+        }
+
+        // The escape hatches gate the DISPATCH and nothing else (Codex, PR #56). An earlier
+        // revision asked this question at the top of `restored()`, which also suppressed
+        // {@see flagStale()} -- and that is local bookkeeping, not an outbound call. Suppressing it
+        // left `archived_at` set with `is_stale` false, so once syncing was re-enabled property
+        // pushes skipped the link while `pendingHubspotSync()` could not report it. The restored
+        // model was stranded by the very switch that was meant to be careful.
+        if (! $this->syncGate()->permits()) {
             return;
         }
 

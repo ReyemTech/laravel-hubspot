@@ -59,8 +59,19 @@ final class HubspotManager implements SyncStateContract
      */
     public function flushState(): void
     {
+        // Whether a fake was installed decides whether the TRANSPORT needs putting back (Codex,
+        // PR #56). An application may bind its own `HubspotClientFactory` at boot through the public
+        // `forTransport()` seam; forgetting it unconditionally would discard that at every Octane
+        // boundary and silently fall back to the config-built client -- a different transport than
+        // the one the application chose, restored on its behalf.
+        $hadFake = $this->fake instanceof HubspotFake;
+
         $this->fake = null;
         $this->syncingSuppressed = false;
+
+        if (! $hadFake) {
+            return;
+        }
 
         // The TRANSPORT too, not just the flag that describes it (Codex, PR #56).
         //

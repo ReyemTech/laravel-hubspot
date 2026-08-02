@@ -223,14 +223,17 @@ final class SyncSuppressionTest extends SyncTestCase
     }
 
     /**
-     * A restore is gated separately from every other event -- it answers for an archive that already
-     * happened, so it deliberately ignores `auto_sync.on` -- but it does ride both escape hatches.
-     * A bulk restore inside `withoutSyncing()` must not flag a link per row.
+     * Suppression gates the DISPATCH, and local bookkeeping keeps running (Codex, PR #56).
      *
-     * The stale flag is what makes the difference observable: an unsuppressed restore of an archived
-     * link sets it, and issues no request either way.
+     * An earlier revision of this test asserted the opposite, and it was wrong. `flagStale()` writes
+     * to this package's own table; it makes no outbound call, so neither escape hatch has any
+     * business stopping it. Suppressing it left `archived_at` set with `is_stale` FALSE -- and that
+     * pair is the silent stranding this package has fought all through 04-06: property pushes skip a
+     * link carrying `archived_at`, while `pendingHubspotSync()` cannot report one that is not stale.
+     * The restored model would have been invisible to every sync path even after syncing was
+     * switched back on.
      */
-    public function test_without_syncing_suppresses_the_response_a_restore_would_have_made(): void
+    public function test_a_suppressed_restore_still_keeps_its_local_bookkeeping(): void
     {
         Hubspot::fake();
         $lead = SoftDeletingLead::create(['email' => 'suppressrestore@example.com', 'first_name' => 'Ada']);
@@ -242,16 +245,44 @@ final class SyncSuppressionTest extends SyncTestCase
         );
 
         Hubspot::fake();
+        Bus::fake();
 
         Hubspot::withoutSyncing(function () use ($lead): void {
             $lead->restore();
         });
 
         Hubspot::assertRequestCount(0);
-        self::assertFalse(
+        Bus::assertNothingDispatched();
+        self::assertTrue(
             HubspotObjectLink::query()->sole()->is_stale,
-            'A suppressed restore must leave the link exactly as it found it.'
+            'archived_at set with is_stale false is invisible to every sync path there is -- pushes '
+            .'skip it and pendingHubspotSync() cannot report it.'
         );
+    }
+
+    /**
+     * The half that IS suppressed: a restore with no link at all would dispatch a first sync, and
+     * that is an outbound call, so both hatches stop it.
+     */
+    public function test_a_suppressed_restore_dispatches_no_first_sync(): void
+    {
+        Hubspot::fake();
+        $lead = SoftDeletingLead::create(['email' => 'suppressfirstsync@example.com', 'first_name' => 'Ada']);
+
+        // The state the trashed guard leaves behind: deleted before the initial sync ever landed.
+        HubspotObjectLink::query()->delete();
+        $lead->delete();
+
+        Hubspot::fake();
+        Bus::fake();
+
+        Hubspot::withoutSyncing(function () use ($lead): void {
+            $lead->restore();
+        });
+
+        Bus::assertNothingDispatched();
+        Hubspot::assertRequestCount(0);
+        self::assertNull(HubspotObjectLink::query()->value('id'));
     }
 
     public function test_the_kill_switch_stops_a_dispatch(): void

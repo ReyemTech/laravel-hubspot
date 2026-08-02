@@ -122,6 +122,31 @@ final class OctaneStateResetTest extends SyncTestCase
     }
 
     /**
+     * A boundary with NO fake installed leaves the transport alone (Codex, PR #56).
+     *
+     * An application may bind its own `HubspotClientFactory` at boot through the public
+     * `forTransport()` seam -- a proxy, a recording transport, a shared Guzzle handler. Forgetting
+     * the binding unconditionally would discard that at every request, task and tick, and silently
+     * fall back to the config-built client. The reset exists to undo what a FAKE did; when no fake
+     * was installed there is nothing to undo.
+     */
+    public function test_an_octane_boundary_leaves_a_custom_transport_alone(): void
+    {
+        config()->set('hubspot.token', 'pat-na1-test-token');
+
+        $custom = app(HubspotClientFactory::class);
+
+        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+
+        self::assertSame(
+            $custom,
+            app(HubspotClientFactory::class),
+            'An application that bound its own transport at boot must still have it after a '
+            .'boundary that had no fake to clean up.'
+        );
+    }
+
+    /**
      * The consequence, rather than the flag: a model created in the "next request" syncs normally
      * once the boundary has cleared what the previous one left behind.
      */
