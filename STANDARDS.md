@@ -35,9 +35,18 @@ nothing downstream reports it.
 The rule that follows: **no container singleton this package binds may hold mutable state unless it
 also resets that state at Octane's entry-point boundaries.** `HubspotManager` is the only one that
 does hold any (`$fake` since 02-xx, `$syncingSuppressed` since 04-07), and it exposes `flushState()`
-for exactly this. `ServiceProvider` listens on all four boundaries — request received and terminated,
-task received, tick received — **by class-string**, because `laravel/octane` is not a dependency and
-D-03's vendor allow-list would not admit one.
+for exactly this. `ServiceProvider` listens on the three TERMINATION boundaries — `RequestTerminated`,
+`TaskTerminated`, `TickTerminated` — **by class-string**, because `laravel/octane` is not a dependency
+and D-03's vendor allow-list would not admit one.
+
+**Termination, never reception**, and this document is normative so the distinction has to live here
+rather than only in the code. Resetting on `*Received` destroys state deliberately prepared FOR the
+incoming work: an application or a test that installs `Hubspot::fake()` during boot, or immediately
+before sending a request, has it flushed before the request runs — and in the testing environment the
+consequence is silent and total, because `SyncGate` then suppresses every sync on the grounds that no
+fake is bound. Cleaning up after the work is also Octane's own convention, and costs nothing in
+safety: work that hard-crashes before its termination event takes the worker with it, so no surviving
+process inherits anything.
 
 This makes state per-entry-point, which is the granularity Octane schedules at: Swoole and RoadRunner
 hand each worker one request at a time. It does **not** make state coroutine-local, so genuinely

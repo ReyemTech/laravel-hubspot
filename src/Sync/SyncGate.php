@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\Config;
  * | hatch | stops | cannot stop |
  * |---|---|---|
  * | `withoutSyncing()` | the dispatch, in this process | a job already on the queue |
- * | `HUBSPOT_DISABLED` | the dispatch AND the worker | nothing, but it is all-or-nothing |
+ * | `HUBSPOT_DISABLED` | the dispatch AND the worker | a `queue:work` daemon that has not restarted |
  *
  * `withoutSyncing()` is in-process state and does not survive a process boundary, so a worker that
  * started before the block was entered knows nothing about it. `HUBSPOT_DISABLED` is read from
