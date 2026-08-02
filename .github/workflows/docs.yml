@@ -12,7 +12,12 @@ permissions:
 # in Astro/Starlight, which need a newer Node than resources/js's Vitest floor, so the two
 # workspaces are installed and built in isolation from each other on purpose.
 concurrency:
-  group: docs-${{ github.workflow }}-${{ github.ref }}
+  # Keyed on the COMMIT for non-pull-request runs: GitHub keeps at most one PENDING run per
+  # group, so a ref-keyed group silently drops queued runs during a burst of merges even with
+  # cancel-in-progress false (Codex, local review).
+  group: >-
+    docs-${{ github.workflow }}-${{ github.event_name == 'pull_request'
+    && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -48,7 +53,15 @@ jobs:
               "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
             base="origin/${{ github.base_ref }}"
           else
-            base="HEAD^"
+            # The whole PUSHED RANGE, not just its tip (Codex, local review). A push can carry
+            # several commits, and `HEAD^` would compare against the one before the tip -- so a
+            # push whose earlier commit changes what this gate covers and whose tip does not would
+            # silently skip a required gate. `github.event.before` is the ref's previous tip.
+            #
+            # No special case for the all-zero sha of a first push, nor for a force-push whose old
+            # tip has been garbage collected: paths-changed.sh already fails OPEN on any ref it
+            # cannot resolve, which is the correct answer for both.
+            base="${{ github.event.before }}"
           fi
 
           if bash scripts/ci/paths-changed.sh "$base" \
