@@ -31,34 +31,47 @@ jobs:
     name: PHP ${{ matrix.php }} - Laravel ${{ matrix.laravel }} - ${{ matrix.stability }}
     runs-on: ubuntu-latest
 
-    # While a pull request is a DRAFT, only the reference cell runs; the other eleven are skipped.
-    # Marking it ready for review, or pushing to it afterwards, runs all twelve.
+    # While a pull request is a DRAFT, only the reference cell does any work; the other eleven start,
+    # skip every step and report green in seconds. Marking it ready for review, or pushing to it
+    # afterwards, runs all twelve for real.
     #
-    # This is a job-level `if`, and that is the whole reason it is safe. All twelve cells are
-    # REQUIRED status checks, and the two ways of not running one are not interchangeable:
+    # ## Why this is computed into `env` and applied per STEP
     #
-    # | mechanism | reports | required check |
-    # |---|---|---|
-    # | workflow-level `paths:` filter | never reports at all | blocks the PR for ever |
-    # | job-level `if:` evaluating false | reports `skipped` | satisfied |
+    # The obvious shape -- a job-level `if:` naming `matrix.*` -- does not work, and fails in the
+    # worst available direction (caught by `codex review` locally before this was ever pushed).
+    # `jobs.<job_id>.if` is evaluated BEFORE the matrix is expanded, so the contexts available to it
+    # are `github`, `needs`, `vars` and `inputs` -- and NOT `matrix`. The expression either fails
+    # workflow validation outright or silently skips all twelve cells on every draft. `env` at job
+    # level, by contrast, does have the `matrix` context, and so do step-level conditions.
     #
-    # A `paths:`-filtered required check leaves the pull request stuck on "Expected -- waiting for
-    # status to be reported", with no run to click into and nothing to re-run. A skipped job costs
-    # no runner at all and still answers branch protection, so the gate is kept and the bill is not.
+    # All twelve cells are REQUIRED status checks, and the three ways of not doing work are not
+    # interchangeable:
+    #
+    # | mechanism | reports | required check | runner cost |
+    # |---|---|---|---|
+    # | workflow-level `paths:` filter | never reports | blocks the PR for ever | none |
+    # | job-level `if:` false | `skipped` | satisfied | none, but cannot see `matrix` |
+    # | step-level `if:` false | `success` | satisfied | ~20s of startup |
+    #
+    # So the eleven idle cells cost about twenty seconds of runner startup each rather than nothing,
+    # and that is the price of a mechanism that can actually see which cell it is in. Against two to
+    # three minutes of composer install and test run per cell, it is still the overwhelming majority
+    # of the saving.
     #
     # The matrix itself is untouched, deliberately: `tests/Ci/MatrixShapeTest.php` expands it to
     # exactly twelve and asserts the support matrix is rectangular. Shrinking the matrix for drafts
-    # would have made that test parse a shape the repository does not actually promise. The cells
-    # still exist; a draft just does not pay for eleven of them.
+    # would have made that test parse a shape the repository does not actually promise.
     #
     # The reference cell is the LOWEST supported PHP against the NEWEST Laravel on prefer-stable:
     # the one most likely to catch an ordinary mistake, and the pair a contributor is most likely
     # to be developing against. It is a smoke test, not the support-matrix guarantee -- that
     # guarantee is what marking the PR ready re-establishes, before any merge can happen.
-    if: >-
-      github.event_name != 'pull_request'
-      || github.event.pull_request.draft != true
-      || (matrix.php == '8.3' && matrix.laravel == '13.*' && matrix.stability == 'prefer-stable')
+    env:
+      RUN_CELL: >-
+        ${{ (github.event_name != 'pull_request'
+        || github.event.pull_request.draft != true
+        || (matrix.php == '8.3' && matrix.laravel == '13.*' && matrix.stability == 'prefer-stable'))
+        && 'true' || 'false' }}
 
     strategy:
       fail-fast: false
@@ -72,10 +85,15 @@ jobs:
           - laravel: '13.*'
             testbench: '11.*'
     steps:
+      # Every step of this job carries the same condition. See RUN_CELL above: on a draft pull
+      # request only the reference cell does real work, and the other eleven skip each step, report
+      # success and satisfy branch protection in about twenty seconds.
       - name: Checkout code
+        if: env.RUN_CELL == 'true'
         uses: actions/checkout@v7
 
       - name: Setup PHP
+        if: env.RUN_CELL == 'true'
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
@@ -90,6 +108,7 @@ jobs:
       # resolved constraint for this run, inside a *full* update, which needs
       # no lock at all.
       - name: Install dependencies
+        if: env.RUN_CELL == 'true'
         run: >
           bash scripts/ci/composer-retry.sh
           update
@@ -107,6 +126,7 @@ jobs:
           --no-interaction
 
       - name: Run tests with coverage
+        if: env.RUN_CELL == 'true'
         run: vendor/bin/pest --coverage --min=95
 
   composer-validate:
