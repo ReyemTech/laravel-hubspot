@@ -38,10 +38,9 @@ final class OctaneStateResetTest extends SyncTestCase
     public static function octaneBoundaries(): array
     {
         return [
-            ['Laravel\Octane\Events\RequestReceived'],
             ['Laravel\Octane\Events\RequestTerminated'],
-            ['Laravel\Octane\Events\TaskReceived'],
-            ['Laravel\Octane\Events\TickReceived'],
+            ['Laravel\Octane\Events\TaskTerminated'],
+            ['Laravel\Octane\Events\TickTerminated'],
         ];
     }
 
@@ -83,7 +82,7 @@ final class OctaneStateResetTest extends SyncTestCase
         $manager = app(HubspotManager::class);
         self::assertTrue($manager->isFaked());
 
-        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+        Event::dispatch('Laravel\Octane\Events\RequestTerminated');
 
         self::assertFalse(
             $manager->isFaked(),
@@ -111,7 +110,7 @@ final class OctaneStateResetTest extends SyncTestCase
 
         $fakeBackedFactory = app(HubspotClientFactory::class);
 
-        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+        Event::dispatch('Laravel\Octane\Events\RequestTerminated');
 
         self::assertNotSame(
             $fakeBackedFactory,
@@ -136,7 +135,7 @@ final class OctaneStateResetTest extends SyncTestCase
 
         $custom = app(HubspotClientFactory::class);
 
-        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+        Event::dispatch('Laravel\Octane\Events\RequestTerminated');
 
         self::assertSame(
             $custom,
@@ -165,13 +164,40 @@ final class OctaneStateResetTest extends SyncTestCase
 
         self::assertNotSame($custom, app(HubspotClientFactory::class), 'The fake must have replaced it.');
 
-        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+        Event::dispatch('Laravel\Octane\Events\RequestTerminated');
 
         self::assertSame(
             $custom,
             app(HubspotClientFactory::class),
             'The application chose that transport; cleaning up a fake must not substitute another.'
         );
+    }
+
+    /**
+     * State prepared FOR a request survives into it (Codex, PR #56).
+     *
+     * The reset listens on `*Terminated` and never on `*Received`, and this is why. An application
+     * or a test that installs `Hubspot::fake()` during boot -- or immediately before sending a
+     * request -- would otherwise have it flushed before the request ran. In the testing environment
+     * the consequence is silent and total: `SyncGate` suppresses every sync because no fake is
+     * bound, and the assertions afterwards report that none ever was.
+     *
+     * `RequestReceived` is dispatched here deliberately. It must be a no-op.
+     */
+    public function test_a_fake_prepared_before_a_request_survives_into_it(): void
+    {
+        Hubspot::fake();
+
+        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+
+        self::assertTrue(
+            app(HubspotManager::class)->isFaked(),
+            'A fake installed for the incoming request must still be there when it runs.'
+        );
+
+        SyncedLead::create(['email' => 'preparedfake@example.com', 'first_name' => 'Ada']);
+
+        Hubspot::assertRequestCount(1);
     }
 
     /**
@@ -186,7 +212,7 @@ final class OctaneStateResetTest extends SyncTestCase
             $this->syncingSuppressed = true;
         })->call($manager);
 
-        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+        Event::dispatch('Laravel\Octane\Events\RequestTerminated');
 
         // The "next request" installs its own fake, exactly as the first one would have.
         Hubspot::fake();

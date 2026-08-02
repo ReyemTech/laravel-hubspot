@@ -318,9 +318,22 @@ final class ServiceProvider extends BaseServiceProvider
      * dispatches it, and costs nothing at all when Octane is absent -- the events are simply never
      * dispatched.
      *
-     * All four worker entry points are covered, not just requests: Octane runs tasks and ticks in
+     * All three worker entry points are covered, not just requests: Octane runs tasks and ticks in
      * the same long-lived process, and a tick that ran with suppression left on would be as silent
      * as a request that did.
+     *
+     * ## `*Terminated`, never `*Received` (Codex, PR #56)
+     *
+     * An earlier revision listened on `RequestReceived` too, reasoning that a request should START
+     * clean. That destroys state deliberately prepared FOR the incoming request: an application or
+     * a test installing `Hubspot::fake()` during boot, or immediately before sending a request, has
+     * it flushed before the request runs. In the testing environment the consequence is silent and
+     * total -- `SyncGate` then suppresses every sync because no fake is bound, and the assertions
+     * afterwards report that none ever was.
+     *
+     * Cleaning up AFTER the work is both the safe order and Octane's own convention. A request that
+     * hard-crashes before its terminate event takes the worker with it, so no surviving process
+     * inherits anything.
      *
      * ## What this does and does not close
      *
@@ -333,10 +346,9 @@ final class ServiceProvider extends BaseServiceProvider
     private function registerOctaneStateReset(): void
     {
         $this->app->make('events')->listen([
-            'Laravel\Octane\Events\RequestReceived',
             'Laravel\Octane\Events\RequestTerminated',
-            'Laravel\Octane\Events\TaskReceived',
-            'Laravel\Octane\Events\TickReceived',
+            'Laravel\Octane\Events\TaskTerminated',
+            'Laravel\Octane\Events\TickTerminated',
         ], function (): void {
             $this->app->make(HubspotManager::class)->flushState();
         });
