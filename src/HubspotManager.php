@@ -26,9 +26,22 @@ final class HubspotManager implements SyncStateContract
 {
     private ?HubspotFake $fake = null;
 
-    private bool $syncingSuppressed = false;
+    /**
+     * Initialised in the CONSTRUCTOR rather than here, and that is a mutation-testing decision
+     * rather than a style one -- the same trade {@see ServiceProvider} makes by
+     * expressing its supported stores as a method instead of a constant.
+     *
+     * A property declaration is not an executed statement, so coverage cannot attribute a test to
+     * it and `pest --mutate` reports flipping this default as UNCOVERED rather than running it. The
+     * default is a real behaviour -- `true` here would suppress every sync in the process from boot
+     * -- so it is written where a test can kill the mutant.
+     */
+    private bool $syncingSuppressed;
 
-    public function __construct(private readonly Container $container) {}
+    public function __construct(private readonly Container $container)
+    {
+        $this->syncingSuppressed = false;
+    }
 
     public function objects(): ObjectGatewayContract
     {

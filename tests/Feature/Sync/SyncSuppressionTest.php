@@ -175,6 +175,17 @@ final class SyncSuppressionTest extends SyncTestCase
         Hubspot::assertRequestCount(0);
     }
 
+    /**
+     * The default, asserted directly rather than only through its consequences.
+     *
+     * `true` here would suppress every sync in the process from boot -- a package that silently
+     * does nothing -- so the default is a behaviour and gets a test of its own.
+     */
+    public function test_syncing_is_not_suppressed_before_any_block_is_opened(): void
+    {
+        self::assertFalse(app(HubspotManager::class)->syncingSuppressed());
+    }
+
     public function test_without_syncing_returns_the_callbacks_own_value(): void
     {
         Hubspot::fake();
