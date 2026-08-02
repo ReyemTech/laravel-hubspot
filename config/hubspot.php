@@ -283,6 +283,32 @@ return [
     | makes HubSpot's availability irrelevant to your own response times; the
     | package never calls the API during a model event.
     |
+    | 'hard_delete' decides what happens when a delete CANNOT be undone locally
+    | -- a model with no SoftDeletes, or a forceDelete() on one that has it. A
+    | soft delete is not governed by this value at all: it is locally
+    | recoverable, so it always mirrors when 'deleted' is opted in above.
+    |
+    |   'guard'   (default)  do not archive; log at info
+    |   'warn'               do not archive; log at WARNING
+    |   'allow'              archive the record in HubSpot
+    |
+    | 'warn' SKIPS. It is the same action as 'guard', said loudly -- not
+    | "archive it, but tell me". Only the value literally named 'allow' can
+    | archive, because HubSpot's delete IS an archive and the API exposes no
+    | unarchive endpoint: nothing this package issues here can be walked back.
+    |
+    | 'on_restore' decides what happens when a soft-deleted model is restored.
+    | Nothing can un-archive the HubSpot record, so it does not pretend to:
+    |
+    |   'flag'    (default)  keep the stored hubspot_id, mark the link stale
+    |
+    | 'flag' is the only value this release accepts. A 'recreate' option --
+    | drop the link and create a NEW record, leaving the old one archived --
+    | was built and withdrawn: a restore can race an archive that is still in
+    | flight, and creating the replacement before that archive confirms leaves
+    | two active records with only one linked. Anything other than 'flag'
+    | throws rather than quietly behaving like it.
+    |
     | Plain scalars and arrays only, here and everywhere in this file:
     | `php artisan config:cache` serialises with var_export(), which throws on a
     | closure. A closure here would break every consumer that caches config, in
@@ -293,6 +319,8 @@ return [
         'enabled' => (bool) env('HUBSPOT_AUTO_SYNC', true),
         'on' => ['created', 'updated'],
         'queue' => true,
+        'hard_delete' => 'guard',
+        'on_restore' => 'flag',
     ],
 
     /*

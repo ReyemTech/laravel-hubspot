@@ -24,6 +24,7 @@ use Illuminate\Support\Carbon;
  * @property string $object_type
  * @property string $hubspot_id
  * @property Carbon|null $synced_at
+ * @property Carbon|null $archived_at
  * @property bool $is_stale
  * @property Carbon|null $stale_at
  * @property Carbon $created_at
@@ -117,6 +118,7 @@ final class HubspotObjectLink extends Model
     {
         return [
             'synced_at' => 'datetime',
+            'archived_at' => 'datetime',
             'stale_at' => 'datetime',
             'is_stale' => 'bool',
         ];

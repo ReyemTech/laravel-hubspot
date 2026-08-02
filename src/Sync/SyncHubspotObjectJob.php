@@ -9,9 +9,12 @@ use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Log;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 
@@ -78,6 +81,30 @@ final class SyncHubspotObjectJob implements ShouldQueue
      */
     public function handle(ModelBindings $bindings, PropertyMapper $mapper, ObjectGatewayContract $gateway): void
     {
+        /** @var HubspotObjectLink|null $link */
+        $link = $this->model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
+
+        if ($this->pushIsOwnedByTheDeletePath($link)) {
+            Log::info(
+                'A HubSpot property push was skipped because the delete path owns that record: '
+                .'this package archived it, and there is no unarchive endpoint to bring it back.',
+                ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+            );
+
+            return;
+        }
+
+        if ($link === null && $this->modelIsTrashed()) {
+            Log::info(
+                'A HubSpot property push was skipped because its model arrived soft-deleted and '
+                .'has never synced. Creating a CRM record for a locally deleted model is not what '
+                .'an unmirrored delete asks for.',
+                ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+            );
+
+            return;
+        }
+
         $binding = $bindings->for(get_class($this->model));
 
         // getHubspotMap() is declared by the SyncsToHubspot trait every bound model uses -- this
@@ -86,15 +113,6 @@ final class SyncHubspotObjectJob implements ShouldQueue
         // Eloquent type.
         /** @var array<string, string|Closure> $map */
         $map = $this->model->getHubspotMap(); // @phpstan-ignore-line method.notFound
-
-        // hubspotLink() is the same trait accessor SyncsToHubspot::hubspotLink() exposes,
-        // already scoped to this binding's object type and to the digest of the model's own
-        // morph class (see the trait's own docblock). Called here, not cached anywhere on this
-        // job, for the identical per-call reason every other Sync collaborator resolves fresh:
-        // the model handed to this method is whatever SerializesModels re-fetched (D-09), and
-        // its link row -- if any -- is read against that same freshly-fetched state.
-        /** @var HubspotObjectLink|null $link */
-        $link = $this->model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
 
         if ($link !== null) {
             // An existing link means this record's HubSpot id is already known, so the write
@@ -115,10 +133,24 @@ final class SyncHubspotObjectJob implements ShouldQueue
 
             $gateway->update($binding->objectType, $link->hubspot_id, $properties);
 
-            // Only synced_at moves. hubspot_id is never rewritten here from the update response --
-            // it is already the address this call just wrote to, and reassigning it from the
-            // response would be re-deriving the very value this branch exists to avoid re-deriving.
-            $link->update(['synced_at' => Carbon::now()]);
+            // hubspot_id is never rewritten here from the update response -- it is already the
+            // address this call just wrote to, and reassigning it from the response would be
+            // re-deriving the very value this branch exists to avoid re-deriving.
+            //
+            // The stale flag is CLEARED here, and this is the only place that clears it (Codex,
+            // PR #49). 04-06's restore path sets it rather than nulling the stored id, and
+            // `SyncsToHubspot::scopePendingHubspotSync()` returns every model carrying it -- so
+            // without this line a link goes stale once, on the first restore, and stays stale
+            // forever. Every subsequent successful write would re-report the model as having sync
+            // work outstanding, which is exactly the silent under-reporting that scope's own
+            // docblock says the flag exists to avoid. A successful write to the stored id IS the
+            // record being current again; there is nothing further for an operator to do.
+            //
+            // Only this branch needs it. The upsert branch below reaches `updateOrCreate()` only
+            // when the relation found no row, and the relation's predicates are a superset of that
+            // call's key, so the row it writes is always a new one -- and a new row's `is_stale`
+            // is false by default.
+            $link->update(['synced_at' => Carbon::now(), 'is_stale' => false, 'stale_at' => null]);
 
             return;
         }
@@ -167,5 +199,135 @@ final class SyncHubspotObjectJob implements ShouldQueue
                 'synced_at' => Carbon::now(),
             ],
         );
+
+        $this->archiveIfTheModelWasDeletedMeanwhile();
+    }
+
+    /**
+     * Converges on a delete that raced this write (Codex, PR #49).
+     *
+     * The guard at the top of `handle()` is a check-before-act on an in-memory model, and the
+     * window between it and the `updateOrCreate()` above is real: a soft delete landing there finds
+     * NO link, because this job had not written one yet, so `HubspotObserver::trashed()` has nothing
+     * to archive and schedules nothing. This job then records a link for a model that is already
+     * deleted, and no later event revisits it.
+     *
+     * The response is to replay the event that could not act, now that the link it needed exists,
+     * rather than to reproduce an archive here -- so the whole gate applies unchanged:
+     * `auto_sync.enabled`, the `'deleted'` opt-in, the per-model override, the `hard_delete` policy
+     * and the `archived_at` evidence. A delete this application does not mirror stays unmirrored,
+     * which is the correct answer and one a hand-rolled archive would have got wrong.
+     *
+     * **Which event is replayed is decided by what actually happened**, because the three do not
+     * resolve alike: `trashed` archives unconditionally, since a soft delete is locally
+     * recoverable, while `forceDeleted` and `deleted` follow `hard_delete`. Replaying the wrong one
+     * for a vanished row would archive irreversibly under the default `guard`.
+     *
+     * | fresh row | model | replayed |
+     * |---|---|---|
+     * | gone | soft-deleting | `forceDeleted()` |
+     * | gone | plain | `deleted()` |
+     * | present and trashed | soft-deleting | `trashed()` |
+     * | present and live | either | nothing raced this write |
+     *
+     * The observer is resolved from the container rather than taken as a fourth parameter of
+     * `handle()`: this job is public API of a released package, and
+     * `roave/backward-compatibility-check` counts a new required parameter on a public method as a
+     * break. The `App` facade is the same seam `SyncsToHubspot` uses, for the same reason.
+     *
+     * Like every convergence in this package this narrows the window rather than closing it -- a
+     * delete landing after the re-read below simply converges on its own next pass.
+     */
+    private function archiveIfTheModelWasDeletedMeanwhile(): void
+    {
+        $usesSoftDeletes = in_array(SoftDeletes::class, class_uses_recursive($this->model), true);
+
+        $fresh = $this->model->newQueryWithoutScopes()->find($this->model->getKey());
+
+        /** @var HubspotObserver $observer */
+        $observer = App::make(HubspotObserver::class);
+
+        // A row that is GONE was hard-deleted, and which event answers for that depends on the
+        // model, not on this job (Codex, PR #49). An earlier revision replayed `trashed()` for
+        // every case, which was wrong in the one that matters most: `trashed` resolves straight to
+        // `archive` without consulting `hard_delete`, because a soft delete is locally recoverable
+        // -- so a raced FORCE delete under the default `guard` would have archived irreversibly,
+        // defeating the exact protection that value exists to provide.
+        if (! $fresh instanceof Model) {
+            $this->logRacedDelete();
+
+            $usesSoftDeletes
+                ? $observer->forceDeleted($this->model)
+                : $observer->deleted($this->model);
+
+            return;
+        }
+
+        // A row that is still there but trashed is a genuine soft delete, and `trashed()` is the
+        // event that answers for one. A live row means no delete raced this write at all.
+        if ($usesSoftDeletes && $fresh->trashed() === true) { // @phpstan-ignore-line method.notFound
+            $this->logRacedDelete();
+
+            $observer->trashed($fresh);
+        }
+    }
+
+    private function logRacedDelete(): void
+    {
+        Log::info(
+            'A model was deleted while its HubSpot sync was in flight, so the delete policy is '
+            .'being applied now that the link it needed exists.',
+            ['model' => get_class($this->model), 'model_id' => $this->model->getKey()],
+        );
+    }
+
+    /**
+     * Whether the delete path already owns this record, which is the only reason a push is
+     * unconditionally wrong.
+     *
+     * **`archived_at`, not `trashed()`** (Codex, PR #49). An earlier revision skipped the push for
+     * any trashed model, on the stated grounds that "the delete path has already archived that
+     * record". Under the SHIPPED DEFAULT that premise is false: `deleted` is absent from
+     * `auto_sync.on`, so a soft delete archives nothing and the HubSpot record stays live and
+     * editable. Editing a soft-deleted model then had its update silently discarded, and restoring
+     * did not recover it -- D-17 suppresses the restore's own `updated` event, and the `restored`
+     * handler is gated off by that same absent option -- so the CRM stayed stale until some
+     * unrelated later write.
+     *
+     * The archived link is the real signal, and it is not limited to trashed models: after a
+     * restore under `on_restore => 'flag'` the model is live again while its record is still
+     * archived, and a push there would write to archived CRM state just as surely.
+     */
+    private function pushIsOwnedByTheDeletePath(?HubspotObjectLink $link): bool
+    {
+        return $link !== null && $link->archived_at !== null;
+    }
+
+    /**
+     * Whether this job's model came back soft-deleted. Consulted only for a model with NO link,
+     * where `archived_at` cannot answer anything: an unsynced, soft-deleted model must not have a
+     * CRM record CREATED for it, whatever the delete policy says, because an unmirrored delete asks
+     * for the record to be left alone rather than brought into existence.
+     *
+     * The race itself is ordinary, not rare, and `SerializesModels` does NOT discard the job for
+     * it: `newQueryForRestoration()` uses `newQueryWithoutScopes()`, so the trashed model is found
+     * and handed to `handle()` exactly as a live one would be. This closes `04-CONTEXT.md`'s
+     * deferred "update job dispatched before a soft delete" item.
+     *
+     * Trait presence is decided by `class_uses_recursive()`, never by `method_exists()`: a name is
+     * not a contract, and a NON-PUBLIC method of that name is reached through `Model::__call()` and
+     * raises `BadMethodCallException` from inside a queue worker. `HubspotObserver` makes the
+     * identical check for the identical reason (Codex, PR #48, twice).
+     */
+    private function modelIsTrashed(): bool
+    {
+        if (! in_array(SoftDeletes::class, class_uses_recursive($this->model), true)) {
+            return false;
+        }
+
+        // trashed() is declared by SoftDeletes, not by Model, and the line above is the
+        // precondition PHPStan cannot express. D-04 forbids a baseline, not a justified per-line
+        // ignore.
+        return $this->model->trashed() === true; // @phpstan-ignore-line method.notFound
     }
 }

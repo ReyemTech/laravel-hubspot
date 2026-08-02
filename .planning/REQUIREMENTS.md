@@ -429,13 +429,35 @@ REL-02.
 
     - `tests/Feature/Sync/BatchSyncTest.php`.
 
-- [ ] **SYNC-04**: Delete policy derived from the model, guarded by default
+- [x] **SYNC-04**: Delete policy derived from the model, guarded by default
   — `REQ-delete-policy` (core spec §7)
 
   - Acceptance: `'deleted'` is opt-in in `auto_sync.on`; `hard_delete` defaults to `guard`, which skips
     and logs. A `SoftDeletes` model archives in HubSpot on soft delete. `restored` cannot be mirrored:
     log, keep the stored `hubspot_id` intact but flagged stale, **never null it**.
     `on_restore => 'recreate'` is opt-in because it forks CRM history.
+
+  - `hard_delete` values, in full (D-21, 2026-07-30 — the spec originally defined only `guard`). It
+    governs the IRREVERSIBLE deletes only; a soft delete is locally recoverable and archives whatever
+    this says:
+
+    | value | action | log level |
+    |---|---|---|
+    | `guard` (default) | skip | info |
+    | `warn` | **skip**, identically to `guard` | **warning** |
+    | `allow` | archive in HubSpot | — |
+
+    `warn` SKIPS — it is `guard` said loudly, not "archive it, but tell me". Only the value literally
+    named `allow` can archive, because no archive this package issues can be programmatically undone.
+
+  - `on_restore` values, in full: `flag` (default) keeps the stored `hubspot_id` and marks the link
+    row stale, and is the ONLY value this release accepts. `recreate` — drop the link and create a
+    NEW object, leaving the old one archived — was built during 04-06 and **withdrawn**: it must be
+    ordered after the earlier archive confirms completion, or a restore racing an in-flight archive
+    leaves two active records with only one linked. It is refused by name rather than approximated.
+    Anything outside the accepted set throws `ConfigurationException`, as does anything outside the
+    three `hard_delete` values — neither has a fallback, because both available fallbacks are silent
+    and wrong in opposite directions.
 
   - Note: HubSpot's delete is `archive()` and there is **no unarchive endpoint**. The package can never
     programmatically undo one.
@@ -823,7 +845,7 @@ Deferred. Tracked but not in the current roadmap.
 | SYNC-03a | Phase 4 | **Complete** -- trait, observer and queued job wired at boot (04-02, 2026-07-30) |
 | SYNC-03b | Phase 4 | Pending -- queued by default under Bus::fake(), and the per-model override (04-05) |
 | SYNC-03c | Phase 4 | Pending -- one collection, one batch request (04-08) |
-| SYNC-04 | Phase 4 | Pending |
+| SYNC-04 | Phase 4 | **Complete 2026-08-01 (04-06).** Three DISTINCT Eloquent events drive the policy table -- `trashed`, `forceDeleted`, and `deleted` gated on the ABSENCE of `SoftDeletes` -- because `deleted` fires identically for a soft delete and a `forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()` implementation archives twice. D-21: `hard_delete => 'warn'` SKIPS exactly as `guard` does and differs only in log level; only `allow` archives. `restored` flags the link row stale and never nulls `hubspot_id`; `on_restore => 'recreate'` is the opt-in that forks CRM history. A property-push job arriving with its model trashed returns without pushing |
 | SYNC-05 | Phase 4 | Pending |
 | HOOK-01 | Phase 5 | Pending |
 | HOOK-02 | Phase 5 | Pending — acceptance absent in source |

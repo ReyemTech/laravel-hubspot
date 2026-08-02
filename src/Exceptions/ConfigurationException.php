@@ -130,4 +130,70 @@ final class ConfigurationException extends LogicException implements HubspotExce
             $modelClass,
         ));
     }
+
+    /**
+     * `hubspot.auto_sync.hard_delete` is set to a value the package does not recognise (SYNC-04).
+     * Thrown by `Sync\DeletePolicy::resolve()`, from inside whichever delete event consulted it.
+     *
+     * There is no safe fallback and the message says which way each supported value falls, because
+     * both fallbacks are wrong in opposite directions: defaulting a typo to `allow` issues
+     * irreversible archives nobody asked for, and defaulting it to `guard` silently stops mirroring
+     * deletes an operator believed were mirrored (T-04-26).
+     *
+     * @param  list<string>  $validValues
+     */
+    public static function unknownHardDeletePolicy(string $given, array $validValues): self
+    {
+        return new self(sprintf(
+            'hubspot.auto_sync.hard_delete is set to "%s", which is not a supported delete '
+            .'policy. Supported values are: %s. "guard" and "warn" both SKIP the archive and '
+            .'differ only in log level; only "allow" archives in HubSpot, which cannot be undone '
+            .'through the API.',
+            $given,
+            implode(', ', $validValues),
+        ));
+    }
+
+    /**
+     * `hubspot.auto_sync.on_restore` is set to a value the package does not recognise (SYNC-04).
+     * Thrown by `Sync\DeletePolicy::resolve()` on the `restored` event and on no other.
+     *
+     * The message names the consequence of each supported value rather than only listing them: the
+     * two do not differ in loudness, they differ in whether the local row keeps pointing at the CRM
+     * history it already has.
+     *
+     * @param  list<string>  $validValues
+     */
+    public static function unknownRestorePolicy(string $given, array $validValues): self
+    {
+        return new self(sprintf(
+            'hubspot.auto_sync.on_restore is set to "%s", which is not a supported restore '
+            .'policy. Supported values are: %s. HubSpot has no unarchive endpoint, so "flag" '
+            .'keeps the stored hubspot_id and marks it stale. "recreate" is not implemented in '
+            .'this release: creating a replacement has to be ordered after the earlier archive '
+            .'confirms completion, and this package cannot yet guarantee that ordering.',
+            $given,
+            implode(', ', $validValues),
+        ));
+    }
+
+    /**
+     * `Sync\DeletePolicy::resolve()` was handed an event it does not model. Reachable only from a
+     * direct call -- `Sync\HubspotObserver` passes one of four literals -- which is exactly why it
+     * throws: `DeletePolicy` is public API of a released package, and a delete-policy resolver that
+     * answered a question it did not understand would answer it with either an irreversible archive
+     * or a silently dropped mirror.
+     *
+     * @param  list<string>  $validValues
+     */
+    public static function unknownDeleteEvent(string $given, array $validValues): self
+    {
+        return new self(sprintf(
+            'ReyemTech\Hubspot\Sync\DeletePolicy cannot resolve the "%s" Eloquent event. It models '
+            .'these and only these: %s. Each one answers a different row of the delete-policy '
+            .'table, and this resolver never guesses a row it was not given.',
+            $given,
+            implode(', ', $validValues),
+        ));
+    }
 }

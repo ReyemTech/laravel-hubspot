@@ -242,6 +242,7 @@ and expensive. Named here so they cannot be missed:
       'on'          => ['created', 'updated'],   // 'deleted' is opt-in
       'queue'       => true,
       'hard_delete' => 'guard',                  // 'guard' | 'warn' | 'allow'
+      'on_restore'  => 'flag',                   // 'flag' | 'recreate'
   ],
   ```
   The service provider reads `models` at boot and attaches the generic observer — nothing in the
@@ -255,9 +256,17 @@ and expensive. Named here so they cannot be missed:
   follows `hard_delete`; a model without `SoftDeletes` deletes irreversibly and follows `hard_delete`,
   whose default `guard` skips and logs.
 
-  `restored` cannot be mirrored (no unarchive API). Default: log, keep the stored `hubspot_id` intact
-  but flagged stale — **never null it**, so re-linking stays possible. Opt-in `on_restore => 'recreate'`
-  creates a fresh object and rewrites the id, which forks CRM history and therefore must be explicit.
+  D-21 (2026-07-30) defines the value the spec left undefined: `hard_delete => 'warn'` **SKIPS**,
+  exactly as `guard` does, and differs from it only in log level — warning rather than info. It is
+  `guard` said loudly, not "archive it, but tell me": a value whose plain-English reading is the
+  opposite of its behaviour is a trap, and with no unarchive endpoint the failure stays silent until
+  somebody reads the CRM. Only the value literally named `allow` archives.
+
+  `restored` cannot be mirrored (no unarchive API). Default `on_restore => 'flag'`: log, keep the
+  stored `hubspot_id` intact but flagged stale — **never null it**, so re-linking stays possible.
+  Opt-in `on_restore => 'recreate'` drops the link and syncs afresh, creating a fresh object and
+  rewriting the id, which forks CRM history and therefore must be explicit. An unrecognised value for
+  either key throws `ConfigurationException` naming the supported ones; neither falls back.
 
   Required escape hatches: `Hubspot::withoutSyncing(fn () => ...)` — mandatory for seeders, imports
   and backfills, since without it `migrate:fresh --seed` fires thousands of API calls — and
