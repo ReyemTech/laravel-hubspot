@@ -6,10 +6,12 @@ namespace ReyemTech\Hubspot;
 
 use Closure;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Support\Facades\App;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
@@ -40,7 +42,7 @@ final class HubspotManager implements SyncStateContract
 
     public function __construct(private readonly Container $container)
     {
-        $this->flushState();
+        $this->syncingSuppressed = false;
     }
 
     /**
@@ -59,6 +61,24 @@ final class HubspotManager implements SyncStateContract
     {
         $this->fake = null;
         $this->syncingSuppressed = false;
+
+        // The TRANSPORT too, not just the flag that describes it (Codex, PR #56).
+        //
+        // `HubspotFake` does not only live on this object: its constructor calls
+        // `$container->instance(HubspotClientFactory::class, ...)`, replacing the container's
+        // singleton with one wired to canned responses. Clearing `$this->fake` alone would leave
+        // that factory bound, so the next request would read `isFaked() === false` while every
+        // gateway it resolved still answered from the previous request's mock. That is worse than
+        // no reset at all: an inconsistent state is harder to diagnose than a stale one, because
+        // the object you would ask says the right thing.
+        //
+        // `forgetInstance()` rather than re-binding a real factory: the ServiceProvider's own
+        // singleton closure is the one place that knows how to build one from config, and the next
+        // resolution runs it. Reached through the `App` facade because
+        // `Illuminate\Contracts\Container\Container` declares `instance()` but not
+        // `forgetInstance()`, and narrowing this class's constructor to the concrete container to
+        // reach it would be a breaking change under `roave/backward-compatibility-check`.
+        App::forgetInstance(HubspotClientFactory::class);
     }
 
     public function objects(): ObjectGatewayContract

@@ -7,6 +7,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 use Illuminate\Support\Facades\Event;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReyemTech\Hubspot\Facades\Hubspot;
+use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\HubspotManager;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
@@ -88,6 +89,35 @@ final class OctaneStateResetTest extends SyncTestCase
             $manager->isFaked(),
             'A fake surviving the request that installed it makes every later request in that '
             .'worker assert against a transport nobody asked for.'
+        );
+    }
+
+    /**
+     * The TRANSPORT is reset, not just the flag that describes it (Codex, PR #56).
+     *
+     * `HubspotFake` replaces the container's `HubspotClientFactory` singleton, so clearing only the
+     * `$fake` property would leave the next request reading `isFaked() === false` while every
+     * gateway it resolved still answered from the previous request's mock. Asserting the flag alone
+     * would pass against exactly that bug, which is why this asserts the container binding.
+     */
+    public function test_an_octane_boundary_puts_the_real_transport_back(): void
+    {
+        // A token, so that the REAL factory can actually be built after the flush. Without one it
+        // throws ConfigurationException on construction -- which is itself evidence the fake-backed
+        // instance is gone, but proves it by accident rather than by assertion.
+        config()->set('hubspot.token', 'pat-na1-test-token');
+
+        Hubspot::fake();
+
+        $fakeBackedFactory = app(HubspotClientFactory::class);
+
+        Event::dispatch('Laravel\Octane\Events\RequestReceived');
+
+        self::assertNotSame(
+            $fakeBackedFactory,
+            app(HubspotClientFactory::class),
+            'A fake-backed factory surviving the boundary makes the next request answer from canned '
+            .'responses while reporting that no fake is installed -- inconsistent, not merely stale.'
         );
     }
 
