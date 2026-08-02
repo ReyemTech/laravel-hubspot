@@ -4,13 +4,36 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The whole-src/ mutation run, moved off every merge and onto a weekly beat (see the `mutation`
+  # job below). Monday 04:00 UTC is deliberately outside working hours in both this repository's
+  # timezones, so a fifteen-minute run never competes with a contributor's pull request for
+  # concurrency.
+  schedule:
+    - cron: '0 4 * * 1'
+  # So the weekly run can be demanded on the spot -- before cutting a release, or after a change
+  # broad enough that waiting until Monday to learn the tree drifted is not good enough.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One run per ref per workflow. A pull request that is pushed to again supersedes its own
+# in-flight run rather than paying for both -- 18 pushes on PR #49 each started a full set of
+# jobs while the previous set was still running. Cancellation is scoped to pull requests:
+# a push to main is never superseded by a later one, because each of those commits is a
+# release candidate whose gates have to have actually run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   phpstan:
     name: phpstan (level max, no baseline)
+    # This workflow also answers a weekly `schedule` and a manual `workflow_dispatch`, and
+    # both exist solely for the whole-src/ mutation run at the bottom of this file. Every
+    # other gate here is a pull-request gate; re-running it once a week would burn a runner to
+    # restate what the last merge already proved.
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -30,6 +53,11 @@ jobs:
 
   pint:
     name: pint (style, laravel preset)
+    # This workflow also answers a weekly `schedule` and a manual `workflow_dispatch`, and
+    # both exist solely for the whole-src/ mutation run at the bottom of this file. Every
+    # other gate here is a pull-request gate; re-running it once a week would burn a runner to
+    # restate what the last merge already proved.
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -49,6 +77,11 @@ jobs:
 
   code-shape:
     name: code shape (file/function length, cyclomatic complexity)
+    # This workflow also answers a weekly `schedule` and a manual `workflow_dispatch`, and
+    # both exist solely for the whole-src/ mutation run at the bottom of this file. Every
+    # other gate here is a pull-request gate; re-running it once a week would burn a runner to
+    # restate what the last merge already proved.
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -68,6 +101,11 @@ jobs:
 
   source-hygiene:
     name: source hygiene (no deferred-work markers)
+    # This workflow also answers a weekly `schedule` and a manual `workflow_dispatch`, and
+    # both exist solely for the whole-src/ mutation run at the bottom of this file. Every
+    # other gate here is a pull-request gate; re-running it once a week would burn a runner to
+    # restate what the last merge already proved.
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -90,6 +128,11 @@ jobs:
 
   vendor-namespaces:
     name: vendor namespaces (Illuminate backed, no unapproved third party)
+    # This workflow also answers a weekly `schedule` and a manual `workflow_dispatch`, and
+    # both exist solely for the whole-src/ mutation run at the bottom of this file. Every
+    # other gate here is a pull-request gate; re-running it once a week would burn a runner to
+    # restate what the last merge already proved.
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -111,6 +154,11 @@ jobs:
 
   quality-gates-fire:
     name: quality gates fire (violation-fixture proof)
+    # This workflow also answers a weekly `schedule` and a manual `workflow_dispatch`, and
+    # both exist solely for the whole-src/ mutation run at the bottom of this file. Every
+    # other gate here is a pull-request gate; re-running it once a week would burn a runner to
+    # restate what the last merge already proved.
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -136,19 +184,33 @@ jobs:
     # a failing `tests` job elsewhere in the same pull request should be
     # read as "the number below isn't meaningful yet", not ignored.
     #
-    # SCOPE differs by event, deliberately, and the job name stays the same either way because it
+    # SCOPE differs by event, deliberately, and the job name stays the same in every case because it
     # is a required status check — renaming it would silently stop branch protection from ever
     # seeing this gate again (which is exactly what happened to the manifest check in #37).
     #
-    #   pull_request  -> only the classes the PR changes, in parallel. Seconds instead of ~15
-    #                    minutes, with the signal kept where the new code is.
-    #   push to main  -> the whole of src/, unscoped. This is what still catches "a change over
-    #                    here weakened a mutant the tests over there used to kill" — after merge
-    #                    rather than before it, which is the deliberate trade.
+    #   pull_request           -> only the classes the PR changes, in parallel. Seconds to a couple
+    #                             of minutes, with the signal kept where the new code is.
+    #   schedule / dispatch    -> the whole of src/, unscoped. This is what catches "a change over
+    #                             here weakened a mutant the tests over there used to kill".
+    #   push to main           -> NOTHING. See below.
     #
     # The full run was measured at 10.5-16 minutes across ten consecutive runs, all green, with MSI
     # at 96-99% against a floor of 80. At that margin it was not doing gate work per PR; it was
     # costing a quarter of an hour to restate a number that had never moved.
+    #
+    # It used to run on every push to main, and it no longer does (owner decision, 2026-08-02): a
+    # quarter of an hour of runner time per MERGE is the single largest recurring Actions cost in
+    # this repository, and it was buying a number that has not moved in ten runs. The cross-tree
+    # drift signal is kept -- that was explicitly not up for deletion -- but it is collected once a
+    # week rather than once a merge. Worst case, drift is now learnt up to seven days after the
+    # merge that caused it instead of minutes after; the scoped per-PR run still refuses new code
+    # that is under-tested, which is where the gate actually does its work.
+    #
+    # `push` is skipped rather than left to resolve to a scoped run with an empty diff: a run that
+    # mutates nothing reports green and reads as "the tree was checked", which is worse than a job
+    # that plainly did not run. The check is not required on a push to main, so skipping it blocks
+    # nothing.
+    if: github.event_name != 'push'
     name: mutation (pest --mutate, MSI floor 80)
     runs-on: ubuntu-latest
     steps:
@@ -174,9 +236,12 @@ jobs:
       - name: Resolve the mutation scope
         id: scope
         run: |
+          # Anything that is not a pull request is the weekly beat or a manual dispatch, and both
+          # exist precisely to mutate the whole tree. A push to main never reaches this step at
+          # all -- the job is skipped for that event (see the `if` on this job).
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "mode=full" >> "$GITHUB_OUTPUT"
-            echo "Push to main: mutating the whole of src/."
+            echo "${{ github.event_name }}: mutating the whole of src/."
             exit 0
           fi
 
@@ -212,7 +277,7 @@ jobs:
           case "${{ steps.scope.outputs.mode }}" in
             skip)
               echo "Skipped: no src/ change in this pull request, so there is no mutation to run."
-              echo "The whole-src run still executes on push to main."
+              echo "The whole-src run executes weekly (Monday 04:00 UTC) and on workflow_dispatch."
               ;;
             scoped)
               vendor/bin/pest --mutate --parallel --min=80 \

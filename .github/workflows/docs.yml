@@ -26,23 +26,61 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          # scripts/ci/paths-changed.sh diffs against the base branch, so the default shallow
+          # clone is not enough.
+          fetch-depth: 0
+
+      # This job is a REQUIRED status check, so it must always report -- which is why the skip is a
+      # step-level condition rather than a workflow-level `paths:` filter. A required check that
+      # never reports leaves the pull request stuck on "Expected -- waiting for status to be
+      # reported" for ever, with no run to open and nothing to re-run. The job still runs and still
+      # reports green; it just does not build an Astro site for a pull request that changed no docs.
+      #
+      # No `|| true`: the script already fails OPEN by design, and a suppression here would turn a
+      # hard failure of the script itself into a silent skip of a real gate.
+      - name: Decide whether this pull request touches the docs site
+        id: scope
+        run: |
+          base=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin \
+              "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+          else
+            base="HEAD^"
+          fi
+
+          if bash scripts/ci/paths-changed.sh "$base" \
+            'site/*' 'package.json' 'pnpm-lock.yaml' 'pnpm-workspace.yaml' \
+            '.github/workflows/docs.yml' 'scripts/ci/paths-changed.sh'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No docs-site file changed, so there is nothing to build."
+          fi
 
       - name: Setup pnpm
+        if: steps.scope.outputs.run == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 11.17.0
 
       - name: Setup Node
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: pnpm
 
       - name: Install dependencies (site only)
+        if: steps.scope.outputs.run == 'true'
         run: pnpm install --frozen-lockfile --filter './site...'
 
       - name: Build docs site
+        if: steps.scope.outputs.run == 'true'
         run: pnpm --filter './site' build
 
       - name: Verify build artifact
+        if: steps.scope.outputs.run == 'true'
         run: test -f site/dist/index.html

@@ -6,6 +6,15 @@ on:
 permissions:
   contents: read
 
+# One run per ref per workflow. A pull request that is pushed to again supersedes its own
+# in-flight run rather than paying for both -- 18 pushes on PR #49 each started a full set of
+# jobs while the previous set was still running. Cancellation is scoped to pull requests:
+# a push to main is never superseded by a later one, because each of those commits is a
+# release candidate whose gates have to have actually run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   governance:
     name: Repository governance

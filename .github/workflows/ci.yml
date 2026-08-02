@@ -1,17 +1,65 @@
 name: tests
 
 on:
+  # `ready_for_review` is NOT one of the default activity types (those are `opened`, `synchronize`
+  # and `reopened`), and naming it here is load-bearing rather than tidy. The draft gate on the
+  # `tests` job below skips eleven of the twelve matrix cells while a pull request is a draft; a
+  # skipped required check reports `skipped`, which SATISFIES branch protection. So without this
+  # trigger, marking a draft ready fires no run at all, those eleven cells keep the skipped status
+  # they were given as a draft, and the pull request becomes mergeable having never run the support
+  # matrix it promises. Adding the type is what makes the draft optimisation safe instead of a
+  # silent hole in the gate.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
 permissions:
   contents: read
 
+# One run per ref per workflow. A pull request that is pushed to again supersedes its own
+# in-flight run rather than paying for both -- 18 pushes on PR #49 each started a full set of
+# jobs while the previous set was still running. Cancellation is scoped to pull requests:
+# a push to main is never superseded by a later one, because each of those commits is a
+# release candidate whose gates have to have actually run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     name: PHP ${{ matrix.php }} - Laravel ${{ matrix.laravel }} - ${{ matrix.stability }}
     runs-on: ubuntu-latest
+
+    # While a pull request is a DRAFT, only the reference cell runs; the other eleven are skipped.
+    # Marking it ready for review, or pushing to it afterwards, runs all twelve.
+    #
+    # This is a job-level `if`, and that is the whole reason it is safe. All twelve cells are
+    # REQUIRED status checks, and the two ways of not running one are not interchangeable:
+    #
+    # | mechanism | reports | required check |
+    # |---|---|---|
+    # | workflow-level `paths:` filter | never reports at all | blocks the PR for ever |
+    # | job-level `if:` evaluating false | reports `skipped` | satisfied |
+    #
+    # A `paths:`-filtered required check leaves the pull request stuck on "Expected -- waiting for
+    # status to be reported", with no run to click into and nothing to re-run. A skipped job costs
+    # no runner at all and still answers branch protection, so the gate is kept and the bill is not.
+    #
+    # The matrix itself is untouched, deliberately: `tests/Ci/MatrixShapeTest.php` expands it to
+    # exactly twelve and asserts the support matrix is rectangular. Shrinking the matrix for drafts
+    # would have made that test parse a shape the repository does not actually promise. The cells
+    # still exist; a draft just does not pay for eleven of them.
+    #
+    # The reference cell is the LOWEST supported PHP against the NEWEST Laravel on prefer-stable:
+    # the one most likely to catch an ordinary mistake, and the pair a contributor is most likely
+    # to be developing against. It is a smoke test, not the support-matrix guarantee -- that
+    # guarantee is what marking the PR ready re-establishes, before any merge can happen.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.draft != true
+      || (matrix.php == '8.3' && matrix.laravel == '13.*' && matrix.stability == 'prefer-stable')
+
     strategy:
       fail-fast: false
       matrix:
