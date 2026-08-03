@@ -35,6 +35,5 @@ remains intentionally unticked because its three subrequirements span separate p
   copy tests because `/tmp` returned `errno=122 Disk quota exceeded`; no architecture assertion failed.
 - `vendor/bin/phpstan analyse` and Pint were blocked by the same quota. Pint's local PHAR was corrupted
   when it attempted to write under the quota.
-- The 04-08 baseline was 668 tests / 2,567 assertions. Its last recorded full run reached 852 passing
-  tests / 3,069 assertions before 9 unrelated `/tmp` fixture-copy failures. A new full count was not
-  available because the quota blocker persisted.
+- The 04-08 baseline was 668 tests / 2,567 assertions. This full run reached 854 passing tests / 3,078
+  assertions before 9 `/tmp` quota failures in fixture-copy/write tests; no behavioural assertion failed.

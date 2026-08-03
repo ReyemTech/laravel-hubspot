@@ -8,7 +8,7 @@ status: ready_for_planning
 stopped_at: "Completed 04-09-PLAN.md; Phase 4 is complete."
 last_updated: "2026-08-03T00:00:00.000Z"
 last_activity: 2026-08-03
-last_activity_desc: "Completed 04-08 and 04-09. Batch sync dispatches one job and one HubSpot upsertMany request; hubspot:doctor now reports every bound model's object type, id_property, SoftDeletes status and DeletePolicy-resolved action. Registry receives these facts through a Registry-owned container contract implemented by Sync, so R2 remains intact. REG-01 and REG-04 are complete; only SYNC-01b (Generated mode in Phase 9) remains open. Focused doctor tests: 11 tests, 14 assertions. Full-gate verification is blocked by the environment /tmp disk quota."
+last_activity_desc: "Completed 04-08 and 04-09. Batch sync dispatches one job and one HubSpot upsertMany request; hubspot:doctor now reports every bound model's object type, id_property, SoftDeletes status and DeletePolicy-resolved action. Registry receives these facts through a Registry-owned container contract implemented by Sync, so R2 remains intact. REG-01 and REG-04 are complete; only SYNC-01b (Generated mode in Phase 9) remains open. Doctor tests: 11 tests, 14 assertions; the full suite reached 854 passing tests and 3,078 assertions before 9 /tmp quota failures."
 progress:
   total_phases: 5
   completed_phases: 4
