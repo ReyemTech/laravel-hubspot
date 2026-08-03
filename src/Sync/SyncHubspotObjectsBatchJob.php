@@ -39,7 +39,7 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
     public bool $deleteWhenMissingModels;
 
     /**
-     * @var list<array{class: class-string<Model>, key: mixed}>
+     * @var list<array{class: class-string<Model>, key: mixed, connection: string|null}>
      */
     public array $models;
 
@@ -47,7 +47,11 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
     public function __construct(array $models)
     {
         $this->models = array_map(
-            static fn (Model $model): array => ['class' => $model::class, 'key' => $model->getKey()],
+            static fn (Model $model): array => [
+                'class' => $model::class,
+                'key' => $model->getKey(),
+                'connection' => $model->getConnectionName(),
+            ],
             $models,
         );
         $this->deleteWhenMissingModels = true;
@@ -94,9 +98,15 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
     {
         $models = [];
 
-        foreach ($this->models as ['class' => $class, 'key' => $key]) {
+        foreach ($this->models as ['class' => $class, 'key' => $key, 'connection' => $connection]) {
             /** @var class-string<Model> $class */
-            $model = (new $class)->newQueryWithoutScopes()->find($key);
+            $model = new $class;
+
+            if ($connection !== null) {
+                $model->setConnection($connection);
+            }
+
+            $model = $model->newQueryWithoutScopes()->find($key);
 
             if ($model instanceof Model) {
                 $models[] = $model;
