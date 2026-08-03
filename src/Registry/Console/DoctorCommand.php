@@ -41,7 +41,7 @@ final class DoctorCommand extends Command
 
     protected $description = 'Report what this package currently believes: stores, registry state and bindings';
 
-    public function handle(AssociationTypeStore $store, BoundModelReporter $boundModels): int
+    public function handle(AssociationTypeStore $store): int
     {
         /** @var mixed $configuredStore */
         $configuredStore = $this->laravel->make('config')->get('hubspot.store');
@@ -84,6 +84,8 @@ final class DoctorCommand extends Command
             ))),
         ));
 
+        /** @var BoundModelReporter $boundModels */
+        $boundModels = $this->laravel->make(BoundModelReporter::class);
         $this->reportBoundModels($boundModels);
 
         return self::SUCCESS;

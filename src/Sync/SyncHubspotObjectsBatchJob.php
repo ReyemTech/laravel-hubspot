@@ -10,6 +10,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
@@ -21,11 +22,12 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\HubspotObject;
 
 /**
- * Queues one HubSpot API batch for models sharing a binding (SYNC-03c).
+ * Queues HubSpot API batches for models sharing a binding (SYNC-03c).
  *
  * `Batchable` only interoperates with an application that wraps its own jobs in `Bus::batch()`.
  * This package never calls it, so it never requires a `job_batches` migration: batching here is
- * HubSpot's `upsertMany()` endpoint, one request for this job's collection.
+ * HubSpot's batch endpoint. Homogeneous collections of at most 100 records use one endpoint request;
+ * mixed or oversized collections use bounded update and upsert chunks.
  */
 final class SyncHubspotObjectsBatchJob implements ShouldQueue
 {
@@ -37,10 +39,17 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
     public bool $deleteWhenMissingModels;
 
     /**
-     * @param  list<Model>  $models
+     * @var list<array{class: class-string<Model>, key: mixed}>
      */
-    public function __construct(public array $models)
+    public array $models;
+
+    /** @param list<Model> $models */
+    public function __construct(array $models)
     {
+        $this->models = array_map(
+            static fn (Model $model): array => ['class' => $model::class, 'key' => $model->getKey()],
+            $models,
+        );
         $this->deleteWhenMissingModels = true;
     }
 
@@ -54,27 +63,51 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
             return;
         }
 
-        $binding = $bindings->for(get_class($this->models[0]));
-        [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier] = $this->recordsFor($binding, $mapper);
+        $models = $this->reloadedModels();
+
+        if ($models === []) {
+            return;
+        }
+
+        $binding = $bindings->for(get_class($models[0]));
+        [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier] = $this->recordsFor($models, $binding, $mapper);
 
         if ($updates === [] && $upserts === []) {
             return;
         }
 
-        if ($updates !== []) {
-            $result = $gateway->updateMany($binding->objectType, $updates);
+        foreach (array_chunk($updates, 100) as $chunk) {
+            $result = $gateway->updateMany($binding->objectType, $chunk);
             $this->markUpdatedRecords($result->recordsDespitePartialFailure(), $linksByHubspotId);
             $this->logErrors($result->errors(), $binding->objectType);
         }
 
-        if ($upserts !== []) {
-            $result = $gateway->upsertMany($binding->objectType, $binding->idProperty, $upserts);
+        foreach (array_chunk($upserts, 100) as $chunk) {
+            $result = $gateway->upsertMany($binding->objectType, $binding->idProperty, $chunk);
             $this->storeConfirmedRecords($result->recordsDespitePartialFailure(), $binding, $modelsByIdentifier);
             $this->logErrors($result->errors(), $binding->objectType);
         }
     }
 
+    /** @return list<Model> */
+    private function reloadedModels(): array
+    {
+        $models = [];
+
+        foreach ($this->models as ['class' => $class, 'key' => $key]) {
+            /** @var class-string<Model> $class */
+            $model = (new $class)->newQueryWithoutScopes()->find($key);
+
+            if ($model instanceof Model) {
+                $models[] = $model;
+            }
+        }
+
+        return $models;
+    }
+
     /**
+     * @param  list<Model>  $models
      * @return array{
      *     list<array{id: string, properties: array<string, string>}>,
      *     array<string, HubspotObjectLink>,
@@ -82,14 +115,14 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
      *     array<string, Model>
      * }
      */
-    private function recordsFor(ModelBinding $binding, PropertyMapper $mapper): array
+    private function recordsFor(array $models, ModelBinding $binding, PropertyMapper $mapper): array
     {
         $updates = [];
         $linksByHubspotId = [];
         $upserts = [];
         $modelsByIdentifier = [];
 
-        foreach ($this->models as $model) {
+        foreach ($models as $model) {
             /** @var HubspotObjectLink|null $link */
             $link = $model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
 
@@ -166,22 +199,32 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
                 continue;
             }
 
-            HubspotObjectLink::query()->updateOrCreate(
-                [
-                    'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
-                    'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
-                    'object_type' => $binding->objectType,
-                ],
-                [
-                    'model_type' => $model->getMorphClass(),
-                    'hubspot_id' => $object->id,
-                    'synced_at' => Carbon::now(),
-                    'is_stale' => false,
-                    'stale_at' => null,
-                ],
-            );
+            $identity = [
+                'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
+                'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
+                'object_type' => $binding->objectType,
+            ];
+            $attributes = [
+                'model_type' => $model->getMorphClass(),
+                'hubspot_id' => $object->id,
+                'synced_at' => Carbon::now(),
+                'is_stale' => false,
+                'stale_at' => null,
+            ];
 
-            App::make(DeleteRaceReconciler::class)->reconcile($model);
+            try {
+                $link = HubspotObjectLink::query()->firstOrCreate($identity, $attributes);
+            } catch (UniqueConstraintViolationException $exception) {
+                $link = HubspotObjectLink::query()->where($identity)->first();
+
+                if (! $link instanceof HubspotObjectLink) {
+                    throw $exception;
+                }
+            }
+
+            if ($link->wasRecentlyCreated) {
+                App::make(DeleteRaceReconciler::class)->reconcile($model);
+            }
         }
     }
 

@@ -22,6 +22,7 @@ use ReyemTech\Hubspot\Sync\SyncsToHubspot;
 use ReyemTech\Hubspot\Tests\Support\Sync\SoftDeletingLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
+use ReyemTech\Hubspot\Tests\Support\Sync\UpsertCallbackGateway;
 
 mutates(SyncsToHubspot::class, SyncHubspotObjectsBatchJob::class);
 
@@ -191,7 +192,7 @@ final class BatchSyncTest extends SyncTestCase
     public function test_a_missing_identifier_property_refuses_the_entire_batch_before_sending_it(): void
     {
         $model = $this->leads(1)[0];
-        $model->setAttribute('email', null);
+        DB::table('synced_leads')->where('id', $model->id)->update(['email' => '']);
         Hubspot::fake();
 
         $this->expectException(ConfigurationException::class);
@@ -293,9 +294,16 @@ final class BatchSyncTest extends SyncTestCase
     public function test_an_unlinked_batch_sync_that_raced_a_soft_delete_replays_the_delete_policy(): void
     {
         $model = $this->softDeletingLeads(1)[0];
-        DB::table('soft_deleting_leads')->where('id', $model->id)->update(['deleted_at' => now()]);
         config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
         Hubspot::fake();
+        $realGateway = Hubspot::objects();
+        $gateway = new UpsertCallbackGateway(
+            $realGateway,
+            function () use ($model): void {
+                DB::table('soft_deleting_leads')->where('id', $model->id)->update(['deleted_at' => now()]);
+            },
+        );
+        app()->instance(ObjectGatewayContract::class, $gateway);
         $log = Log::spy();
 
         app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
@@ -330,10 +338,17 @@ final class BatchSyncTest extends SyncTestCase
     public function test_a_batch_sync_that_raced_a_force_delete_obeys_the_delete_policy(): void
     {
         $model = $this->softDeletingLeads(1)[0];
-        DB::table('soft_deleting_leads')->where('id', $model->id)->delete();
         config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
         config()->set('hubspot.auto_sync.hard_delete', 'allow');
         Hubspot::fake();
+        $realGateway = Hubspot::objects();
+        $gateway = new UpsertCallbackGateway(
+            $realGateway,
+            function () use ($model): void {
+                DB::table('soft_deleting_leads')->where('id', $model->id)->delete();
+            },
+        );
+        app()->instance(ObjectGatewayContract::class, $gateway);
 
         app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
 
@@ -375,12 +390,15 @@ final class BatchSyncTest extends SyncTestCase
             static fn (array $entry): string => $entry['request']->getUri()->getPath(),
             $fake->recordedRequests(),
         ));
-        self::assertSame([100, 1], array_map(
-            static fn (array $entry): int => count(json_decode((string) $entry['request']->getBody(), true)['inputs']),
-            $fake->recordedRequests(),
-        ));
+        self::assertSame([100, 1], array_map(function (array $entry): int {
+            /** @var array{inputs: list<mixed>} $body */
+            $body = json_decode((string) $entry['request']->getBody(), true);
+
+            return count($body['inputs']);
+        }, $fake->recordedRequests()));
     }
 
+    /** @return array<string, array{bool, string}> */
     public static function batchOperationProvider(): array
     {
         return [
@@ -414,13 +432,10 @@ final class BatchSyncTest extends SyncTestCase
         $model = $this->leads(1)[0];
         Hubspot::fake();
         $realGateway = Hubspot::objects();
-        $gateway = \Mockery::mock(ObjectGatewayContract::class);
-        $gateway->shouldReceive('upsertMany')->andReturnUsing(
-            function (string $objectType, string $idProperty, array $records) use ($model, $realGateway) {
-                $result = $realGateway->upsertMany($objectType, $idProperty, $records);
+        $gateway = new UpsertCallbackGateway(
+            $realGateway,
+            function () use ($model): void {
                 $this->link($model, 'concurrent-id');
-
-                return $result;
             },
         );
         app()->instance(ObjectGatewayContract::class, $gateway);
