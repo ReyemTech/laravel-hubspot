@@ -21,6 +21,7 @@ use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectsBatchJob;
 use ReyemTech\Hubspot\Sync\SyncsToHubspot;
 use ReyemTech\Hubspot\Tests\Support\Sync\SoftDeletingLead;
+use ReyemTech\Hubspot\Tests\Support\Sync\SyncedContact;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncTestCase;
 use ReyemTech\Hubspot\Tests\Support\Sync\UpsertCallbackGateway;
@@ -41,6 +42,7 @@ final class BatchSyncTest extends SyncTestCase
         $config->set('hubspot.models', [
             SyncedLead::class => ['object' => 'contacts', 'id_property' => 'email'],
             SoftDeletingLead::class => ['object' => 'contacts', 'id_property' => 'email'],
+            SyncedContact::class => ['object' => 'contacts', 'id_property' => 'company_email'],
         ]);
     }
 
@@ -53,6 +55,13 @@ final class BatchSyncTest extends SyncTestCase
             $table->string('email');
             $table->string('first_name')->nullable();
             $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('synced_contacts', function (Blueprint $table): void {
+            $table->id();
+            $table->string('email');
+            $table->string('last_name')->nullable();
             $table->timestamps();
         });
     }
@@ -240,6 +249,63 @@ final class BatchSyncTest extends SyncTestCase
         }
 
         self::assertSame(0, HubspotObjectLink::query()->count());
+    }
+
+    /** @param array<string, mixed> $properties */
+    #[DataProvider('uncorrelatableUpsertResponses')]
+    public function test_an_upsert_response_without_a_correlatable_identifier_throws_without_leaking_identifiers(
+        string $idProperty,
+        array $properties,
+        string $submittedIdentifier,
+        ?string $returnedIdentifier,
+    ): void {
+        if ($idProperty === 'email') {
+            $model = $this->leads(1)[0];
+        } else {
+            DB::table('synced_contacts')->insert(['email' => $submittedIdentifier]);
+            $model = SyncedContact::query()->sole();
+        }
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'results' => [['id' => 'returned-id', 'properties' => $properties]],
+        ])]);
+
+        try {
+            app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+            self::fail('An upsert result without a correlatable identifier must be rejected.');
+        } catch (ApiException $exception) {
+            self::assertStringNotContainsString($submittedIdentifier, $exception->getMessage());
+
+            if ($returnedIdentifier !== null) {
+                self::assertStringNotContainsString($returnedIdentifier, $exception->getMessage());
+            }
+        }
+
+        self::assertSame(0, HubspotObjectLink::query()->count());
+    }
+
+    /**
+     * @return Generator<string, array{string, array<string, mixed>, string, ?string}>
+     */
+    public static function uncorrelatableUpsertResponses(): Generator
+    {
+        yield 'missing email identifier' => [
+            'email',
+            [],
+            'batch1@example.com',
+            null,
+        ];
+        yield 'non-string email identifier' => [
+            'email',
+            ['email' => 42],
+            'batch1@example.com',
+            '42',
+        ];
+        yield 'unmatched non-email identifier' => [
+            'company_email',
+            ['company_email' => 'unmatched@example.com'],
+            'submitted@example.com',
+            'unmatched@example.com',
+        ];
     }
 
     public function test_an_upsert_response_with_an_uppercase_email_links_the_submitted_model(): void
