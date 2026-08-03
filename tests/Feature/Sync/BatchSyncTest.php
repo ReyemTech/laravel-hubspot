@@ -8,7 +8,6 @@ use Generator;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -30,9 +29,6 @@ mutates(SyncsToHubspot::class, SyncHubspotObjectsBatchJob::class);
 
 final class BatchSyncTest extends SyncTestCase
 {
-    /**
-     * @param  Application  $app
-     */
     protected function defineEnvironment($app): void
     {
         parent::defineEnvironment($app);
@@ -494,6 +490,7 @@ class BaseBatchLead extends Model
 
     protected $guarded = [];
 
+    /** @var array<string, string> */
     protected array $hubspotMap = ['email' => 'email'];
 }
 
