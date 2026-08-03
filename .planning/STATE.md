@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 4
-current_phase_name: Model Sync
-status: executing
-stopped_at: "Completed 04-07-PLAN.md; issue #57 refactor merged (PR #65). 04-08 and 04-09 remain."
-last_updated: "2026-08-02T22:16:55.000Z"
-last_activity: 2026-08-02
-last_activity_desc: "closed issue #57, the debt 04-07 left, on PR #65 (merge dd3089c). Sync\\ArchiveMarker now owns the archived_at lifecycle for BOTH callers -- stamp() snapshots the row before writing the marker, withdraw() restores all three columns -- and Testing\\HubspotFake owns installing AND reversing its own transport swap, so HubspotManager no longer keeps a parallel copy of what to put back. ArchiveHubspotObjectJob's constructor is one nullable ?ArchiveMarker instead of three loose scalars. No behaviour change was intended; three defects were found anyway and all three are the same shape -- a lifecycle split across two owners keeps the WEAKER half when it is consolidated. (1) A second Hubspot::fake() recorded the outgoing fake's mock as its predecessor, so flushing restored a fake while isFaked() reported false; a replacing fake now inherits its predecessor's original. (2) $marker was a PROMOTED constructor parameter, whose default belongs to the parameter and not the property -- so SerializesModels::__unserialize(), which skips absent payload keys on an instance built by newInstanceWithoutConstructor(), left it UNINITIALIZED rather than null and the stranded-marker warning threw Error before it could log. It is a declared property with its own default now. (3) main's synchronous withdrawal used newQueryWithoutScopes() and its queued withdrawal did not; consolidating took the scoped one, so an application global scope such as whereNull('archived_at') -- which the marker itself makes the row stop matching -- silently updated zero rows. Both callers write unscoped now. 856 tests, 3067 assertions, 100.0% coverage, scoped MSI 92.34%. Three Codex rounds, all threads replied to before resolving. Issue #66 filed for the rest of that seam (the archived-link guard and updateOrCreate read links scoped too), which is PRE-EXISTING on main and fails loudly against the unique index rather than corrupting."
+current_phase: 5
+current_phase_name: Inbound Webhooks
+status: ready_for_planning
+stopped_at: "Completed 04-09-PLAN.md; Phase 4 is complete."
+last_updated: "2026-08-03T00:00:00.000Z"
+last_activity: 2026-08-03
+last_activity_desc: "Completed 04-08 and 04-09. Batch sync dispatches one job and one HubSpot upsertMany request; hubspot:doctor now reports every bound model's object type, id_property, SoftDeletes status and DeletePolicy-resolved action. Registry receives these facts through a Registry-owned container contract implemented by Sync, so R2 remains intact. REG-01 and REG-04 are complete; only SYNC-01b (Generated mode in Phase 9) remains open. Focused doctor tests: 11 tests, 14 assertions. Full-gate verification is blocked by the environment /tmp disk quota."
 progress:
-  total_phases: 4
-  completed_phases: 3
+  total_phases: 5
+  completed_phases: 4
   total_plans: 25
-  completed_plans: 23
+  completed_plans: 25
 ---
 
 # Project State
@@ -31,12 +31,11 @@ request lifecycle.
 
 ## Current Position
 
-Phase: 4 of 9 (Model Sync) — 7 of 9 plans executed and merged (04-01…04-07). 04-08 and 04-09 are
-the only work left in the phase, and they are the phase's one PARALLEL pair (wave 7, disjoint
-files), so they need not run back to back.
-Plan: none in flight. Working tree is on `main`; nothing is unmerged. 0.5.0 is released and tagged,
-and `ArchiveHubspotObjectJob` is in NO tag — 0.6.0 (release-please PR #52, owner-gated) would be
-the first release to contain it.
+Phase: 5 of 9 (Inbound Webhooks). Phase 4 is complete: 04-08 added one-request collection sync and
+04-09 completed the doctor bound-model report. REG-01 and REG-04 are now complete; SYNC-01b remains
+open for Phase 9's Generated mode and SHIP-01.
+Plan: none in flight. `hubspot:doctor` consumes a Registry-owned container contract implemented by
+Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
 Status: **Deletes cannot surprise anyone.** `Sync\DeletePolicy` resolves design spec §7's table
 from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
 Three DISTINCT events drive it — `trashed`, `forceDeleted`, and plain `deleted` gated on the
@@ -99,7 +98,7 @@ Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the qu
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
 and the `auto_sync` config block.
 
-Progress: [█████████░] 92%
+Progress: [██████████] 100% of Phase 4
 
 ## Performance Metrics
 
@@ -325,8 +324,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-02T22:16:55.000Z
-Stopped at: Completed 04-07-PLAN.md; issue #57 closed by PR #65 (merge `dd3089c`). 04-08 and 04-09 remain.
+Last session: 2026-08-03T00:00:00.000Z
+Stopped at: Completed 04-09-PLAN.md; Phase 4 is complete and Phase 5 is ready for planning.
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**

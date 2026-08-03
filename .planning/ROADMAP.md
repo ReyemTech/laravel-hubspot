@@ -184,7 +184,7 @@ binding modes — is this phase's. **SYNC-01b** — Generated mode, scaffolding 
 is Phase 9's, with SHIP-01, because scaffolding is an installer function. `04-01-PLAN.md` writes the
 split into `.planning/REQUIREMENTS.md`, matching the REG-01a/b and REG-04a/b precedent.
 
-**Plans**: 7/9 plans executed
+**Plans**: 9/9 plans executed
 
 Plans:
 
@@ -195,8 +195,13 @@ Plans:
 - [x] 04-05-PLAN.md — The generic observer's event surface, its three independent gates, zero HTTP in a request lifecycle, and D-17's restore guard
 - [x] 04-06-PLAN.md — The delete-policy table on `trashed` / `forceDeleted` / `deleted`, the archive job, and a restore that flags without nulling
 - [x] 04-07-PLAN.md — `withoutSyncing()` and `HUBSPOT_DISABLED`, one gate consulted at dispatch and again on the worker
-- [ ] 04-08-PLAN.md — `Model::syncManyToHubspot()`: one job, one `upsertMany()`, one request, and `assertSynced` widened to a bound model
-- [ ] 04-09-PLAN.md — `hubspot:doctor`'s real bound-model section (REG-04b), replacing the test that held the opposite, and the phase close-out
+- [x] 04-08-PLAN.md — `Model::syncManyToHubspot()`: one job, one `upsertMany()`, one request, and `assertSynced` widened to a bound model
+- [x] 04-09-PLAN.md — `hubspot:doctor`'s real bound-model section (REG-04b), replacing the test that held the opposite, and the phase close-out
+
+**Phase close-out, 2026-08-03.** All Phase 4 success criteria and REG-01/REG-04 are complete. SYNC-01b
+remains deliberately open for Phase 9's Generated mode and SHIP-01; it is the only unshipped half of
+SYNC-01. 04-09 keeps Registry independent of Sync by resolving a Registry-owned container contract
+whose Sync implementation returns primitive, `DeletePolicy`-resolved report facts.
 
 **Sequential by construction, with one parallel pair.** 04-03 and 04-04 share a wave because they own
 disjoint files; 04-08 and 04-09 likewise. Every other plan modifies a file an earlier plan owns

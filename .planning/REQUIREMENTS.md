@@ -256,12 +256,14 @@ REL-02.
     from. This also fixes the design spec's own §4 code sample, which previously showed
     `'id_column' => 'hubspot_id'` in every binding — see that document's 2026-07-30 amendment.
 
-  - Progress: 03-01 ships `Registry\HubspotObjectType`. The derived criteria it satisfies are
+   - Progress: 03-01 ships `Registry\HubspotObjectType`. The derived criteria it satisfies are
     recorded in `03-01-PLAN.md` and in `03-01-SUMMARY.md`, **as derived rather than sourced**: the
     documented aliases normalise to one canonical identifier, a `p_*` custom object normalises to
     itself, the unnormalisable throws naming what was passed, and normalisation is idempotent. The
-    canonical set is transcribed from `HubSpot\Crm\ObjectType` in the pinned SDK and asserted equal
-    to it in both directions. **REG-01b's link-relation resolution is not built** — do not tick.
+     canonical set is transcribed from `HubSpot\Crm\ObjectType` in the pinned SDK and asserted equal
+     to it in both directions. **REG-01b shipped 2026-07-31 (04-02, completed by 04-04):** the trait's
+     `hubspotLink` relation and query scopes resolve the package-owned link row for each bound model,
+     including multiple local models using one object type. Both halves are now complete.
 
 - [x] **REG-02**: Directional association type registry with cache and database stores
   — `REQ-association-registry` (core spec §6.2, §6.3, §13 Phase 2)
@@ -347,7 +349,7 @@ REL-02.
     close-out rather than in 03-02, since SIG-01's group is the generalisation this design was
     written for and it changes nothing here.
 
-- [ ] **REG-04**: Diagnostic artisan commands
+- [x] **REG-04**: Diagnostic artisan commands
   — `REQ-diagnostics-commands` (core spec §6.3, §6.4, §7, §13 Phase 2)
 
   - Acceptance: `php artisan hubspot:doctor` reports which store each concern uses, when the registry
@@ -355,7 +357,7 @@ REL-02.
     to. `php artisan hubspot:associations:doctor` probes the portal, reports which directions
     materialise automatically, and writes the answer into the registry.
 
-  - **REG-04a DONE 2026-07-29 (03-03). REG-04 STAYS OPEN.** `hubspot:doctor` reports the store per
+   - **REG-04a DONE 2026-07-29 (03-03).** `hubspot:doctor` reports the store per
     concern (the configured selector and the class actually bound), the resolver actually bound,
     whether and when the registry was reconciled, and how many rows across how many directions it
     holds. `hubspot:associations:doctor` probes both directions of a real association and
@@ -364,11 +366,11 @@ REL-02.
     success regardless of which id was written. It records the observed pairing into the registry,
     and records nothing at all when only one direction materialised.
 
-    **The bound-model section (REG-04b) is not built and is not claimed.** `hubspot:doctor` NAMES it
-    as absent — three lines saying it is not built, that its emptiness is not a statement about the
-    reader's models, and what it will report once it is — with
-    `DoctorCommandTest::test_it_names_the_bound_model_section_as_not_built_rather_than_omitting_it`
-    holding that. Do not tick REG-04 until Phase 4 makes it true.
+     **REG-04b DONE 2026-08-03 (04-09).** `hubspot:doctor` reports every configured binding's model
+     class, object type, `id_property`, `SoftDeletes` status and policy resolved by `DeletePolicy`.
+     With no bindings it names `hubspot.models` as the key to add. The obsolete not-built test was
+     replaced in the same plan, so the suite asserts only the shipping behaviour. Both halves are now
+     complete.
 
 ### Sync
 
@@ -380,13 +382,14 @@ REL-02.
     is SHIP-01 (Phase 9) — it does not belong to Phase 4. SYNC-01 joins REG-01a/b and REG-04a/b as a
     requirement split explicitly across phases rather than left ambiguous.
 
-  - **SYNC-01a (Phase 4):** Config expresses `Model::class => ['object' => ..., 'id_property' => ...]`
+   - [x] **SYNC-01a (Phase 4):** Config expresses `Model::class => ['object' => ..., 'id_property' => ...]`
     — the local-id key is `id_property`, carrying the HubSpot-side unique property to upsert on
     (`email` for contacts), never a column on the consumer's own table (D-13; see design spec §4's
     2026-07-30 amendment). Attached mode (default, the model already exists) and API-only mode (no
     local model or table, e.g. `Hubspot::objects('line_items')->find($id)`) both work. The
     originating app's three models mapping to `contacts` simultaneously is expressible, each
-    resolving its own link row through the trait's `hubspotLink` relation (D-06).
+     resolving its own link row through the trait's `hubspotLink` relation (D-06).
+     Shipped across 04-02 and 04-04.
 
   - **SYNC-01b (Phase 9, with SHIP-01):** Generated mode — scaffolding a model plus migration for an
     object type with no local mirror. Deferred; not this phase's acceptance criteria.
@@ -415,14 +418,14 @@ REL-02.
 
     - Shipped 2026-07-30, proven end to end in `tests/Feature/Sync/TracerSyncTest.php`.
 
-  - [ ] **SYNC-03b**: queued by default, and the per-model override — **04-05**
+   - [x] **SYNC-03b**: queued by default, and the per-model override — **04-05**
     - Acceptance: sync is queued by default and **no API call occurs in a request lifecycle** unless
       explicitly told otherwise, asserted under `Bus::fake()`. Per-model override via
       `protected array $hubspotAutoSync = ['created'];` or `false`.
 
     - `tests/Feature/Sync/AutoSyncBootTest.php`.
 
-  - [ ] **SYNC-03c**: a collection issues one batch request, not N — **04-08**
+   - [x] **SYNC-03c**: a collection issues one batch request, not N — **04-08**
     - Acceptance: `Model::syncManyToHubspot(iterable $models)` (D-16) resolves to one queued job and
       one `ObjectGateway::upsertMany()` call, and the test asserting the **exact** request count
       passes. An N+1 here is a test failure, not a code smell.
@@ -462,12 +465,15 @@ REL-02.
   - Note: HubSpot's delete is `archive()` and there is **no unarchive endpoint**. The package can never
     programmatically undo one.
 
-- [ ] **SYNC-05**: Sync escape hatches
+- [x] **SYNC-05**: Sync escape hatches
   — `REQ-sync-escape-hatches` (core spec §7)
 
   - Acceptance: `Hubspot::withoutSyncing(fn () => ...)` suppresses sync for seeders, imports and
     backfills — without it `migrate:fresh --seed` fires thousands of API calls. `HUBSPOT_DISABLED=true`
     kills everything and is on by default in the testing environment unless a fake is bound.
+
+   - Shipped 2026-08-02 (04-07): `SyncGate` checks suppression and the kill switch at dispatch and on
+     the worker; `HubspotManager::withoutSyncing()` restores nested state in a `finally`.
 
 ### Webhooks
 
@@ -836,17 +842,17 @@ Deferred. Tracked but not in the current roadmap.
 | GW-02 | Phase 2 | Complete — 02-04 ships the directed pair and the unlabelled path; 02-05 ships the labelled write, the resolver seam and `NeverTheInverseTest`'s throw-and-zero-requests guarantee |
 | GW-03 | Phase 2 | Complete — 02-02 ships the remaining three hierarchy members |
 | GW-04 | Phase 2 | **Complete** — 02-01 shipped the fake transport and `assertRequestCount`; 02-06 shipped `assertSynced`, `assertNothingSynced` and `assertAssociated` with its directional type-id check, plus determinism by default. `assertWebhookHandled` is deferred to Phase 5 as a recorded decision (see `phases/02-gateway-layer/deferred-items.md`) |
-| REG-01 | Phase 3 + 4 | **OPEN at the end of Phase 3, deliberately.** Split 2026-07-28; do not tick until both halves land — raised by Codex on PR #22. **Phase 3 half DONE 2026-07-29 (03-01):** `Registry\HubspotObjectType` normalises aliases and `p_*` custom objects and throws on the unnormalisable; the canonical set is asserted equal to `HubSpot\Crm\ObjectType`. **REG-01b (Phase 4) owns resolving the locally-stored HubSpot id for a bound model, through the trait's link relation and the package-owned table — never a column on the consumer's own table (reworded 2026-07-30, D-06/D-13)**, which needs model binding (SYNC-01a) to exist |
+| REG-01 | Phase 3 + 4 | **Complete 2026-08-03.** 03-01 shipped object-type normalisation; 04-02/04-04 shipped REG-01b's per-bound-model link relation, package-owned id storage and cross-model-safe scopes. No consumer id column is used. |
 | REG-02 | Phase 3 | **Complete 2026-07-29.** 03-01 shipped offline directional resolution (seeded baseline, the `(from, to, label)` key, the store seam, `inverse_type_id` proven unreachable from every write path); 03-02 the database store, its dated migration and the directed missing-table error, with the unique key corrected to `(from_object_type, to_object_type, lookup_hash)`; 03-03 `hubspot:associations:sync`, reading `Schema\Api\DefinitionsApi::getPage()` through a Gateway-owned collaborator and leaving `inverse_type_id` null because the two directional responses share no join key |
 | REG-03 | Phase 3 | **Complete 2026-07-29 (03-02).** `composer require` alone loads no migration; `loadMigrationsFrom()` fires only for an active group, publishing is ungated, the migration is executable PHP where it sits, and a missing table raises `ConfigurationException::missingRegistryTable()` rather than `SQLSTATE[42S02]`. Asserted against the schema in both directions, never against registered paths |
-| REG-04 | Phase 3 + 4 | **OPEN at the end of Phase 3, deliberately.** Split 2026-07-28 into REG-04a / REG-04b; raised by Codex on PR #22. **REG-04a DONE 2026-07-29 (03-03):** `hubspot:doctor` reports the store per concern, the bound resolver, reconciliation state, and rows across directions; `hubspot:associations:doctor` ships in full, searching every reported association type for the expected directional id and recording a pairing only when both directions were observed. **REG-04b (Phase 4): the bound-model section** — every bound model, soft-delete status, resolved delete policy — needs SYNC-01a. `hubspot:doctor` NAMES that section as not built rather than omitting it, and a test holds that; printing "not available yet" is not an implementation, so do not tick until 04b lands |
-| SYNC-01 | Phase 4 + 9 | **Split 2026-07-30 (D-15).** SYNC-01's acceptance text named all three binding modes (Attached, API-only, Generated), but Generated — scaffolding a model plus migration — is an installer function and the installer is SHIP-01. **SYNC-01a (Phase 4):** bindings keyed by model, `Model::class => ['object' => ..., 'id_property' => ...]`; Attached and API-only modes both work; three local models binding to `contacts` simultaneously is expressible, each resolving its own link row. **SYNC-01b (Phase 9, with SHIP-01):** Generated mode. Do not tick SYNC-01 until both halves land |
+| REG-04 | Phase 3 + 4 | **Complete 2026-08-03.** 03-03 shipped REG-04a's registry diagnostics and `hubspot:associations:doctor`; 04-09 shipped REG-04b's real bound-model report, including its object type, `id_property`, `SoftDeletes` status and resolved delete policy. |
+| SYNC-01 | Phase 4 + 9 | **SYNC-01a complete 2026-08-03 (04-02/04-04):** model-keyed bindings, Attached/API-only modes and independent link rows for shared object types. **SYNC-01b remains open for Phase 9/SHIP-01:** Generated mode. SYNC-01 stays unticked until both halves land. |
 | SYNC-02 | Phase 4 | **Complete 2026-07-31 (04-03).** `$hubspotMap` resolves all three forms — literal attribute, dot-notation across a relation, and closure — with a null relation OMITTING its key rather than sending null or fatalling. `$hubspotUpdateMap` narrows what an update sends, read from the model through `SyncsToHubspot::getHubspotUpdateMap()`. **That accessor was initially deferred and the deferral was wrong:** without it the job passed `[]`, which `PropertyMapper::mapForUpdate()` reads as "the model declares none" and falls back to the full create map — so a consumer's update map was silently ignored and every update overwrote exactly the properties it existed to protect. Codex raised it as a P1 on PR #42; do not re-introduce that fallback |
 | SYNC-03a | Phase 4 | **Complete** -- trait, observer and queued job wired at boot (04-02, 2026-07-30) |
-| SYNC-03b | Phase 4 | Pending -- queued by default under Bus::fake(), and the per-model override (04-05) |
-| SYNC-03c | Phase 4 | Pending -- one collection, one batch request (04-08) |
+| SYNC-03b | Phase 4 | **Complete 2026-07-31 (04-05).** Queued by default under `Bus::fake()`, with a per-model override and no request-lifecycle API call. |
+| SYNC-03c | Phase 4 | **Complete 2026-08-03 (04-08).** `syncManyToHubspot()` dispatches one job and calls `upsertMany()` once. |
 | SYNC-04 | Phase 4 | **Complete 2026-08-01 (04-06).** Three DISTINCT Eloquent events drive the policy table -- `trashed`, `forceDeleted`, and `deleted` gated on the ABSENCE of `SoftDeletes` -- because `deleted` fires identically for a soft delete and a `forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()` implementation archives twice. D-21: `hard_delete => 'warn'` SKIPS exactly as `guard` does and differs only in log level; only `allow` archives. `restored` flags the link row stale and never nulls `hubspot_id`; `on_restore => 'recreate'` is the opt-in that forks CRM history. A property-push job arriving with its model trashed returns without pushing |
-| SYNC-05 | Phase 4 | Pending |
+| SYNC-05 | Phase 4 | **Complete 2026-08-02 (04-07).** `withoutSyncing()`, `HUBSPOT_DISABLED`, testing defaults and Octane state reset are all covered. |
 | HOOK-01 | Phase 5 | Pending |
 | HOOK-02 | Phase 5 | Pending — acceptance absent in source |
 | HOOK-03 | Phase 5 | Pending |
