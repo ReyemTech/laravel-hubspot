@@ -425,10 +425,12 @@ REL-02.
 
     - `tests/Feature/Sync/AutoSyncBootTest.php`.
 
-   - [x] **SYNC-03c**: a collection issues one batch request, not N — **04-08**
-    - Acceptance: `Model::syncManyToHubspot(iterable $models)` (D-16) resolves to one queued job and
-      one `ObjectGateway::upsertMany()` call, and the test asserting the **exact** request count
-      passes. An N+1 here is a test failure, not a code smell.
+   - [x] **SYNC-03c**: a collection uses bounded identity-aware batch requests, not N — **04-08**
+     - Acceptance: `Model::syncManyToHubspot(iterable $models)` (D-16) resolves to one queued job.
+       A homogeneous linked or unlinked collection makes one request; a mixed collection makes at most
+       two: `ObjectGateway::updateMany()` by stored HubSpot ID plus `ObjectGateway::upsertMany()` by
+       configured identifier. Tests assert the exact homogeneous count and mixed bound. An N+1 here is
+       a test failure, not a code smell.
 
     - `tests/Feature/Sync/BatchSyncTest.php`.
 

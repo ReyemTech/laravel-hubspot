@@ -8,7 +8,7 @@ status: ready_for_planning
 stopped_at: "Completed 04-09-PLAN.md; Phase 4 is complete."
 last_updated: "2026-08-03T00:00:00.000Z"
 last_activity: 2026-08-03
-last_activity_desc: "Completed 04-08 and 04-09. Batch sync dispatches one job and one HubSpot upsertMany request; hubspot:doctor now reports every bound model's object type, id_property, SoftDeletes status and DeletePolicy-resolved action. Registry receives these facts through a Registry-owned container contract implemented by Sync, so R2 remains intact. REG-01 and REG-04 are complete; only SYNC-01b (Generated mode in Phase 9) remains open. Doctor tests: 11 tests, 14 assertions; the full suite reached 854 passing tests and 3,078 assertions before 9 /tmp quota failures."
+last_activity_desc: "Completed 04-08 and 04-09. Batch sync dispatches one job with identity-aware transport: homogeneous state makes one request; mixed linked/unlinked state makes at most two, updating by stored HubSpot ID and upserting by configured identifier. DeleteRaceReconciler converges confirmed unlinked upserts in both single and batch jobs. hubspot:doctor now reports every bound model's object type, id_property, SoftDeletes status and DeletePolicy-resolved action. Registry receives these facts through a Registry-owned container contract implemented by Sync, so R2 remains intact. REG-01 and REG-04 are complete; only SYNC-01b (Generated mode in Phase 9) remains open. Reconciliation gates passed: 877 tests, 3,136 assertions, 100% coverage, and 89.34% scoped MSI; all static-analysis, style, firing-harness and Composer validation gates passed."
 progress:
   total_phases: 5
   completed_phases: 4
@@ -31,9 +31,11 @@ request lifecycle.
 
 ## Current Position
 
-Phase: 5 of 9 (Inbound Webhooks). Phase 4 is complete: 04-08 added one-request collection sync and
-04-09 completed the doctor bound-model report. REG-01 and REG-04 are now complete; SYNC-01b remains
-open for Phase 9's Generated mode and SHIP-01.
+Phase: 5 of 9 (Inbound Webhooks). Phase 4 is complete: 04-08 added a singular public collection API
+with identity-aware transport (one request for homogeneous state and at most two for mixed
+linked/unlinked state), and 04-09 completed the doctor bound-model report. `DeleteRaceReconciler`
+shares confirmed-unlinked-upsert convergence between the single and batch jobs. REG-01 and REG-04 are
+now complete; SYNC-01b remains open for Phase 9's Generated mode and SHIP-01.
 Plan: none in flight. `hubspot:doctor` consumes a Registry-owned container contract implemented by
 Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
 Status: **Deletes cannot surprise anyone.** `Sync\DeletePolicy` resolves design spec §7's table
