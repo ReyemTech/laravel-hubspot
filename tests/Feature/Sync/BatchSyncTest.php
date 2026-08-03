@@ -209,6 +209,172 @@ final class BatchSyncTest extends SyncTestCase
         self::assertSame(0, HubspotObjectLink::query()->count());
     }
 
+    public function test_a_linked_model_is_updated_by_its_stored_hubspot_id_when_its_identifier_changed(): void
+    {
+        $model = $this->leads(1)[0];
+        HubspotObjectLink::query()->create([
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
+            'model_type' => $model->getMorphClass(),
+            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
+            'object_type' => 'contacts',
+            'hubspot_id' => 'existing-id',
+            'synced_at' => now(),
+        ]);
+        $model->update(['email' => 'changed@example.com']);
+        $fake = Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        $request = $fake->recordedRequests()[0]['request'];
+        /** @var array{inputs: list<array{id: string}>} $body */
+        $body = json_decode((string) $request->getBody(), true);
+        self::assertSame('/crm/v3/objects/contacts/batch/update', $request->getUri()->getPath());
+        self::assertSame('existing-id', $body['inputs'][0]['id']);
+        self::assertSame('existing-id', HubspotObjectLink::query()->sole()->hubspot_id);
+    }
+
+    public function test_a_mixed_collection_updates_linked_models_and_upserts_unlinked_models_in_two_requests(): void
+    {
+        [$linked, $unlinked] = $this->leads(2);
+        HubspotObjectLink::query()->create([
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($linked->getMorphClass()),
+            'model_type' => $linked->getMorphClass(),
+            'model_id' => (string) $linked->getKey(), // @phpstan-ignore-line cast.string
+            'object_type' => 'contacts',
+            'hubspot_id' => 'existing-id',
+            'synced_at' => now(),
+        ]);
+        $fake = Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$linked, $unlinked]), 'handle']);
+
+        Hubspot::assertRequestCount(2);
+        self::assertSame([
+            '/crm/v3/objects/contacts/batch/update',
+            '/crm/v3/objects/contacts/batch/upsert',
+        ], array_map(
+            static fn (array $entry): string => $entry['request']->getUri()->getPath(),
+            $fake->recordedRequests(),
+        ));
+        self::assertSame('existing-id', HubspotObjectLink::query()->where('model_id', $linked->id)->sole()->hubspot_id);
+        self::assertSame(1, HubspotObjectLink::query()->where('model_id', $linked->id)->count());
+        self::assertSame(1, HubspotObjectLink::query()->where('model_id', $unlinked->id)->count());
+    }
+
+    public function test_duplicate_unlinked_identifiers_are_rejected_before_a_batch_request(): void
+    {
+        $models = $this->leads(2);
+        DB::table('synced_leads')->whereIn('id', [$models[0]->id, $models[1]->id])->update([
+            'email' => 'duplicate@example.com',
+        ]);
+        $models = array_values(SyncedLead::query()->whereIn('id', [$models[0]->id, $models[1]->id])->orderBy('id')->get()->all());
+        Hubspot::fake();
+
+        try {
+            app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+            self::fail('Duplicate identifiers must reject the entire batch.');
+        } catch (ConfigurationException) {
+            Hubspot::assertRequestCount(0);
+        }
+    }
+
+    public function test_a_linked_soft_deleted_model_with_a_live_link_is_updated_in_the_batch(): void
+    {
+        $model = $this->softDeletingLeads(1)[0];
+        HubspotObjectLink::query()->create([
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
+            'model_type' => $model->getMorphClass(),
+            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
+            'object_type' => 'contacts',
+            'hubspot_id' => 'existing-id',
+            'synced_at' => now(),
+        ]);
+        $model->delete();
+        $fake = Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        self::assertSame(
+            '/crm/v3/objects/contacts/batch/update',
+            $fake->recordedRequests()[0]['request']->getUri()->getPath(),
+        );
+    }
+
+    public function test_an_unlinked_batch_sync_that_raced_a_soft_delete_replays_the_delete_policy(): void
+    {
+        $model = $this->softDeletingLeads(1)[0];
+        DB::table('soft_deleting_leads')->where('id', $model->id)->update(['deleted_at' => now()]);
+        config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
+        Hubspot::fake();
+        $log = Log::spy();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+        $log->shouldHaveReceived('info', [
+            'A model was deleted while its HubSpot sync was in flight, so the delete policy is '
+            .'being applied now that the link it needed exists.',
+            ['model' => SoftDeletingLead::class, 'model_id' => $model->getKey()],
+        ]);
+    }
+
+    public function test_an_archived_link_is_excluded_from_batch_sync(): void
+    {
+        $model = $this->leads(1)[0];
+        HubspotObjectLink::query()->create([
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
+            'model_type' => $model->getMorphClass(),
+            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
+            'object_type' => 'contacts',
+            'hubspot_id' => 'archived-id',
+            'synced_at' => now(),
+            'archived_at' => now(),
+        ]);
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+    }
+
+    public function test_a_batch_sync_that_raced_a_force_delete_obeys_the_delete_policy(): void
+    {
+        $model = $this->softDeletingLeads(1)[0];
+        DB::table('soft_deleting_leads')->where('id', $model->id)->delete();
+        config()->set('hubspot.auto_sync.on', ['created', 'updated', 'deleted']);
+        config()->set('hubspot.auto_sync.hard_delete', 'allow');
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        self::assertNotNull(HubspotObjectLink::query()->sole()->archived_at);
+    }
+
+    public function test_an_update_response_for_an_unknown_hubspot_id_leaves_known_links_unchanged(): void
+    {
+        $model = $this->leads(1)[0];
+        $link = HubspotObjectLink::query()->create([
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
+            'model_type' => $model->getMorphClass(),
+            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
+            'object_type' => 'contacts',
+            'hubspot_id' => 'known-id',
+            'synced_at' => now(),
+            'is_stale' => true,
+        ]);
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'results' => [['id' => 'unknown-id', 'properties' => ['email' => $model->email]]],
+        ])]);
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        $freshLink = $link->fresh();
+        self::assertNotNull($freshLink);
+        self::assertTrue($freshLink->is_stale);
+    }
+
     /** @return list<SyncedLead> */
     private function leads(int $count): array
     {
