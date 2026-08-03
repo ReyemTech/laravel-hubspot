@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectsBatchJob;
@@ -64,6 +65,7 @@ final class BatchSyncTest extends SyncTestCase
         $this->runBatchJob();
 
         Hubspot::assertRequestCount(1);
+        $fake->assertSynced($models[0], ['email' => 'batch1@example.com']);
         Hubspot::assertSynced($models[0], ['email' => 'batch1@example.com']);
         Hubspot::assertSynced('contacts', ['email' => 'batch1@example.com']);
         self::assertSame(['batch1@example.com', 'batch2@example.com', 'batch3@example.com'], HubspotObjectLink::query()
@@ -141,6 +143,70 @@ final class BatchSyncTest extends SyncTestCase
         $body = json_decode((string) $request->getBody(), true);
         self::assertCount(2, $body['inputs']);
         self::assertNull(HubspotObjectLink::query()->where('model_id', $models[2]->id)->value('id'));
+    }
+
+    public function test_a_worker_rechecks_the_disabled_switch_before_sending_its_batch(): void
+    {
+        $models = $this->leads(1);
+        Hubspot::fake();
+        config()->set('hubspot.disabled', true);
+
+        app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+    }
+
+    public function test_an_empty_batch_job_sends_no_request(): void
+    {
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob([]), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+    }
+
+    public function test_an_empty_batch_is_not_dispatched(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        SyncedLead::syncManyToHubspot([]);
+
+        Bus::assertNotDispatched(SyncHubspotObjectsBatchJob::class);
+    }
+
+    public function test_a_batch_of_only_trashed_models_sends_no_request(): void
+    {
+        $models = $this->softDeletingLeads(1);
+        $models[0]->delete();
+        Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+    }
+
+    public function test_a_missing_identifier_property_refuses_the_entire_batch_before_sending_it(): void
+    {
+        $model = $this->leads(1)[0];
+        $model->setAttribute('email', null);
+        Hubspot::fake();
+
+        $this->expectException(ConfigurationException::class);
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+    }
+
+    public function test_a_returned_record_without_a_matching_submitted_identifier_is_ignored(): void
+    {
+        $models = $this->leads(1);
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'results' => [['id' => 'unknown', 'properties' => ['email' => 'other@example.com']]],
+        ])]);
+
+        app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+
+        self::assertSame(0, HubspotObjectLink::query()->count());
     }
 
     /** @return list<SyncedLead> */

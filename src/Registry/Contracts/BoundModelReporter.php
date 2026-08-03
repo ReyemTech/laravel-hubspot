@@ -11,7 +11,7 @@ interface BoundModelReporter
 {
     /**
      * @return list<array{
-     *     modelClass: class-string,
+     *     modelClass: string,
      *     objectType: string,
      *     idProperty: string,
      *     usesSoftDeletes: bool,

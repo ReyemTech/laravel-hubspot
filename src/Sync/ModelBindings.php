@@ -68,7 +68,7 @@ final class ModelBindings implements BoundModelReporter
      * and does not recreate either decision across the R2 boundary.
      *
      * @return list<array{
-     *     modelClass: class-string,
+     *     modelClass: string,
      *     objectType: string,
      *     idProperty: string,
      *     usesSoftDeletes: bool,
