@@ -19,6 +19,10 @@ use ReyemTech\Hubspot\Registry\Console\DoctorCommand;
 use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Tests\Support\CommandOutput;
+use ReyemTech\Hubspot\Tests\Support\Sync\SoftDeletingLead;
+use ReyemTech\Hubspot\Tests\Support\Sync\SyncedContact;
+use ReyemTech\Hubspot\Tests\Support\Sync\SyncedIntake;
+use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\TestCase;
 use Symfony\Component\Console\Command\Command;
 
@@ -26,18 +30,17 @@ use Symfony\Component\Console\Command\Command;
  * **`php artisan hubspot:doctor` — what the package currently believes, without reading source.**
  *
  * REG-04 asks it to report "every bound model, whether it soft-deletes and what its delete policy
- * resolves to". **Model binding is Phase 4 (SYNC-01) and does not exist**, so per 03-CONTEXT.md §3
- * this command ships reporting what exists — which store each concern uses, whether and when the
- * registry was reconciled, how many directions it holds, and which resolver is bound.
+ * resolves to". Model binding shipped in Phase 4 (SYNC-01), so this command reports the configured
+ * bindings alongside each model's actual deletion behaviour, as well as the pre-existing registry
+ * state: which store each concern uses, whether and when the registry was reconciled, how many
+ * directions it holds, and which resolver is bound.
  *
- * **The absent section is NAMED, not omitted, and that is the assertion in this file that matters.**
- * A doctor that silently left the model section out would tell a developer they have no bound models,
- * when the truth is that the package cannot bind models at all yet. Those are different facts, and
- * only one of them is true.
+ * **The bound-model section is real, not omitted.** With no configured bindings it says so and names
+ * the config key to add; that is now a true statement, unlike the old not-built wording.
  *
- * REG-04 therefore does NOT close in Phase 3. REG-04a — everything above, plus
- * `hubspot:associations:doctor` in full — completes here; REG-04b, the bound-model section, is Phase
- * 4's. The split is recorded in `.planning/REQUIREMENTS.md` and `.planning/ROADMAP.md`.
+ * REG-04a — the registry report plus `hubspot:associations:doctor` — completed in Phase 3. REG-04b,
+ * this real bound-model section, completes in 04-09; together they close REG-04. The split remains
+ * recorded in `.planning/REQUIREMENTS.md` and `.planning/ROADMAP.md`.
  */
 mutates(DoctorCommand::class);
 
@@ -54,6 +57,11 @@ final class DoctorCommandTest extends TestCase
         $config = $app->make('config');
 
         $config->set('hubspot.store', 'array');
+        $config->set('hubspot.models', [
+            SyncedLead::class => ['object' => 'contacts', 'id_property' => 'email'],
+            SyncedContact::class => ['object' => 'companies', 'id_property' => 'domain'],
+            SyncedIntake::class => ['object' => 'deals', 'id_property' => 'external_id'],
+        ]);
     }
 
     /**
@@ -152,28 +160,48 @@ final class DoctorCommandTest extends TestCase
         self::assertContains('Holds 9 rows across 7 directions.', self::runDoctor());
     }
 
-    /**
-     * **The assertion this command exists to make honest.**
-     *
-     * The bound-model section is not built. Its absence is reported in words, because "you have no
-     * bound models" and "this package cannot bind models yet" are different facts and only the second
-     * is true. Printing nothing at all would assert the first.
-     */
-    public function test_it_names_the_bound_model_section_as_not_built_rather_than_omitting_it(): void
+    public function test_it_reports_each_bound_model_with_its_own_object_type_and_id_property(): void
     {
         $lines = self::runDoctor();
 
-        self::assertContains('Bound models: NOT BUILT YET.', $lines);
+        $lead = 'Bound model: '.SyncedLead::class
+            .'; object: contacts; id_property: email; SoftDeletes: no; delete policy: skip-quietly.';
+        $contact = 'Bound model: '.SyncedContact::class
+            .'; object: companies; id_property: domain; SoftDeletes: no; delete policy: skip-quietly.';
+        $intake = 'Bound model: '.SyncedIntake::class
+            .'; object: deals; id_property: external_id; SoftDeletes: no; delete policy: skip-quietly.';
+
+        self::assertSame(1, count(array_keys($lines, $lead)));
+        self::assertSame(1, count(array_keys($lines, $contact)));
+        self::assertSame(1, count(array_keys($lines, $intake)));
+    }
+
+    public function test_it_resolves_different_delete_policies_for_soft_deleting_and_non_soft_deleting_models(): void
+    {
+        config()->set('hubspot.models', [
+            SoftDeletingLead::class => ['object' => 'contacts', 'id_property' => 'email'],
+            SyncedLead::class => ['object' => 'companies', 'id_property' => 'domain'],
+        ]);
+
+        $lines = self::runDoctor();
+
         self::assertContains(
-            'This section is empty because model binding does not exist in this release, NOT '
-            .'because you have no bound models.',
+            'Bound model: '.SoftDeletingLead::class
+            .'; object: contacts; id_property: email; SoftDeletes: yes; delete policy: archive.',
             $lines,
         );
         self::assertContains(
-            'When it ships it will report every bound model, whether it soft-deletes, and what its '
-            .'delete policy resolves to.',
+            'Bound model: '.SyncedLead::class
+            .'; object: companies; id_property: domain; SoftDeletes: no; delete policy: skip-quietly.',
             $lines,
         );
+    }
+
+    public function test_it_reports_when_no_bound_models_are_configured(): void
+    {
+        config()->set('hubspot.models', []);
+
+        self::assertContains('Bound models: none configured. Add bindings to `hubspot.models`.', self::runDoctor());
     }
 
     /**
