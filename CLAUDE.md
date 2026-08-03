@@ -111,7 +111,7 @@ reviews new code, so fixes beget findings.
   well as `/pulls/<n>/reviews`.
 - **Documentation and planning commits do not need a fresh review naming head.** Prove it, don't
   assume it:
-  `git diff --name-only <reviewed-sha>..HEAD | grep -vE '^(\.planning/|docs/|[^/]+\.md$)'`
+  `git diff --no-renames --name-only <reviewed-sha>..HEAD | grep -vE '^(\.planning/|docs/|[^/]+\.md$)'`
   must print nothing. Changes under `config/`, `database/`, `resources/`, `scripts/` and `tests/`
   require a review of the head. A changed string literal is source.
 
