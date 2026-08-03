@@ -176,10 +176,11 @@ is where it becomes true. REG-01 and REG-04 tick here, not in Phase 3.
   2. Three local models bind to `contacts` simultaneously, each with its own `id_property`, and an API-only object type (line items, products) is usable via `Hubspot::objects('line_items')->find($id)` with no local model and no table.
      - **Amended during Phase 4 planning (2026-07-30)**, tracking D-13: there is no per-binding local id column. No consumer schema is ever altered — the local HubSpot id lives in the package-owned `hubspot_object_links` table, read through `$model->hubspotLink`, and `id_property` names the HubSpot-side unique property a retry converges on. The original wording ("different id columns") is a stale copy of the pre-D-13 design, not a competing decision.
   3. `$hubspotMap` resolves all three forms — a literal attribute (`'dealname' => 'title'`), a dot-notation path across a relation (`'dealstage' => 'stage.hubspot_id'`), and a closure — and `$hubspotUpdateMap` narrows what is sent on update.
-   4. No API call occurs in a request lifecycle: sync is queued by default. A homogeneous collection
-      issues one batch request rather than N; a mixed linked/unlinked collection issues at most two,
-      updating by stored HubSpot ID and upserting by configured identifier. Tests assert the exact
-      homogeneous count and mixed bound (an N+1 is a test failure, not a code smell).
+   4. No API call occurs in a request lifecycle: sync is queued by default. A homogeneous collection of
+      at most 100 records issues one batch request rather than N; larger and mixed collections sum
+      independently chunked stored-ID updates and configured-identifier upserts, with no request above
+      100 inputs. Tests assert the exact homogeneous and chunked mixed counts (an N+1 is a test failure,
+      not a code smell).
   5. Deletes cannot surprise anyone: `'deleted'` is opt-in, `hard_delete` defaults to `guard` (skip and log), a `SoftDeletes` model archives in HubSpot on soft delete, `restored` logs and flags the stored `hubspot_id` stale without ever nulling it, and `Hubspot::withoutSyncing()` plus `HUBSPOT_DISABLED=true` suppress everything so `migrate:fresh --seed` fires zero API calls.
 
 **Requirement split written at planning time (2026-07-30, D-15):** **SYNC-01a** — Attached and API-only
@@ -198,9 +199,9 @@ Plans:
 - [x] 04-05-PLAN.md — The generic observer's event surface, its three independent gates, zero HTTP in a request lifecycle, and D-17's restore guard
 - [x] 04-06-PLAN.md — The delete-policy table on `trashed` / `forceDeleted` / `deleted`, the archive job, and a restore that flags without nulling
 - [x] 04-07-PLAN.md — `withoutSyncing()` and `HUBSPOT_DISABLED`, one gate consulted at dispatch and again on the worker
-- [x] 04-08-PLAN.md — `Model::syncManyToHubspot()`: one job and identity-aware transport (stored-ID
-  `updateMany()` plus identifier `upsertMany()` as needed, at most two requests), and `assertSynced`
-  widened to a bound model
+- [x] 04-08-PLAN.md — `Model::syncManyToHubspot()`: one job and chunked identity-aware transport
+  (stored-ID `updateMany()` plus identifier `upsertMany()` in independently chunked groups of at most
+  100 inputs), and `assertSynced` widened to a bound model
 - [x] 04-09-PLAN.md — `hubspot:doctor`'s real bound-model section (REG-04b), replacing the test that held the opposite, and the phase close-out
 
 **Phase close-out, 2026-08-03.** All Phase 4 success criteria and REG-01/REG-04 are complete. SYNC-01b

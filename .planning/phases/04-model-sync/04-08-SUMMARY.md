@@ -6,10 +6,11 @@ _Completed 2026-08-03._
 
 `Model::syncManyToHubspot(iterable $models): void` materialises one same-class iterable, rejects a
 foreign model with both class names, and dispatches one `SyncHubspotObjectsBatchJob`. The job maps fresh
-worker models and partitions eligible records by persisted HubSpot identity: linked models use one
-`ObjectGatewayContract::updateMany()` request keyed by their stored IDs; unlinked models use one
-`ObjectGatewayContract::upsertMany()` request keyed by the configured `id_property`. A homogeneous
-linked or unlinked collection makes one request; a mixed collection makes at most two.
+worker models and partitions eligible records by persisted HubSpot identity: linked models use
+`ObjectGatewayContract::updateMany()` requests keyed by their stored IDs; unlinked models use
+`ObjectGatewayContract::upsertMany()` requests keyed by the configured `id_property`. Each non-empty
+identity group is chunked to at most 100 inputs: a homogeneous collection up to 100 makes one request,
+while the total is `ceil(update_count / 100) + ceil(upsert_count / 100)` for larger or mixed input.
 
 This is HubSpot API batching, never Laravel job batching. `Batchable` remains on the job only so a
 consumer may wrap its own jobs; this package never calls `Bus::batch()` and creates no `job_batches`
@@ -35,13 +36,21 @@ model. A model resolves through `ModelBindings`; existing string callers are unc
 - **Architecture:** the package root may reference `Sync\ModelBindings`; existing architecture rules
   permit it, so no rule widening or container-contract accommodation was needed.
 - **Identity-aware correction, 2026-08-03:** the original all-upsert, exactly-one-request collection
-  promise was superseded. The public API stays singular; transport is one request for homogeneous
-  identity state and at most two for mixed linked/unlinked state. Linked responses never replace their
-  stored HubSpot IDs.
+  promise and the later at-most-two-request cap are superseded. The public API remains singular and
+  dispatches one queued job; each linked and unlinked group is independently chunked to 100 inputs.
+  HubSpot's documented limit is 100 records per batch operation:
+  https://developers.hubspot.com/docs/api-reference/crm-contacts-v3/batch/post-crm-v3-objects-contacts-batch-upsert.
+  Linked responses never replace their stored HubSpot IDs.
 - **Delete-race convergence:** `DeleteRaceReconciler::reconcile(Model $model): void` is shared by the
-  single and batch jobs after confirmed unlinked upserts. It replays the matching observer event rather
-  than archiving directly, preserving delete policy, gates and archive evidence. Linked updates do not
-  replay it because their link existed when the delete observer ran.
+  single and batch jobs after confirmed unlinked upserts. The batch job creates a link only when none
+  exists after the response, retaining a concurrently created link and skipping reconciliation in that
+  case. A link it created replays the matching observer event rather than archiving directly, preserving
+  delete policy, gates and archive evidence.
+- **Resilience follow-up, 2026-08-03:** queued inputs are class/key references reloaded without global
+  scopes, so a hard-deleted member is skipped and surviving members still sync. `DoctorCommand::handle()`
+  retains `AssociationTypeStore $store` as its public signature and resolves `BoundModelReporter` from
+  the container. The batch-job docblock now describes chunked HubSpot transport rather than an invalid
+  two-request cap.
 
 ## Verification
 
