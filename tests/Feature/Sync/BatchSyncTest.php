@@ -119,7 +119,7 @@ final class BatchSyncTest extends SyncTestCase
         (new \ReflectionMethod(SyncedLead::class, 'syncManyToHubspot'))->invoke(null, [$lead, $foreign]);
     }
 
-    public function test_a_207_keeps_the_returned_records_linked_and_logs_the_rejected_ones(): void
+    public function test_a_207_keeps_the_returned_records_linked_and_logs_safe_rejection_diagnostics(): void
     {
         $models = $this->leads(3);
         Hubspot::fake(['contacts' => Hubspot::response([
@@ -132,7 +132,7 @@ final class BatchSyncTest extends SyncTestCase
                 'message' => 'The third record was rejected',
                 'category' => 'VALIDATION_ERROR',
                 'status' => 'error',
-                'context' => ['ids' => ['batch3@example.com']],
+                'context' => ['identifier' => ['batch3@example.com']],
             ]],
         ], 207)]);
         Bus::fake();
@@ -144,7 +144,14 @@ final class BatchSyncTest extends SyncTestCase
         Hubspot::assertRequestCount(1);
         self::assertSame(['landed-1', 'landed-2'], HubspotObjectLink::query()->orderBy('model_id')->pluck('hubspot_id')->all());
         self::assertNull(HubspotObjectLink::query()->where('model_id', $models[2]->id)->value('id'));
-        $log->shouldHaveReceived('error');
+        $log->shouldHaveReceived('error', [
+            'The third record was rejected',
+            [
+                'object_type' => 'contacts',
+                'category' => 'VALIDATION_ERROR',
+                'status' => 'error',
+            ],
+        ]);
     }
 
     public function test_a_trashed_model_is_filtered_before_the_one_batch_request_is_assembled(): void
