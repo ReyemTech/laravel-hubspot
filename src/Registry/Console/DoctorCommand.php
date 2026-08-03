@@ -9,6 +9,7 @@ use Illuminate\Console\Command;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Registry\AssociationTypeRow;
 use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
+use ReyemTech\Hubspot\Registry\Contracts\BoundModelReporter;
 
 /**
  * **What this installation of the package currently believes, without reading its source.**
@@ -18,22 +19,15 @@ use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
  * no credentials — so it answers in an environment where nothing else works yet, which is where a
  * developer most needs it.
  *
- * ## It is deliberately partial, and it says so
+ * ## REG-04 is complete
  *
  * REG-04 asks this command to report "every bound model, whether it soft-deletes and what its delete
- * policy resolves to". **Model binding does not exist in this release** — it is SYNC-01, a later phase
- * — so building that section now would mean building it against a guess.
+ * policy resolves to". REG-04a — the registry report plus `hubspot:associations:doctor` — shipped in
+ * Phase 3. REG-04b is the bound-model section below, now that Phase 4's binding and deletion policy
+ * exist; together they close the requirement.
  *
- * The section is therefore **named as absent rather than omitted**, which is the whole of
- * 03-CONTEXT.md §3's decision. Printing nothing would assert "you have no bound models"; the true
- * statement is "this package cannot bind models yet", and those are different facts. A developer
- * reading a silent report would reasonably conclude their own configuration was wrong.
- *
- * **This command does not close REG-04.** REG-04a — everything it does report, plus
- * `hubspot:associations:doctor` — completes here; REG-04b, the bound-model section, is owned by the
- * phase that builds model binding. Printing "not available yet" is not an implementation of a
- * requirement, and marking one delivered because a command with that name exists is how acceptance
- * criteria quietly go unbuilt.
+ * `BoundModelReporter` is a Registry-owned contract implemented by Sync. The report contains only
+ * resolved primitive facts, so this command neither depends on Sync nor recreates its delete policy.
  *
  * ## Reporting is not failing
  *
@@ -47,7 +41,7 @@ final class DoctorCommand extends Command
 
     protected $description = 'Report what this package currently believes: stores, registry state and bindings';
 
-    public function handle(AssociationTypeStore $store): int
+    public function handle(AssociationTypeStore $store, BoundModelReporter $boundModels): int
     {
         /** @var mixed $configuredStore */
         $configuredStore = $this->laravel->make('config')->get('hubspot.store');
@@ -90,29 +84,30 @@ final class DoctorCommand extends Command
             ))),
         ));
 
-        $this->reportTheSectionThatDoesNotExistYet();
+        $this->reportBoundModels($boundModels);
 
         return self::SUCCESS;
     }
 
-    /**
-     * The absence, in words.
-     *
-     * Three lines rather than one because each says something different: that the section is not
-     * built, that its emptiness is not a statement about the reader's models, and what it will report
-     * once it is built. Dropping the middle line is the specific way this report would become
-     * misleading.
-     */
-    private function reportTheSectionThatDoesNotExistYet(): void
+    private function reportBoundModels(BoundModelReporter $boundModels): void
     {
-        $this->line('Bound models: NOT BUILT YET.');
-        $this->line(
-            'This section is empty because model binding does not exist in this release, NOT '
-            .'because you have no bound models.'
-        );
-        $this->line(
-            'When it ships it will report every bound model, whether it soft-deletes, and what its '
-            .'delete policy resolves to.'
-        );
+        $reports = $boundModels->boundModelReports();
+
+        if ($reports === []) {
+            $this->line('Bound models: none configured. Add bindings to `hubspot.models`.');
+
+            return;
+        }
+
+        foreach ($reports as $report) {
+            $this->line(sprintf(
+                'Bound model: %s; object: %s; id_property: %s; SoftDeletes: %s; delete policy: %s.',
+                $report['modelClass'],
+                $report['objectType'],
+                $report['idProperty'],
+                $report['usesSoftDeletes'] ? 'yes' : 'no',
+                $report['deletePolicy'],
+            ));
+        }
     }
 }
