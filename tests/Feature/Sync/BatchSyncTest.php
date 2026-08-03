@@ -12,8 +12,10 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
+use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Sync\HubspotObjectLink;
 use ReyemTech\Hubspot\Sync\SyncHubspotObjectsBatchJob;
 use ReyemTech\Hubspot\Sync\SyncsToHubspot;
@@ -212,14 +214,7 @@ final class BatchSyncTest extends SyncTestCase
     public function test_a_linked_model_is_updated_by_its_stored_hubspot_id_when_its_identifier_changed(): void
     {
         $model = $this->leads(1)[0];
-        HubspotObjectLink::query()->create([
-            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
-            'model_type' => $model->getMorphClass(),
-            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
-            'object_type' => 'contacts',
-            'hubspot_id' => 'existing-id',
-            'synced_at' => now(),
-        ]);
+        $this->link($model, 'existing-id');
         $model->update(['email' => 'changed@example.com']);
         $fake = Hubspot::fake();
 
@@ -237,14 +232,7 @@ final class BatchSyncTest extends SyncTestCase
     public function test_a_mixed_collection_updates_linked_models_and_upserts_unlinked_models_in_two_requests(): void
     {
         [$linked, $unlinked] = $this->leads(2);
-        HubspotObjectLink::query()->create([
-            'lookup_hash' => HubspotObjectLink::lookupHashFor($linked->getMorphClass()),
-            'model_type' => $linked->getMorphClass(),
-            'model_id' => (string) $linked->getKey(), // @phpstan-ignore-line cast.string
-            'object_type' => 'contacts',
-            'hubspot_id' => 'existing-id',
-            'synced_at' => now(),
-        ]);
+        $this->link($linked, 'existing-id');
         $fake = Hubspot::fake();
 
         app()->call([new SyncHubspotObjectsBatchJob([$linked, $unlinked]), 'handle']);
@@ -355,15 +343,7 @@ final class BatchSyncTest extends SyncTestCase
     public function test_an_update_response_for_an_unknown_hubspot_id_leaves_known_links_unchanged(): void
     {
         $model = $this->leads(1)[0];
-        $link = HubspotObjectLink::query()->create([
-            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
-            'model_type' => $model->getMorphClass(),
-            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
-            'object_type' => 'contacts',
-            'hubspot_id' => 'known-id',
-            'synced_at' => now(),
-            'is_stale' => true,
-        ]);
+        $link = $this->link($model, 'known-id', true);
         Hubspot::fake(['contacts' => Hubspot::response([
             'results' => [['id' => 'unknown-id', 'properties' => ['email' => $model->email]]],
         ])]);
@@ -373,6 +353,82 @@ final class BatchSyncTest extends SyncTestCase
         $freshLink = $link->fresh();
         self::assertNotNull($freshLink);
         self::assertTrue($freshLink->is_stale);
+    }
+
+    #[DataProvider('batchOperationProvider')]
+    public function test_batch_operations_are_sent_in_chunks_of_at_most_one_hundred_inputs(bool $linked, string $path): void
+    {
+        $models = $this->leads(101);
+
+        if ($linked) {
+            foreach ($models as $model) {
+                $this->link($model, 'existing-'.$model->id);
+            }
+        }
+
+        $fake = Hubspot::fake();
+
+        app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+
+        Hubspot::assertRequestCount(2);
+        self::assertSame([$path, $path], array_map(
+            static fn (array $entry): string => $entry['request']->getUri()->getPath(),
+            $fake->recordedRequests(),
+        ));
+        self::assertSame([100, 1], array_map(
+            static fn (array $entry): int => count(json_decode((string) $entry['request']->getBody(), true)['inputs']),
+            $fake->recordedRequests(),
+        ));
+    }
+
+    public static function batchOperationProvider(): array
+    {
+        return [
+            'updates' => [true, '/crm/v3/objects/contacts/batch/update'],
+            'upserts' => [false, '/crm/v3/objects/contacts/batch/upsert'],
+        ];
+    }
+
+    public function test_a_missing_queued_model_does_not_discard_its_surviving_sibling(): void
+    {
+        $models = $this->leads(2);
+        $fake = Hubspot::fake();
+        Bus::fake();
+
+        SyncedLead::syncManyToHubspot($models);
+        DB::table('synced_leads')->where('id', $models[0]->id)->delete();
+
+        /** @var SyncHubspotObjectsBatchJob $job */
+        $job = Bus::dispatched(SyncHubspotObjectsBatchJob::class)->sole();
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        /** @var array{inputs: list<array{id: string}>} $body */
+        $body = json_decode((string) $fake->recordedRequests()[0]['request']->getBody(), true);
+        self::assertSame(['batch2@example.com'], array_column($body['inputs'], 'id'));
+        self::assertSame('batch2@example.com', HubspotObjectLink::query()->where('model_id', $models[1]->id)->sole()->hubspot_id);
+    }
+
+    public function test_a_link_created_while_an_unlinked_batch_response_is_in_flight_is_not_repointed(): void
+    {
+        $model = $this->leads(1)[0];
+        Hubspot::fake();
+        $realGateway = Hubspot::objects();
+        $gateway = \Mockery::mock(ObjectGatewayContract::class);
+        $gateway->shouldReceive('upsertMany')->andReturnUsing(
+            function (string $objectType, string $idProperty, array $records) use ($model, $realGateway) {
+                $result = $realGateway->upsertMany($objectType, $idProperty, $records);
+                $this->link($model, 'concurrent-id');
+
+                return $result;
+            },
+        );
+        app()->instance(ObjectGatewayContract::class, $gateway);
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        self::assertSame('concurrent-id', HubspotObjectLink::query()->sole()->hubspot_id);
     }
 
     /** @return list<SyncedLead> */
@@ -414,5 +470,18 @@ final class BatchSyncTest extends SyncTestCase
         /** @var SyncHubspotObjectsBatchJob $job */
         $job = Bus::dispatched(SyncHubspotObjectsBatchJob::class)->sole();
         app()->call([$job, 'handle']);
+    }
+
+    private function link(SyncedLead $model, string $hubspotId, bool $stale = false): HubspotObjectLink
+    {
+        return HubspotObjectLink::query()->create([
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
+            'model_type' => $model->getMorphClass(),
+            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string
+            'object_type' => 'contacts',
+            'hubspot_id' => $hubspotId,
+            'synced_at' => now(),
+            'is_stale' => $stale,
+        ]);
     }
 }

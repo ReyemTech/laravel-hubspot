@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Feature\Registry;
 
+use Illuminate\Console\OutputStyle;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Carbon;
@@ -25,6 +26,8 @@ use ReyemTech\Hubspot\Tests\Support\Sync\SyncedIntake;
 use ReyemTech\Hubspot\Tests\Support\Sync\SyncedLead;
 use ReyemTech\Hubspot\Tests\TestCase;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\BufferedOutput;
 
 /**
  * **`php artisan hubspot:doctor` — what the package currently believes, without reading source.**
@@ -212,5 +215,20 @@ final class DoctorCommandTest extends TestCase
     public function test_reporting_is_not_a_failure(): void
     {
         self::assertSame(Command::SUCCESS, Artisan::call('hubspot:doctor'));
+    }
+
+    public function test_handle_resolves_the_bound_model_reporter_when_called_with_only_the_store(): void
+    {
+        $output = new BufferedOutput;
+        $command = new DoctorCommand;
+        $command->setLaravel(app());
+        $command->setOutput(new OutputStyle(new ArrayInput([]), $output));
+
+        self::assertSame(Command::SUCCESS, $command->handle(app(AssociationTypeStore::class)));
+        self::assertContains(
+            'Bound model: '.SyncedLead::class
+            .'; object: contacts; id_property: email; SoftDeletes: no; delete policy: skip-quietly.',
+            CommandOutput::linesOf($output->fetch()),
+        );
     }
 }
