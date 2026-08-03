@@ -109,10 +109,11 @@ reviews new code, so fixes beget findings.
   shipped an unread P2 on PR #65.
 - A clean verdict is posted as an **issue comment**, not a review — poll `/issues/<n>/comments` as
   well as `/pulls/<n>/reviews`.
-- **Non-source commits do not need a fresh review naming head.** Docs, `.planning/**` and pure test
-  moves qualify. Prove it, don't assume it:
-  `git diff -U0 <reviewed-sha>..HEAD -- src/ | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vE '^[+-]\s*(\*|//|/\*)'`
-  must print nothing. A changed string literal is source.
+- **Documentation and planning commits do not need a fresh review naming head.** Prove it, don't
+  assume it:
+  `git diff --no-renames --name-only <reviewed-sha>..HEAD | grep -vE '^(\.planning/|docs/|[^/]+\.md$)'`
+  must print nothing. Changes under `config/`, `database/`, `resources/`, `scripts/` and `tests/`
+  require a review of the head. A changed string literal is source.
 
 ---
 
