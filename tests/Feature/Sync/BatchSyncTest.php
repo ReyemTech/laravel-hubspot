@@ -7,6 +7,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 use Generator;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +44,7 @@ final class BatchSyncTest extends SyncTestCase
             SyncedLead::class => ['object' => 'contacts', 'id_property' => 'email'],
             SoftDeletingLead::class => ['object' => 'contacts', 'id_property' => 'email'],
             SyncedContact::class => ['object' => 'contacts', 'id_property' => 'company_email'],
+            BaseBatchLead::class => ['object' => 'contacts', 'id_property' => 'email'],
         ]);
     }
 
@@ -126,6 +128,21 @@ final class BatchSyncTest extends SyncTestCase
             .'; every model must be an instance of '.SyncedLead::class.'.');
 
         (new \ReflectionMethod(SyncedLead::class, 'syncManyToHubspot'))->invoke(null, [$lead, $foreign]);
+    }
+
+    public function test_a_configured_subclass_is_rejected_before_batch_dispatch(): void
+    {
+        Bus::fake();
+        $subclass = new ConfiguredBatchLead(['email' => 'subclass@example.com']);
+
+        $this->expectExceptionMessage(BaseBatchLead::class.' cannot batch-sync '.ConfiguredBatchLead::class
+            .'; every model must be an instance of '.BaseBatchLead::class.'.');
+
+        try {
+            BaseBatchLead::syncManyToHubspot([$subclass]);
+        } finally {
+            Bus::assertNotDispatched(SyncHubspotObjectsBatchJob::class);
+        }
     }
 
     public function test_a_207_keeps_the_returned_records_linked_and_logs_safe_rejection_diagnostics(): void
@@ -375,6 +392,21 @@ final class BatchSyncTest extends SyncTestCase
         try {
             app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
             self::fail('Duplicate identifiers must reject the entire batch.');
+        } catch (ConfigurationException) {
+            Hubspot::assertRequestCount(0);
+        }
+    }
+
+    public function test_case_differing_unlinked_email_identifiers_are_rejected_before_a_batch_request(): void
+    {
+        $models = $this->leads(2);
+        DB::table('synced_leads')->where('id', $models[1]->id)->update(['email' => 'BATCH1@EXAMPLE.COM']);
+        $models = array_values(SyncedLead::query()->whereIn('id', [$models[0]->id, $models[1]->id])->orderBy('id')->get()->all());
+        Hubspot::fake();
+
+        try {
+            app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+            self::fail('Case-differing email identifiers must reject the entire batch.');
         } catch (ConfigurationException) {
             Hubspot::assertRequestCount(0);
         }
@@ -650,4 +682,20 @@ final class BatchSyncTest extends SyncTestCase
             'is_stale' => $stale,
         ]);
     }
+}
+
+class BaseBatchLead extends Model
+{
+    use SyncsToHubspot;
+
+    protected $table = 'synced_leads';
+
+    protected $guarded = [];
+
+    /** @var array<string, string> */
+    protected array $hubspotMap = ['email' => 'email'];
+}
+
+final class ConfiguredBatchLead extends BaseBatchLead
+{
 }
