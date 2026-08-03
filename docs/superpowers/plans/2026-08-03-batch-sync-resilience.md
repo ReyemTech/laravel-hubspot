@@ -145,8 +145,8 @@ if ($link->wasRecentlyCreated) {
 }
 ```
 
-Catch only the database unique-constraint race around `firstOrCreate()`, then query the same identity;
-all other database failures must continue to surface.
+Laravel's `firstOrCreate()` retains the concurrent winner on a unique-constraint race and continues to
+surface other database failures.
 
 - [ ] **Step 4: Preserve `DoctorCommand::handle()` compatibility**
 

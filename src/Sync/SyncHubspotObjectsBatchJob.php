@@ -10,7 +10,6 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
@@ -212,15 +211,7 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
                 'stale_at' => null,
             ];
 
-            try {
-                $link = HubspotObjectLink::query()->firstOrCreate($identity, $attributes);
-            } catch (UniqueConstraintViolationException $exception) {
-                $link = HubspotObjectLink::query()->where($identity)->first();
-
-                if (! $link instanceof HubspotObjectLink) {
-                    throw $exception;
-                }
-            }
+            $link = HubspotObjectLink::query()->firstOrCreate($identity, $attributes);
 
             if ($link->wasRecentlyCreated) {
                 App::make(DeleteRaceReconciler::class)->reconcile($model);
