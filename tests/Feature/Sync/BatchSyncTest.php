@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
+use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
@@ -75,6 +76,22 @@ final class BatchSyncTest extends SyncTestCase
             ->orderBy('model_id')
             ->pluck('hubspot_id')
             ->all());
+    }
+
+    public function test_a_batch_job_is_deferred_until_the_creating_transaction_commits(): void
+    {
+        $models = $this->leads(1);
+        Hubspot::fake();
+        Bus::fake();
+
+        DB::transaction(function () use ($models): void {
+            SyncedLead::syncManyToHubspot($models);
+        });
+
+        Bus::assertDispatched(
+            SyncHubspotObjectsBatchJob::class,
+            fn (SyncHubspotObjectsBatchJob $job): bool => $job->afterCommit === true,
+        );
     }
 
     public function test_an_eloquent_collection_and_generator_are_accepted_without_materialising_at_the_call_site(): void
@@ -200,16 +217,38 @@ final class BatchSyncTest extends SyncTestCase
         app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
     }
 
-    public function test_a_returned_record_without_a_matching_submitted_identifier_is_ignored(): void
+    public function test_an_upsert_response_with_an_unrelated_identifier_throws_without_exposing_its_value(): void
     {
         $models = $this->leads(1);
+        $unrelatedEmail = 'not-submitted@example.com';
         Hubspot::fake(['contacts' => Hubspot::response([
-            'results' => [['id' => 'unknown', 'properties' => ['email' => 'other@example.com']]],
+            'results' => [['id' => 'unknown', 'properties' => ['email' => $unrelatedEmail]]],
+        ])]);
+
+        try {
+            app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+            self::fail('An upsert result without a submitted model must be rejected.');
+        } catch (ApiException $exception) {
+            self::assertStringNotContainsString($unrelatedEmail, $exception->getMessage());
+        }
+
+        self::assertSame(0, HubspotObjectLink::query()->count());
+    }
+
+    public function test_an_upsert_response_with_an_uppercase_email_links_the_submitted_model(): void
+    {
+        $models = $this->leads(2);
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'results' => [['id' => 'returned-id', 'properties' => ['email' => 'BATCH2@EXAMPLE.COM']]],
         ])]);
 
         app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
 
-        self::assertSame(0, HubspotObjectLink::query()->count());
+        self::assertSame('returned-id', HubspotObjectLink::query()
+            ->where('model_id', $models[1]->id)
+            ->sole()
+            ->hubspot_id);
+        self::assertSame(0, HubspotObjectLink::query()->where('model_id', $models[0]->id)->count());
     }
 
     public function test_a_linked_model_is_updated_by_its_stored_hubspot_id_when_its_identifier_changed(): void
