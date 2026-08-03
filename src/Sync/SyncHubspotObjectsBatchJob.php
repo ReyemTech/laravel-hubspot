@@ -271,7 +271,6 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
                 'object_type' => $objectType,
                 'category' => $error->category,
                 'status' => $error->status,
-                'context' => $error->context,
             ]);
         }
     }
