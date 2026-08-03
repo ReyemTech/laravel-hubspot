@@ -180,6 +180,27 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
                     'stale_at' => null,
                 ],
             );
+
+            $this->archiveIfTheModelWasDeletedMeanwhile($model);
+        }
+    }
+
+    private function archiveIfTheModelWasDeletedMeanwhile(Model $model): void
+    {
+        $usesSoftDeletes = in_array(SoftDeletes::class, class_uses_recursive($model), true);
+        $fresh = $model->newQueryWithoutScopes()->find($model->getKey());
+
+        /** @var HubspotObserver $observer */
+        $observer = App::make(HubspotObserver::class);
+
+        if (! $fresh instanceof Model) {
+            $usesSoftDeletes ? $observer->forceDeleted($model) : $observer->deleted($model);
+
+            return;
+        }
+
+        if ($usesSoftDeletes && $fresh->trashed() === true) { // @phpstan-ignore-line method.notFound
+            $observer->trashed($fresh);
         }
     }
 
