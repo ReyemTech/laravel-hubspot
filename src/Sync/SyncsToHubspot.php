@@ -103,7 +103,7 @@ trait SyncsToHubspot
 
         /** @var Dispatcher $dispatcher */
         $dispatcher = App::make(Dispatcher::class);
-        $dispatcher->dispatch(new SyncHubspotObjectsBatchJob($batch));
+        $dispatcher->dispatch((new SyncHubspotObjectsBatchJob($batch))->afterCommit());
     }
 
     /**

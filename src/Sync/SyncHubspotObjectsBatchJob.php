@@ -15,6 +15,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
+use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\BatchError;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
@@ -192,10 +193,10 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
         // retry converges on them rather than treating a partial success as a total loss.
         foreach ($objects as $object) {
             $id = $object->properties[$binding->idProperty] ?? null;
-            $model = is_string($id) ? ($modelsById[$id] ?? null) : null;
+            $model = $this->modelForIdentifier($id, $binding, $modelsById);
 
             if (! $model instanceof Model) {
-                continue;
+                throw ApiException::unmatchedBatchRecord();
             }
 
             $identity = [
@@ -217,6 +218,28 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
                 App::make(DeleteRaceReconciler::class)->reconcile($model);
             }
         }
+    }
+
+    /**
+     * @param  array<string, Model>  $modelsById
+     */
+    private function modelForIdentifier(mixed $id, ModelBinding $binding, array $modelsById): ?Model
+    {
+        if (! is_string($id)) {
+            return null;
+        }
+
+        if ($binding->idProperty !== 'email') {
+            return $modelsById[$id] ?? null;
+        }
+
+        foreach ($modelsById as $submittedId => $model) {
+            if (mb_strtolower($submittedId, 'UTF-8') === mb_strtolower($id, 'UTF-8')) {
+                return $model;
+            }
+        }
+
+        return null;
     }
 
     /**
