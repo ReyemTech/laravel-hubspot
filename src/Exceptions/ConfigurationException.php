@@ -123,6 +123,16 @@ final class ConfigurationException extends LogicException implements HubspotExce
         ));
     }
 
+    public static function duplicateBatchLinkedHubspotId(string $modelClass, string $objectType): self
+    {
+        return new self(sprintf(
+            '%s has multiple linked models for the same HubSpot %s record. A batch update cannot '
+            .'safely correlate its response, so correct the duplicate hubspot_object_links rows before retrying.',
+            $modelClass,
+            $objectType,
+        ));
+    }
+
     /**
      * A model applies `Sync\SyncsToHubspot` but has no entry in `hubspot.models` -- D-12's
      * inverse. Thrown by `Sync\ModelBindings::for()`, the single resolution point every Sync

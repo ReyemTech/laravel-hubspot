@@ -430,6 +430,7 @@ final class BatchSyncTest extends SyncTestCase
         Hubspot::assertRequestCount(1);
         self::assertSame('concurrent-id', HubspotObjectLink::query()->sole()->hubspot_id);
     }
+
     /** @return list<SyncedLead> */
     private function leads(int $count): array
     {
@@ -493,7 +494,6 @@ class BaseBatchLead extends Model
 
     protected $guarded = [];
 
-    /** @var array<string, string> */
     protected array $hubspotMap = ['email' => 'email'];
 }
 

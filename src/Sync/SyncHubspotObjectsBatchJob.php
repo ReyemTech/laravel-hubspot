@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Log;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\BatchError;
+use ReyemTech\Hubspot\Gateway\BatchResult;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\HubspotObject;
 
@@ -84,12 +85,14 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
             $result = $gateway->updateMany($binding->objectType, $chunk);
             $this->markUpdatedRecords($result->recordsDespitePartialFailure(), $linksByHubspotId);
             $this->logErrors($result->errors(), $binding->objectType);
+            $this->throwForUnitemizedPartialFailure($result);
         }
 
         foreach (array_chunk($upserts, 100) as $chunk) {
             $result = $gateway->upsertMany($binding->objectType, $binding->idProperty, $chunk);
             $this->storeConfirmedRecords($result->recordsDespitePartialFailure(), $binding, $modelsByIdentifier);
             $this->logErrors($result->errors(), $binding->objectType);
+            $this->throwForUnitemizedPartialFailure($result);
         }
     }
 
@@ -161,6 +164,11 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
             if ($link !== null) {
                 /** @var array<string, string|Closure> $updateMap */
                 $updateMap = $model->getHubspotUpdateMap(); // @phpstan-ignore-line method.notFound
+
+                if (array_key_exists($link->hubspot_id, $linksByHubspotId)) {
+                    throw ConfigurationException::duplicateBatchLinkedHubspotId($binding->modelClass, $binding->objectType);
+                }
+
                 $updates[] = ['id' => $link->hubspot_id, 'properties' => $mapper->mapForUpdate($model, $map, $updateMap)];
                 $linksByHubspotId[$link->hubspot_id] = $link;
 
@@ -273,11 +281,18 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
     private function logErrors(array $errors, string $objectType): void
     {
         foreach ($errors as $error) {
-            Log::error($error->message, [
+            Log::error('HubSpot rejected a batch record.', [
                 'object_type' => $objectType,
                 'category' => $error->category,
                 'status' => $error->status,
             ]);
+        }
+    }
+
+    private function throwForUnitemizedPartialFailure(BatchResult $result): void
+    {
+        if ($result->isPartialFailure() && $result->errors() === []) {
+            throw ApiException::partialBatchFailure(0, null);
         }
     }
 
