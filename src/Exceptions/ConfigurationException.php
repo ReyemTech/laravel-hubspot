@@ -112,6 +112,17 @@ final class ConfigurationException extends LogicException implements HubspotExce
         ));
     }
 
+    public static function duplicateBatchIdentifier(string $modelClass, string $idProperty, string $value): self
+    {
+        return new self(sprintf(
+            '%s has multiple unlinked models with %s "%s". A HubSpot batch upsert response cannot '
+            .'establish which local model owns that identifier, so this package refuses to guess.',
+            $modelClass,
+            $idProperty,
+            $value,
+        ));
+    }
+
     /**
      * A model applies `Sync\SyncsToHubspot` but has no entry in `hubspot.models` -- D-12's
      * inverse. Thrown by `Sync\ModelBindings::for()`, the single resolution point every Sync

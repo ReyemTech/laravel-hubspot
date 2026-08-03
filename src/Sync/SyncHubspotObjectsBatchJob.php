@@ -55,31 +55,57 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
         }
 
         $binding = $bindings->for(get_class($this->models[0]));
-        [$records, $modelsById] = $this->recordsFor($binding, $mapper);
+        [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier] = $this->recordsFor($binding, $mapper);
 
-        if ($records === []) {
+        if ($updates === [] && $upserts === []) {
             return;
         }
 
-        $result = $gateway->upsertMany($binding->objectType, $binding->idProperty, $records);
+        if ($updates !== []) {
+            $result = $gateway->updateMany($binding->objectType, $updates);
+            $this->markUpdatedRecords($result->recordsDespitePartialFailure(), $linksByHubspotId);
+            $this->logErrors($result->errors(), $binding->objectType);
+        }
 
-        $this->storeConfirmedRecords($result->recordsDespitePartialFailure(), $binding, $modelsById);
-        $this->logErrors($result->errors(), $binding->objectType);
+        if ($upserts !== []) {
+            $result = $gateway->upsertMany($binding->objectType, $binding->idProperty, $upserts);
+            $this->storeConfirmedRecords($result->recordsDespitePartialFailure(), $binding, $modelsByIdentifier);
+            $this->logErrors($result->errors(), $binding->objectType);
+        }
     }
 
     /**
-     * @return array{list<array{id: string, properties: array<string, string>}>, array<string, Model>}
+     * @return array{
+     *     list<array{id: string, properties: array<string, string>}>,
+     *     array<string, HubspotObjectLink>,
+     *     list<array{id: string, properties: array<string, string>}>,
+     *     array<string, Model>
+     * }
      */
     private function recordsFor(ModelBinding $binding, PropertyMapper $mapper): array
     {
-        $records = [];
-        $modelsById = [];
+        $updates = [];
+        $linksByHubspotId = [];
+        $upserts = [];
+        $modelsByIdentifier = [];
 
         foreach ($this->models as $model) {
-            if ($this->modelIsTrashed($model)) {
+            /** @var HubspotObjectLink|null $link */
+            $link = $model->hubspotLink()->first(); // @phpstan-ignore-line method.notFound
+
+            if ($link?->archived_at !== null) {
+                Log::info(
+                    'A HubSpot property push was skipped because the delete path owns that record.',
+                    ['model' => get_class($model), 'model_id' => $model->getKey()],
+                );
+
+                continue;
+            }
+
+            if ($link === null && $this->modelIsTrashed($model)) {
                 Log::info(
                     'A HubSpot property push was skipped because its model arrived soft-deleted and '
-                    .'the delete path owns its state.',
+                    .'has never synced.',
                     ['model' => get_class($model), 'model_id' => $model->getKey()],
                 );
 
@@ -88,14 +114,28 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
 
             /** @var array<string, string|Closure> $map */
             $map = $model->getHubspotMap(); // @phpstan-ignore-line method.notFound
+
+            if ($link !== null) {
+                /** @var array<string, string|Closure> $updateMap */
+                $updateMap = $model->getHubspotUpdateMap(); // @phpstan-ignore-line method.notFound
+                $updates[] = ['id' => $link->hubspot_id, 'properties' => $mapper->mapForUpdate($model, $map, $updateMap)];
+                $linksByHubspotId[$link->hubspot_id] = $link;
+
+                continue;
+            }
+
             $properties = $mapper->map($model, $map);
             $idValue = $this->idValueFor($properties, $binding);
 
-            $records[] = ['id' => $idValue, 'properties' => $properties];
-            $modelsById[$idValue] = $model;
+            if (array_key_exists($idValue, $modelsByIdentifier)) {
+                throw ConfigurationException::duplicateBatchIdentifier($binding->modelClass, $binding->idProperty, $idValue);
+            }
+
+            $upserts[] = ['id' => $idValue, 'properties' => $properties];
+            $modelsByIdentifier[$idValue] = $model;
         }
 
-        return [$records, $modelsById];
+        return [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier];
     }
 
     /** @param array<string, string> $properties */
@@ -140,6 +180,27 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
                     'stale_at' => null,
                 ],
             );
+        }
+    }
+
+    /**
+     * @param  list<HubspotObject>  $objects
+     * @param  array<string, HubspotObjectLink>  $linksByHubspotId
+     */
+    private function markUpdatedRecords(array $objects, array $linksByHubspotId): void
+    {
+        foreach ($objects as $object) {
+            $link = $linksByHubspotId[$object->id] ?? null;
+
+            if ($link === null) {
+                continue;
+            }
+
+            $link->update([
+                'synced_at' => Carbon::now(),
+                'is_stale' => false,
+                'stale_at' => null,
+            ]);
         }
     }
 
