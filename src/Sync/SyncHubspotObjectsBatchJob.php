@@ -159,13 +159,14 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
 
             $properties = $mapper->map($model, $map);
             $idValue = $this->idValueFor($properties, $binding);
+            $identifierKey = $this->normalizedIdentifierKey($idValue, $binding);
 
-            if (array_key_exists($idValue, $modelsByIdentifier)) {
+            if (array_key_exists($identifierKey, $modelsByIdentifier)) {
                 throw ConfigurationException::duplicateBatchIdentifier($binding->modelClass, $binding->idProperty, $idValue);
             }
 
             $upserts[] = ['id' => $idValue, 'properties' => $properties];
-            $modelsByIdentifier[$idValue] = $model;
+            $modelsByIdentifier[$identifierKey] = $model;
         }
 
         return [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier];
@@ -229,17 +230,12 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
             return null;
         }
 
-        if ($binding->idProperty !== 'email') {
-            return $modelsById[$id] ?? null;
-        }
+        return $modelsById[$this->normalizedIdentifierKey($id, $binding)] ?? null;
+    }
 
-        foreach ($modelsById as $submittedId => $model) {
-            if (mb_strtolower($submittedId, 'UTF-8') === mb_strtolower($id, 'UTF-8')) {
-                return $model;
-            }
-        }
-
-        return null;
+    private function normalizedIdentifierKey(string $id, ModelBinding $binding): string
+    {
+        return $binding->idProperty === 'email' ? mb_strtolower($id, 'UTF-8') : $id;
     }
 
     /**

@@ -6,8 +6,8 @@ namespace ReyemTech\Hubspot\Tests\Feature\Sync;
 
 use Generator;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -696,6 +696,4 @@ class BaseBatchLead extends Model
     protected array $hubspotMap = ['email' => 'email'];
 }
 
-final class ConfiguredBatchLead extends BaseBatchLead
-{
-}
+final class ConfiguredBatchLead extends BaseBatchLead {}

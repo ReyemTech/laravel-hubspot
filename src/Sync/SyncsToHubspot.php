@@ -86,7 +86,7 @@ trait SyncsToHubspot
         $batch = [];
 
         foreach ($models as $model) {
-            if (! $model instanceof static) {
+            if (get_class($model) !== static::class) {
                 throw new \InvalidArgumentException(static::class.' cannot batch-sync '.get_debug_type($model)
                     .'; every model must be an instance of '.static::class.'.');
             }
