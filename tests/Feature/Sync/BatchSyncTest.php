@@ -427,6 +427,19 @@ final class BatchSyncTest extends SyncTestCase
         self::assertSame('batch2@example.com', HubspotObjectLink::query()->where('model_id', $models[1]->id)->sole()->hubspot_id);
     }
 
+    public function test_a_batch_whose_referenced_models_were_hard_deleted_before_handling_sends_no_request(): void
+    {
+        $models = $this->leads(2);
+        $job = new SyncHubspotObjectsBatchJob($models);
+        Hubspot::fake();
+
+        DB::table('synced_leads')->whereIn('id', [$models[0]->id, $models[1]->id])->delete();
+
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(0);
+    }
+
     public function test_a_link_created_while_an_unlinked_batch_response_is_in_flight_is_not_repointed(): void
     {
         $model = $this->leads(1)[0];
@@ -439,6 +452,32 @@ final class BatchSyncTest extends SyncTestCase
             },
         );
         app()->instance(ObjectGatewayContract::class, $gateway);
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        self::assertSame('concurrent-id', HubspotObjectLink::query()->sole()->hubspot_id);
+    }
+
+    public function test_a_unique_key_race_while_creating_a_link_preserves_the_concurrent_winner(): void
+    {
+        $model = $this->leads(1)[0];
+        $identity = [
+            'lookup_hash' => HubspotObjectLink::lookupHashFor($model->getMorphClass()),
+            'model_id' => (string) $model->getKey(), // @phpstan-ignore-line cast.string Eloquent permits UUID and ULID keys.
+            'object_type' => 'contacts',
+        ];
+        HubspotObjectLink::creating(function () use ($identity, $model): void {
+            DB::table('hubspot_object_links')->insert([
+                ...$identity,
+                'model_type' => $model->getMorphClass(),
+                'hubspot_id' => 'concurrent-id',
+                'is_stale' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+        Hubspot::fake();
 
         app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
 
