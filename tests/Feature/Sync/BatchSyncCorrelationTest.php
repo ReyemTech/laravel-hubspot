@@ -190,14 +190,16 @@ final class BatchSyncCorrelationTest extends MultiBindingTestCase
     public function test_duplicate_unlinked_identifiers_are_rejected_before_a_batch_request(): void
     {
         $models = $this->leads(2);
-        DB::table('synced_leads')->whereIn('id', [$models[0]->id, $models[1]->id])->update(['email' => 'duplicate@example.com']);
+        $identifier = 'sensitive-duplicate@example.com';
+        DB::table('synced_leads')->whereIn('id', [$models[0]->id, $models[1]->id])->update(['email' => $identifier]);
         $models = array_values(SyncedLead::query()->whereIn('id', [$models[0]->id, $models[1]->id])->orderBy('id')->get()->all());
         Hubspot::fake();
 
         try {
             app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
             self::fail('Duplicate identifiers must reject the entire batch.');
-        } catch (ConfigurationException) {
+        } catch (ConfigurationException $exception) {
+            self::assertStringNotContainsString($identifier, $exception->getMessage());
             Hubspot::assertRequestCount(0);
         }
     }

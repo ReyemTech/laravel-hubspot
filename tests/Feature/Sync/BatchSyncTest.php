@@ -40,6 +40,7 @@ final class BatchSyncTest extends SyncTestCase
             SoftDeletingLead::class => ['object' => 'contacts', 'id_property' => 'email'],
             SyncedContact::class => ['object' => 'contacts', 'id_property' => 'company_email'],
             BaseBatchLead::class => ['object' => 'contacts', 'id_property' => 'email'],
+            ConfiguredBatchLead::class => ['object' => 'contacts', 'id_property' => 'email'],
         ]);
     }
 
@@ -137,6 +138,28 @@ final class BatchSyncTest extends SyncTestCase
             BaseBatchLead::syncManyToHubspot([$subclass]);
         } finally {
             Bus::assertNotDispatched(SyncHubspotObjectsBatchJob::class);
+        }
+    }
+
+    public function test_a_directly_constructed_job_rejects_reloaded_models_with_different_exact_classes(): void
+    {
+        $models = [
+            BaseBatchLead::query()->create(['email' => 'base@example.com']),
+            ConfiguredBatchLead::query()->create(['email' => 'subclass@example.com']),
+        ];
+        Hubspot::fake();
+
+        try {
+            app()->call([new SyncHubspotObjectsBatchJob($models), 'handle']);
+            self::fail('A batch job must reject reloaded models with different exact classes.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame(
+                BaseBatchLead::class.' cannot batch-sync '.ConfiguredBatchLead::class
+                .'; every model must be an instance of '.BaseBatchLead::class.'.',
+                $exception->getMessage(),
+            );
+        } finally {
+            Hubspot::assertRequestCount(0);
         }
     }
 
