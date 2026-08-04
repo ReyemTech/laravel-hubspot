@@ -86,6 +86,34 @@ final class BatchSyncCorrelationTest extends MultiBindingTestCase
         ]);
     }
 
+    public function test_an_uncorrelatable_itemized_error_logs_only_safe_batch_diagnostics(): void
+    {
+        $model = $this->leads(1)[0];
+        $remoteIdentifier = 'unknown-remote-id';
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'status' => 'COMPLETE',
+            'results' => [],
+            'errors' => [[
+                'message' => "HubSpot rejected {$remoteIdentifier}: submitted-secret",
+                'category' => 'VALIDATION_ERROR',
+                'status' => 'error',
+                'context' => ['ids' => [$remoteIdentifier]],
+            ]],
+        ], 207)]);
+        $log = Log::spy();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        $log->shouldHaveReceived('error', [
+            'HubSpot rejected a batch record.',
+            [
+                'object_type' => 'contacts',
+                'category' => 'VALIDATION_ERROR',
+                'status' => 'error',
+            ],
+        ]);
+    }
+
     public function test_an_unitemized_207_retains_confirmed_records_then_throws_an_api_exception(): void
     {
         $models = $this->leads(2);
