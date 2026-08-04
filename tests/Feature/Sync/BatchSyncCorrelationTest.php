@@ -34,7 +34,7 @@ final class BatchSyncCorrelationTest extends MultiBindingTestCase
                 'message' => 'The third record was rejected: submitted-secret',
                 'category' => 'VALIDATION_ERROR',
                 'status' => 'error',
-                'context' => ['identifier' => ['batch3@example.com']],
+                'context' => ['ids' => ['batch3@example.com']],
             ]],
         ], 207)]);
         $log = Log::spy();
@@ -50,6 +50,38 @@ final class BatchSyncCorrelationTest extends MultiBindingTestCase
                 'object_type' => 'contacts',
                 'category' => 'VALIDATION_ERROR',
                 'status' => 'error',
+                'model' => SyncedLead::class,
+                'model_id' => $models[2]->getKey(),
+            ],
+        ]);
+    }
+
+    public function test_an_itemized_update_error_logs_its_local_model_without_remote_error_values(): void
+    {
+        $model = $this->leads(1)[0];
+        $this->link($model, 'remote-id');
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'status' => 'COMPLETE',
+            'results' => [],
+            'errors' => [[
+                'message' => 'The rejected remote id is remote-id: submitted-secret',
+                'category' => 'VALIDATION_ERROR',
+                'status' => 'error',
+                'context' => ['ids' => ['remote-id']],
+            ]],
+        ], 207)]);
+        $log = Log::spy();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        $log->shouldHaveReceived('error', [
+            'HubSpot rejected a batch record.',
+            [
+                'object_type' => 'contacts',
+                'category' => 'VALIDATION_ERROR',
+                'status' => 'error',
+                'model' => SyncedLead::class,
+                'model_id' => $model->getKey(),
             ],
         ]);
     }
