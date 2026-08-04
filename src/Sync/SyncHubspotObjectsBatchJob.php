@@ -98,7 +98,12 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
         foreach (array_chunk($upserts, 100) as $chunk) {
             $result = $gateway->upsertMany($binding->objectType, $binding->idProperty, $chunk);
             $this->storeConfirmedRecords($result->recordsDespitePartialFailure(), $binding, $modelsByIdentifier);
-            $this->logErrors($result->errors(), $binding->objectType, $this->modelsForChunk($chunk, $modelsByIdentifier, $binding));
+            $this->logErrors(
+                $result->errors(),
+                $binding->objectType,
+                $this->modelsForChunk($chunk, $modelsByIdentifier, $binding),
+                $binding,
+            );
             $this->throwForUnitemizedPartialFailure($result);
         }
     }
@@ -311,13 +316,21 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
      * @param  list<BatchError>  $errors
      * @param  array<string, Model>  $modelsByIdentifier
      */
-    private function logErrors(array $errors, string $objectType, array $modelsByIdentifier): void
-    {
+    private function logErrors(
+        array $errors,
+        string $objectType,
+        array $modelsByIdentifier,
+        ?ModelBinding $binding = null,
+    ): void {
         foreach ($errors as $error) {
             $models = [];
 
             foreach ($error->context ?? [] as $identifiers) {
                 foreach ($identifiers as $identifier) {
+                    if ($binding !== null) {
+                        $identifier = $this->normalizedIdentifierKey($identifier, $binding);
+                    }
+
                     if (isset($modelsByIdentifier[$identifier])) {
                         $models[$identifier] = $modelsByIdentifier[$identifier];
                     }

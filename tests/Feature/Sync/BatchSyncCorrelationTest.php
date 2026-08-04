@@ -86,6 +86,36 @@ final class BatchSyncCorrelationTest extends MultiBindingTestCase
         ]);
     }
 
+    public function test_an_uppercase_email_error_context_logs_its_local_model(): void
+    {
+        $model = $this->leads(1)[0];
+        $model->update(['email' => 'UPPERCASE@EXAMPLE.COM']);
+        Hubspot::fake(['contacts' => Hubspot::response([
+            'status' => 'COMPLETE',
+            'results' => [],
+            'errors' => [[
+                'message' => 'HubSpot rejected the submitted email.',
+                'category' => 'VALIDATION_ERROR',
+                'status' => 'error',
+                'context' => ['ids' => ['UPPERCASE@EXAMPLE.COM']],
+            ]],
+        ], 207)]);
+        $log = Log::spy();
+
+        app()->call([new SyncHubspotObjectsBatchJob([$model]), 'handle']);
+
+        $log->shouldHaveReceived('error', [
+            'HubSpot rejected a batch record.',
+            [
+                'object_type' => 'contacts',
+                'category' => 'VALIDATION_ERROR',
+                'status' => 'error',
+                'model' => SyncedLead::class,
+                'model_id' => $model->getKey(),
+            ],
+        ]);
+    }
+
     public function test_an_uncorrelatable_itemized_error_logs_only_safe_batch_diagnostics(): void
     {
         $model = $this->leads(1)[0];
