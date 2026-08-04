@@ -11,11 +11,13 @@ use GuzzleHttp\Promise\Create as PromiseCreate;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Database\Eloquent\Model;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
+use ReyemTech\Hubspot\Sync\ModelBindings;
 use Throwable;
 
 /**
@@ -152,8 +154,12 @@ final class HubspotFake
     /**
      * @param  array<string, mixed>  $properties
      */
-    public function assertSynced(string $objectType, array $properties = []): void
+    public function assertSynced(string|Model $objectType, array $properties = []): void
     {
+        if ($objectType instanceof Model) {
+            $objectType = $this->container->make(ModelBindings::class)->for(get_class($objectType))->objectType;
+        }
+
         $this->requestLog()->assertSynced($objectType, $properties);
     }
 

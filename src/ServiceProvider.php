@@ -23,6 +23,7 @@ use ReyemTech\Hubspot\Registry\Console\AssociationsDoctorCommand;
 use ReyemTech\Hubspot\Registry\Console\DoctorCommand;
 use ReyemTech\Hubspot\Registry\Console\SyncAssociationsCommand;
 use ReyemTech\Hubspot\Registry\Contracts\AssociationTypeStore;
+use ReyemTech\Hubspot\Registry\Contracts\BoundModelReporter;
 use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
@@ -152,6 +153,7 @@ final class ServiceProvider extends BaseServiceProvider
         // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport
         // Hubspot::fake() would ever need to invalidate, unlike the gateways below.
         $this->app->singleton(ModelBindings::class);
+        $this->app->alias(ModelBindings::class, BoundModelReporter::class);
 
         $this->registerOctaneStateReset();
 

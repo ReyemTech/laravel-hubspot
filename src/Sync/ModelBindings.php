@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Sync;
 
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
+use ReyemTech\Hubspot\Registry\Contracts\BoundModelReporter;
 use ReyemTech\Hubspot\Registry\HubspotObjectType;
 
 /**
@@ -18,7 +20,7 @@ use ReyemTech\Hubspot\Registry\HubspotObjectType;
  * a constructor -- see `HubspotObserver`'s own docblock for why `Model::observe()` makes that a
  * silent-data-loss bug rather than a style choice), so this service must answer the same way.
  */
-final class ModelBindings
+final class ModelBindings implements BoundModelReporter
 {
     public function __construct(private readonly ConfigRepository $config) {}
 
@@ -59,6 +61,45 @@ final class ModelBindings
     }
 
     /**
+     * The deletion facts each configured model contributes to `hubspot:doctor`.
+     *
+     * Registry owns the small reporting contract; Sync implements it because it owns both the
+     * binding configuration and DeletePolicy. The command therefore receives already-resolved data
+     * and does not recreate either decision across the R2 boundary.
+     *
+     * @return list<array{
+     *     modelClass: string,
+     *     objectType: string,
+     *     idProperty: string,
+     *     usesSoftDeletes: bool,
+     *     deletePolicy: string
+     * }>
+     */
+    public function boundModelReports(): array
+    {
+        $reports = [];
+
+        foreach ($this->all() as $binding) {
+            $usesSoftDeletes = in_array(SoftDeletes::class, class_uses_recursive($binding->modelClass), true);
+
+            $reports[] = [
+                'modelClass' => $binding->modelClass,
+                'objectType' => $binding->objectType,
+                'idProperty' => $binding->idProperty,
+                'usesSoftDeletes' => $usesSoftDeletes,
+                'deletePolicy' => DeletePolicy::resolve(
+                    $usesSoftDeletes,
+                    $usesSoftDeletes ? 'trashed' : 'deleted',
+                    $this->policyValue('hard_delete', 'guard'),
+                    $this->policyValue('on_restore', 'flag'),
+                ),
+            ];
+        }
+
+        return $reports;
+    }
+
+    /**
      * The binding for one model class.
      *
      * The single resolution point every Sync collaborator that needs a model's binding reaches --
@@ -93,5 +134,16 @@ final class ModelBindings
                 throw ConfigurationException::missingIdProperty($binding->modelClass);
             }
         }
+    }
+
+    /**
+     * Preserve DeletePolicy's directed configuration error instead of leaking a TypeError.
+     */
+    private function policyValue(string $key, string $default): string
+    {
+        /** @var mixed $value */
+        $value = $this->config->get('hubspot.auto_sync.'.$key, $default);
+
+        return is_string($value) ? $value : get_debug_type($value);
     }
 }

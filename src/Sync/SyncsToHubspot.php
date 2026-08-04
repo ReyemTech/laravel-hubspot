@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Sync;
 
 use Closure;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
@@ -70,6 +71,41 @@ use Illuminate\Support\Facades\App;
  */
 trait SyncsToHubspot
 {
+    /**
+     * Queues one HubSpot API batch for models of this exact class (D-16).
+     *
+     * The class carrying this trait supplies the object type. Accepting another class here would
+     * write it through that binding, so a mixed iterable is refused instead of being guessed at.
+     * The iterable is materialised once because a generator cannot be checked and then dispatched
+     * in two passes.
+     *
+     * @param  iterable<Model>  $models
+     */
+    public static function syncManyToHubspot(iterable $models): void
+    {
+        $batch = [];
+
+        foreach ($models as $model) {
+            if (get_class($model) !== static::class) {
+                throw new \InvalidArgumentException(static::class.' cannot batch-sync '.get_debug_type($model)
+                    .'; every model must be an instance of '.static::class.'.');
+            }
+
+            $batch[] = $model;
+        }
+
+        /** @var SyncGate $gate */
+        $gate = App::make(SyncGate::class);
+
+        if (! $gate->permits() || $batch === []) {
+            return;
+        }
+
+        /** @var Dispatcher $dispatcher */
+        $dispatcher = App::make(Dispatcher::class);
+        $dispatcher->dispatch((new SyncHubspotObjectsBatchJob($batch))->afterCommit());
+    }
+
     /**
      * The package-owned row carrying this model instance's HubSpot id, if it has synced yet.
      *

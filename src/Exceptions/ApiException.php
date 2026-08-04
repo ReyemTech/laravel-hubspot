@@ -207,6 +207,22 @@ final class ApiException extends RuntimeException implements HubspotException
         );
     }
 
+    /**
+     * HubSpot returned a record that cannot be correlated to the local models submitted for an
+     * upsert. The response is inconsistent, so its identifier is deliberately not exposed in the
+     * exception message.
+     */
+    public static function unmatchedBatchRecord(): self
+    {
+        return new self(
+            'HubSpot returned an upsert record that does not match a submitted local model. Check the binding identifier property and retry the batch.',
+            null,
+            null,
+            null,
+            null,
+        );
+    }
+
     public function status(): ?int
     {
         return $this->status;

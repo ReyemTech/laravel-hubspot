@@ -6,10 +6,12 @@ namespace ReyemTech\Hubspot;
 
 use Closure;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Database\Eloquent\Model;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
@@ -143,17 +145,17 @@ final class HubspotManager implements SyncStateContract
     /**
      * Asserts that a record of `$objectType` was written, optionally carrying a subset of properties.
      *
-     * **The object type is a string, where design spec §10's example reads
-     * `Hubspot::assertSynced($deal)` with an Eloquent model.** There is no model binding in this package
-     * until Phase 4 (SYNC-01), and this is resolved forward-compatibly rather than by deferring the
-     * assertion: Phase 4 widens this first parameter to accept a bound model as well, which is safe for
-     * every existing caller and safe on this `final` class (D-17). See {@see RequestLog::assertSynced()}
-     * for the subset and strict-comparison rules.
+     * A bound model is resolved to its configured object type; string callers retain the existing
+     * behaviour. Widening this parameter is caller-safe on this final class (D-17).
      *
      * @param  array<string, mixed>  $properties
      */
-    public function assertSynced(string $objectType, array $properties = []): void
+    public function assertSynced(string|Model $objectType, array $properties = []): void
     {
+        if ($objectType instanceof Model) {
+            $objectType = $this->container->make(ModelBindings::class)->for(get_class($objectType))->objectType;
+        }
+
         $this->fakeOrFail()->assertSynced($objectType, $properties);
     }
 
