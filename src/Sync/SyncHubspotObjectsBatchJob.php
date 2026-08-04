@@ -82,7 +82,7 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
         }
 
         $binding = $bindings->for(get_class($models[0]));
-        [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier] = $this->recordsFor($models, $binding, $mapper);
+        [$updates, $linksByHubspotId, $modelsByHubspotId, $upserts, $modelsByIdentifier] = $this->recordsFor($models, $binding, $mapper);
 
         if ($updates === [] && $upserts === []) {
             return;
@@ -91,14 +91,14 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
         foreach (array_chunk($updates, 100) as $chunk) {
             $result = $gateway->updateMany($binding->objectType, $chunk);
             $this->markUpdatedRecords($result->recordsDespitePartialFailure(), $linksByHubspotId);
-            $this->logErrors($result->errors(), $binding->objectType);
+            $this->logErrors($result->errors(), $binding->objectType, $this->modelsForChunk($chunk, $modelsByHubspotId));
             $this->throwForUnitemizedPartialFailure($result);
         }
 
         foreach (array_chunk($upserts, 100) as $chunk) {
             $result = $gateway->upsertMany($binding->objectType, $binding->idProperty, $chunk);
             $this->storeConfirmedRecords($result->recordsDespitePartialFailure(), $binding, $modelsByIdentifier);
-            $this->logErrors($result->errors(), $binding->objectType);
+            $this->logErrors($result->errors(), $binding->objectType, $this->modelsForChunk($chunk, $modelsByIdentifier, $binding));
             $this->throwForUnitemizedPartialFailure($result);
         }
     }
@@ -131,6 +131,7 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
      * @return array{
      *     list<array{id: string, properties: array<string, string>}>,
      *     array<string, HubspotObjectLink>,
+     *     array<string, Model>,
      *     list<array{id: string, properties: array<string, string>}>,
      *     array<string, Model>
      * }
@@ -139,6 +140,7 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
     {
         $updates = [];
         $linksByHubspotId = [];
+        $modelsByHubspotId = [];
         $upserts = [];
         $modelsByIdentifier = [];
 
@@ -178,6 +180,7 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
 
                 $updates[] = ['id' => $link->hubspot_id, 'properties' => $mapper->mapForUpdate($model, $map, $updateMap)];
                 $linksByHubspotId[$link->hubspot_id] = $link;
+                $modelsByHubspotId[$link->hubspot_id] = $model;
 
                 continue;
             }
@@ -194,7 +197,7 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
             $modelsByIdentifier[$identifierKey] = $model;
         }
 
-        return [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier];
+        return [$updates, $linksByHubspotId, $modelsByHubspotId, $upserts, $modelsByIdentifier];
     }
 
     /** @param array<string, string> $properties */
@@ -284,15 +287,62 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
         }
     }
 
-    /** @param list<BatchError> $errors */
-    private function logErrors(array $errors, string $objectType): void
+    /**
+     * @param  list<array{id: string, properties: array<string, string>}>  $inputs
+     * @param  array<string, Model>  $modelsByIdentifier
+     * @return array<string, Model>
+     */
+    private function modelsForChunk(array $inputs, array $modelsByIdentifier, ?ModelBinding $binding = null): array
+    {
+        $models = [];
+
+        foreach ($inputs as $input) {
+            $identifier = $binding === null ? $input['id'] : $this->normalizedIdentifierKey($input['id'], $binding);
+
+            if (isset($modelsByIdentifier[$identifier])) {
+                $models[$identifier] = $modelsByIdentifier[$identifier];
+            }
+        }
+
+        return $models;
+    }
+
+    /**
+     * @param  list<BatchError>  $errors
+     * @param  array<string, Model>  $modelsByIdentifier
+     */
+    private function logErrors(array $errors, string $objectType, array $modelsByIdentifier): void
     {
         foreach ($errors as $error) {
-            Log::error('HubSpot rejected a batch record.', [
-                'object_type' => $objectType,
-                'category' => $error->category,
-                'status' => $error->status,
-            ]);
+            $models = [];
+
+            foreach ($error->context ?? [] as $identifiers) {
+                foreach ($identifiers as $identifier) {
+                    if (isset($modelsByIdentifier[$identifier])) {
+                        $models[$identifier] = $modelsByIdentifier[$identifier];
+                    }
+                }
+            }
+
+            if ($models === []) {
+                Log::error('HubSpot rejected a batch record.', [
+                    'object_type' => $objectType,
+                    'category' => $error->category,
+                    'status' => $error->status,
+                ]);
+
+                continue;
+            }
+
+            foreach ($models as $model) {
+                Log::error('HubSpot rejected a batch record.', [
+                    'object_type' => $objectType,
+                    'category' => $error->category,
+                    'status' => $error->status,
+                    'model' => get_class($model),
+                    'model_id' => $model->getKey(),
+                ]);
+            }
         }
     }
 
