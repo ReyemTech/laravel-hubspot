@@ -115,11 +115,10 @@ final class ConfigurationException extends LogicException implements HubspotExce
     public static function duplicateBatchIdentifier(string $modelClass, string $idProperty, string $value): self
     {
         return new self(sprintf(
-            '%s has multiple unlinked models with %s "%s". A HubSpot batch upsert response cannot '
+            '%s has multiple unlinked models with the same %s. A HubSpot batch upsert response cannot '
             .'establish which local model owns that identifier, so this package refuses to guess.',
             $modelClass,
             $idProperty,
-            $value,
         ));
     }
 

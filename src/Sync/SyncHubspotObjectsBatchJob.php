@@ -74,6 +74,13 @@ final class SyncHubspotObjectsBatchJob implements ShouldQueue
             return;
         }
 
+        foreach ($models as $model) {
+            if (get_class($model) !== get_class($models[0])) {
+                throw new \InvalidArgumentException(get_class($models[0]).' cannot batch-sync '.get_debug_type($model)
+                    .'; every model must be an instance of '.get_class($models[0]).'.');
+            }
+        }
+
         $binding = $bindings->for(get_class($models[0]));
         [$updates, $linksByHubspotId, $upserts, $modelsByIdentifier] = $this->recordsFor($models, $binding, $mapper);
 

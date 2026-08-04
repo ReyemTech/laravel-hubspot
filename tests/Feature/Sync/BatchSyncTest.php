@@ -143,9 +143,11 @@ final class BatchSyncTest extends SyncTestCase
 
     public function test_a_directly_constructed_job_rejects_reloaded_models_with_different_exact_classes(): void
     {
+        $baseId = DB::table('synced_leads')->insertGetId(['email' => 'base@example.com', 'first_name' => 'Ada']);
+        $subclassId = DB::table('synced_leads')->insertGetId(['email' => 'subclass@example.com', 'first_name' => 'Ada']);
         $models = [
-            BaseBatchLead::query()->create(['email' => 'base@example.com']),
-            ConfiguredBatchLead::query()->create(['email' => 'subclass@example.com']),
+            BaseBatchLead::query()->findOrFail($baseId),
+            ConfiguredBatchLead::query()->findOrFail($subclassId),
         ];
         Hubspot::fake();
 
