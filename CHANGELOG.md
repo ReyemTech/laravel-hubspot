@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.6.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.5.0...reyemtech/laravel-hubspot-v0.6.0) (2026-08-05)
+
+
+### Features
+
+* **04-06:** the delete policy, on the three events that distinguish it ([c9c7fa5](https://github.com/ReyemTech/laravel-hubspot/commit/c9c7fa506fb36467a41273ba6e031ab311d69eb8))
+* **04-06:** the delete policy, on the three events that distinguish it ([0a19638](https://github.com/ReyemTech/laravel-hubspot/commit/0a196387ec09468bf8dcc61b0c6ca0919f5a0a05))
+* **04-07:** one gate, consulted at dispatch and again on the worker ([7e73dea](https://github.com/ReyemTech/laravel-hubspot/commit/7e73deae0a870d51ef61eeafe764975390161b1e))
+* **04-07:** one gate, consulted at dispatch and again on the worker ([c931cf1](https://github.com/ReyemTech/laravel-hubspot/commit/c931cf1043c31977c6b7bc1264596ff1e46b4459))
+* **04-07:** support Laravel Octane, and say so in STANDARDS ([8207d3d](https://github.com/ReyemTech/laravel-hubspot/commit/8207d3d260bfd665330034b1f8acb51769a9d6c5))
+* **04-08:** batch model sync requests ([85abb29](https://github.com/ReyemTech/laravel-hubspot/commit/85abb292bead387d2a3a98b7b28e60abf9e0b723))
+* **04-09:** report bound models in doctor ([e5ebf5a](https://github.com/ReyemTech/laravel-hubspot/commit/e5ebf5a24fc139b8f6bce469fe4fa7014e68847f))
+* **sync:** harden batch model synchronization ([dea569d](https://github.com/ReyemTech/laravel-hubspot/commit/dea569d08a1cce723951b92311ff0a5d07609443))
+
+
+### Bug Fixes
+
+* **04-06:** a purge archives once in total, not once per delete ([f1fd9f1](https://github.com/ReyemTech/laravel-hubspot/commit/f1fd9f112a034671758e96ddafe7a976e1ecf47d))
+* **04-06:** a recreate creates nothing once a link exists again ([805b64e](https://github.com/ReyemTech/laravel-hubspot/commit/805b64ebe264b53982d1f57d69ea18734b84a38c))
+* **04-06:** a recreate job whose model was deleted again creates nothing ([e535167](https://github.com/ReyemTech/laravel-hubspot/commit/e535167ae2c166b4272758e758630a3d15c80caf))
+* **04-06:** cancel an archive its delete took back, and undo the flag a failed one caused ([ad8f8d9](https://github.com/ReyemTech/laravel-hubspot/commit/ad8f8d97d9b5277afee3baf9635a6a97715ef540))
+* **04-06:** clear the stale flag on a successful resync, and recreate without a link ([ecbeaed](https://github.com/ReyemTech/laravel-hubspot/commit/ecbeaedbc6d3f42f5b9f96cc624bec536edc3a93))
+* **04-06:** create through a transport that does not repeat what it cannot prove failed ([daea042](https://github.com/ReyemTech/laravel-hubspot/commit/daea042d4924c19ecdcde8e199d42bcbcbe5c3a6))
+* **04-06:** give the archive marker and the archive one transaction's fate ([9844c4d](https://github.com/ReyemTech/laravel-hubspot/commit/9844c4d1335096f518454420de4ec4ceb6c925e9))
+* **04-06:** honour the per-model opt-out on restore, and converge on a racing delete ([90529b0](https://github.com/ReyemTech/laravel-hubspot/commit/90529b0c6be1d672dcfee0fa61a153d917b99b5a))
+* **04-06:** make the marker, the archive and their cleanup one deferred unit ([d3add0a](https://github.com/ReyemTech/laravel-hubspot/commit/d3add0aa946f71df67bc8012a6fb2d14220f57da))
+* **04-06:** owe the restore response to the archive, not to the current gate ([361fd87](https://github.com/ReyemTech/laravel-hubspot/commit/361fd87acfc4f038085b3dbc08c9c4d76fcf0c37))
+* **04-06:** record that this package archived a link, and decide from that ([b315afe](https://github.com/ReyemTech/laravel-hubspot/commit/b315afeb6cdbae775f222c4165cf68b6eda23950))
+* **04-06:** replay a first sync an update would have made, not only a creation ([e649bf3](https://github.com/ReyemTech/laravel-hubspot/commit/e649bf3b81c48f06a1396c5c710cd779d8191a71))
+* **04-06:** replay the delete policy when a sync raced a delete ([1108e56](https://github.com/ReyemTech/laravel-hubspot/commit/1108e56e15c678ae8c185b53a2d926d22d20ba27))
+* **04-06:** replay the event that matches the delete that actually happened ([cba503b](https://github.com/ReyemTech/laravel-hubspot/commit/cba503bd4b565bf85cd09bcf965e739e68bc3cb4))
+* **04-06:** stop deduplicating the purge archive, and create rather than upsert on recreate ([5c0bd5e](https://github.com/ReyemTech/laravel-hubspot/commit/5c0bd5ed4291ef7567c636ea04772c4bbe46e73e))
+* **04-06:** take the archive marker back when publication fails, and repair a skipped initial sync ([79a21b6](https://github.com/ReyemTech/laravel-hubspot/commit/79a21b6eeac4a57bb517c64883ef63768138697a))
+* **04-06:** write the archive marker before publishing the archive ([4091366](https://github.com/ReyemTech/laravel-hubspot/commit/40913661b6bb9618e5aca888c9793c3692350a7b))
+* **04-07:** a suppressed archive takes its own marker back ([d693ae0](https://github.com/ReyemTech/laravel-hubspot/commit/d693ae0b48fd49a93a4d8dfe852d401abbaab531))
+* **04-07:** advertise the suppression API on the facade, and gate the contract ([fc8bab6](https://github.com/ReyemTech/laravel-hubspot/commit/fc8bab69b6b491d3063cb84d1acf7dea496dec87))
+* **04-07:** clean up AFTER the work, never before it ([b59f6ec](https://github.com/ReyemTech/laravel-hubspot/commit/b59f6ece2a023d45b7afa19ae526645f3fe63695))
+* **04-07:** drop a [@var](https://github.com/var) that widened a type PHPStan already had right ([8444894](https://github.com/ReyemTech/laravel-hubspot/commit/8444894faaefd389d0c7bb4dcb6083fdeaf694f3))
+* **04-07:** gate the dispatch on a restore, never the local bookkeeping ([c9d5151](https://github.com/ReyemTech/laravel-hubspot/commit/c9d5151283489185f8c2b75c7ee299bec0a82b83))
+* **04-07:** put the real transport back at an Octane boundary, not just the flag ([cceaafd](https://github.com/ReyemTech/laravel-hubspot/commit/cceaafdf8a3a84005241cc319009342a4d562875))
+* **04-07:** restore the stale flag and the pre-fake transport, not just their partners ([fdebe91](https://github.com/ReyemTech/laravel-hubspot/commit/fdebe913658b5ce9016b779060c9e28665a7c387))
+* **04-08:** harden batch sync transport ([dd87173](https://github.com/ReyemTech/laravel-hubspot/commit/dd871738930ab7f3a49ef2028d9c07c33e2894e8))
+* **04-08:** preserve identity in batch sync ([c557e0b](https://github.com/ReyemTech/laravel-hubspot/commit/c557e0bbe0e20853de6d629fe41ac3fa606d7982))
+* **04-08:** reconcile batch delete races ([b80f07f](https://github.com/ReyemTech/laravel-hubspot/commit/b80f07f66b563656d01547dd28734d33897c58dd))
+* a replacing fake inherits the original transport, it does not record the outgoing one ([1a8c8b0](https://github.com/ReyemTech/laravel-hubspot/commit/1a8c8b007b990764af13556dfaabd96a0a381ce0))
+* **ci:** .npmrc controls both pnpm installs, so both gates must watch it ([49b6cbb](https://github.com/ReyemTech/laravel-hubspot/commit/49b6cbb8b2f0ad8e37e361bde1146743d6970d86))
+* **ci:** apply the draft gate where the matrix context actually exists ([3cc5b7f](https://github.com/ReyemTech/laravel-hubspot/commit/3cc5b7f3abcbf115ff5ffe2c6f0437d256f2c349))
+* **ci:** key non-PR concurrency on the commit, and diff the whole pushed range ([404176e](https://github.com/ReyemTech/laravel-hubspot/commit/404176ed220a546d9a9ceba9a2badf9587b6f234))
+* **ci:** name the diff range mode, because the two callers ask different questions ([6a86951](https://github.com/ReyemTech/laravel-hubspot/commit/6a86951c8188da7bcaaf35c1e8e64f9166412606))
+* **ci:** read raw pathnames, because git C-quotes anything but ASCII ([3e2efb3](https://github.com/ReyemTech/laravel-hubspot/commit/3e2efb34932d84a55fc10438d4e060f7aa5ded2b))
+* **ci:** read raw pathnames, because git C-quotes anything but ASCII ([2e7e889](https://github.com/ReyemTech/laravel-hubspot/commit/2e7e8893aa885fcc2361cdb141afcfcc905ecb81))
+* **ci:** see a file renamed out of a gated directory, and prove it ([7a3c611](https://github.com/ReyemTech/laravel-hubspot/commit/7a3c611cc205a55564c1e1260458aa060c931c19))
+* inspect renamed paths in re-review proof ([79bb853](https://github.com/ReyemTech/laravel-hubspot/commit/79bb8536ee0a421c1449047b047e3e54c92e2487))
+* **sync:** defer batch dispatch and validate upsert results ([9e9c50f](https://github.com/ReyemTech/laravel-hubspot/commit/9e9c50ffe4e171a4c16212292041c912295b590e))
+* **sync:** log local batch error references ([aca10c6](https://github.com/ReyemTech/laravel-hubspot/commit/aca10c69516c2098cf67ac40205e178845d2330b))
+* **sync:** normalize batch error email contexts ([2e6c5e8](https://github.com/ReyemTech/laravel-hubspot/commit/2e6c5e86a2c3a901794716a156147410c8959de1))
+* **sync:** redact batch error context from logs ([c472318](https://github.com/ReyemTech/laravel-hubspot/commit/c472318a822bacb5b3800b0418ebb698bb909e3e))
+* **sync:** reject unsafe batch outcomes ([5d64455](https://github.com/ReyemTech/laravel-hubspot/commit/5d64455de1ecbe275a11f8f6ac881e37569c36fa))
+* **sync:** reject unsafe direct batch jobs ([5910e34](https://github.com/ReyemTech/laravel-hubspot/commit/5910e348f610ee42b87c21696838d176e961762f))
+* **sync:** reload batch models on selected connection ([ff08c6f](https://github.com/ReyemTech/laravel-hubspot/commit/ff08c6f5dd0a1a9e145f167b6a11586af08b7f53))
+* **sync:** rely on Laravel link race handling ([f963e97](https://github.com/ReyemTech/laravel-hubspot/commit/f963e97da1342bd3e5159d51d0036783faaa0ccb))
+* **sync:** share delete-race reconciliation ([fb6ea4d](https://github.com/ReyemTech/laravel-hubspot/commit/fb6ea4dac6e521322a160e9777cfb8ca2915a671))
+* **sync:** validate exact batch classes and normalized email keys ([8b7476f](https://github.com/ReyemTech/laravel-hubspot/commit/8b7476f7cafaca22a6bc2c1dabd993b267ad61df))
+* the archive marker needs a property default, not a promoted one ([d39281e](https://github.com/ReyemTech/laravel-hubspot/commit/d39281e297092e5a78ff78d55bd34f4bf6925f17))
+* withdraw the archive marker without global scopes ([e6ca6c6](https://github.com/ReyemTech/laravel-hubspot/commit/e6ca6c691775927b6a82e2ed3eec15722dad4e24))
+
+
+### Reverts
+
+* **04-06:** withdraw on_restore =&gt; 'recreate' from this release ([8ea4c80](https://github.com/ReyemTech/laravel-hubspot/commit/8ea4c80a779263fe94d4fece3279ecdb5de1e157))
+
 ## [0.5.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.4.0...reyemtech/laravel-hubspot-v0.5.0) (2026-07-31)
 
 
