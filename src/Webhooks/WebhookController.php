@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Webhooks;
 
 use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use JsonException;
 use ReyemTech\Hubspot\Gateway\Contracts\WebhookGatewayContract;
@@ -19,9 +21,22 @@ use Throwable;
  * decoded, and every validated item is handed off to the queue before this returns 204 — a batch
  * this method acknowledges is a batch it fully queued, never a partially-dispatched one (D-14).
  *
- * This plan (05-01) ships the deterministic 401/400/500/204 shape for the tracer path. The D-15
- * unsigned-local-development bypass and its payload-free warning, and the fuller safe-diagnostic
- * logging this class's failure branches carry, are a later task's concern (05-01-PLAN.md Task 3).
+ * The deterministic status mapping (D-13, D-14): 401 for a missing, stale, or invalid signature
+ * (before any decoding, event emission, handler work, or dispatch); 400 for a validly signed body
+ * that is not valid JSON, not a JSON array, or carries an invalid item; 500 if any item fails to
+ * reach the queue, so HubSpot's own retry redelivers the whole batch rather than this package
+ * silently acknowledging a partial handoff; 204 only once every item is durably queued.
+ *
+ * `ConfigRepository` (an `Illuminate\Contracts` type, not the bare `config()` helper) is what reads
+ * `hubspot.webhooks.enforce` for D-15's local-development bypass: `config()` is declared,
+ * unnamespaced, in `Illuminate\Foundation\helpers.php`, a root this package does not declare — the
+ * identical reason `response()` was replaced with `new Response(...)` in this same class during
+ * 05-01's tracer task. A namespaced `Illuminate\Contracts\*` type is already admitted by R4's
+ * widened allow-list with no further amendment needed.
+ *
+ * Every log call in this class carries a short, static reason code, a route path, and (where
+ * meaningful) an item count — never the raw body, the signature header, or the configured secret
+ * (STANDARDS §10; `tests/Arch/WebhookBoundaryTest.php` pins this over the shipped tree).
  *
  * `final`; the route's only invokable target, with no documented extension point (STANDARDS §8).
  */
@@ -30,6 +45,7 @@ final class WebhookController
     public function __construct(
         private readonly WebhookGatewayContract $gateway,
         private readonly Dispatcher $bus,
+        private readonly ConfigRepository $config,
     ) {}
 
     public function __invoke(Request $request): Response
@@ -39,8 +55,14 @@ final class WebhookController
         }
 
         try {
-            $events = $this->normalize($request->getContent());
-        } catch (InvalidArgumentException) {
+            $events = $this->decodeBatch($request->getContent());
+        } catch (InvalidArgumentException $exception) {
+            Log::error('A HubSpot webhook request failed shape validation.', [
+                'error_code' => $exception->getMessage(),
+                'item_count' => $exception->getCode() ?: null,
+                'route' => $request->path(),
+            ]);
+
             return new Response('', 400);
         }
 
@@ -59,13 +81,29 @@ final class WebhookController
     }
 
     /**
-     * `$request->fullUrl()` is never used here: Symfony sorts its query parameters when building
-     * it, and HubSpot signs the raw, unsorted request URI (AGENTS.md, PROJECT.md "Protocol —
-     * webhook signature"). `$request->server->get('REQUEST_URI')` is the framework's untouched
-     * copy of what the client actually sent.
+     * D-15: `HUBSPOT_WEBHOOK_ENFORCE=false` is a local-development bypass ONLY — it accepts an
+     * unsigned (or wrongly signed) request rather than rejecting it, and warns loudly every time it
+     * does, naming the bypass rather than the request. Enforcement defaults `true`; a consumer who
+     * never sets the env var gets the fail-closed behaviour D-20 requires.
+     *
+     * `$request->fullUrl()` is never used here for the enforced path: Symfony sorts its query
+     * parameters when building it, and HubSpot signs the raw, unsorted request URI (AGENTS.md,
+     * PROJECT.md "Protocol — webhook signature"). `$request->server->get('REQUEST_URI')` is the
+     * framework's untouched copy of what the client actually sent.
      */
     private function verified(Request $request): bool
     {
+        if ($this->config->get('hubspot.webhooks.enforce', true) === false) {
+            Log::warning(
+                'UNSAFE: HUBSPOT_WEBHOOK_ENFORCE is false, so an unverified HubSpot webhook '
+                .'request was accepted without checking its signature. This bypass exists for '
+                .'local development only and must never be set in a deployed environment.',
+                ['route' => $request->path()],
+            );
+
+            return true;
+        }
+
         /** @var string $requestUri */
         $requestUri = $request->server->get('REQUEST_URI', '');
 
@@ -81,34 +119,47 @@ final class WebhookController
 
     /**
      * Decodes and normalizes the whole batch before dispatching any of it, so an invalid item maps
-     * to 400 (D-13) rather than a queue-handoff failure mapping to 500 for the wrong reason.
+     * to 400 (D-13) rather than a queue-handoff failure mapping to 500 for the wrong reason. An
+     * empty JSON array (`[]`) is a valid, zero-item batch: it dispatches nothing and still returns
+     * 204, since HubSpot delivering nothing to act on is not a shape failure.
+     *
+     * The thrown exception's message is always one of the three static reason codes below, never
+     * body-derived text, and its code carries the decoded item count when one is meaningful (0/null
+     * otherwise) — both safe to log directly.
      *
      * @return list<NormalizedWebhookEvent>
      *
-     * @throws InvalidArgumentException if the body is not valid JSON, not a JSON array, or
-     *                                  contains an item `NormalizedWebhookEvent::fromArray()`
-     *                                  rejects
+     * @throws InvalidArgumentException with message `invalid_json`, `not_a_json_array`, or
+     *                                  `invalid_item`
      */
-    private function normalize(string $rawBody): array
+    private function decodeBatch(string $rawBody): array
     {
         try {
             /** @var mixed $decoded */
             $decoded = json_decode($rawBody, true, flags: JSON_THROW_ON_ERROR);
         } catch (JsonException $exception) {
-            throw new InvalidArgumentException('The webhook body is not valid JSON.', previous: $exception);
+            throw new InvalidArgumentException('invalid_json', previous: $exception);
         }
 
         if (! is_array($decoded) || ! array_is_list($decoded)) {
-            throw new InvalidArgumentException('The webhook body must be a JSON array of events.');
+            throw new InvalidArgumentException('not_a_json_array');
         }
 
-        return array_map(static function (mixed $item): NormalizedWebhookEvent {
+        $events = [];
+
+        foreach ($decoded as $item) {
             if (! is_array($item)) {
-                throw new InvalidArgumentException('Every webhook event must be a JSON object.');
+                throw new InvalidArgumentException('invalid_item', count($decoded));
             }
 
-            /** @var array<string, mixed> $item */
-            return NormalizedWebhookEvent::fromArray($item);
-        }, $decoded);
+            try {
+                /** @var array<string, mixed> $item */
+                $events[] = NormalizedWebhookEvent::fromArray($item);
+            } catch (InvalidArgumentException) {
+                throw new InvalidArgumentException('invalid_item', count($decoded));
+            }
+        }
+
+        return $events;
     }
 }
