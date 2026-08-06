@@ -26,7 +26,7 @@
         },
         {
             "id": "R4",
-            "description": "Webhooks may depend only on Registry, Gateway and the package exceptions",
+            "description": "Webhooks may depend only on Registry, Gateway, the package exceptions and the framework",
             "fixtures": [
                 "R4/WebhooksDependsOnSync.php",
                 "R4/SyncTarget.php"
