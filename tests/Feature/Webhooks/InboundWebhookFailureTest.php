@@ -153,6 +153,28 @@ final class InboundWebhookFailureTest extends TestCase
         ]);
     }
 
+    /**
+     * Distinct from the previous case: here the array ITEM ITSELF is not a JSON object at all
+     * (a bare scalar), never reaching `NormalizedWebhookEvent::fromArray()`.
+     */
+    public function test_it_rejects_a_signed_batch_containing_a_non_object_item(): void
+    {
+        Bus::fake();
+        $log = Log::spy();
+
+        $body = self::batchPayload([self::rawEventItem(), 'not-an-object']);
+        $headers = self::signedHeaders('POST', 'http://localhost'.self::URI, $body);
+
+        $response = $this->call('POST', self::URI, [], [], [], $headers, $body);
+
+        $response->assertStatus(400);
+        Bus::assertNothingDispatched();
+        $log->shouldHaveReceived('error', [
+            'A HubSpot webhook request failed shape validation.',
+            ['error_code' => 'invalid_item', 'item_count' => 2, 'route' => 'hubspot/webhook'],
+        ]);
+    }
+
     public function test_a_zero_item_batch_dispatches_nothing_and_returns_no_content(): void
     {
         Bus::fake();
@@ -298,7 +320,7 @@ final class InboundWebhookFailureTest extends TestCase
     }
 
     /**
-     * @param  list<array<string, mixed>>  $items
+     * @param  list<array<string, mixed>|string>  $items
      */
     private static function batchPayload(array $items): string
     {
