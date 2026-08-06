@@ -215,6 +215,11 @@ test('a layer that throws the package exception hierarchy passes its own boundar
         'SeamFixtures/Signals/SignalsThrowingAnAssociationTypeException.php',
         'Signals',
     ],
+    'R4, Webhooks typed on a framework request' => [
+        'R4',
+        'SeamFixtures/Webhooks/WebhooksTypedOnAFrameworkRequest.php',
+        'Webhooks',
+    ],
 ]);
 
 test('the scratch overlay the proof above relies on is the tree the rule actually reads', function (): void {
