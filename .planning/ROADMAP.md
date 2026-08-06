@@ -181,6 +181,7 @@ is where it becomes true. REG-01 and REG-04 tick here, not in Phase 3.
       independently chunked stored-ID updates and configured-identifier upserts, with no request above
       100 inputs. Tests assert the exact homogeneous and chunked mixed counts (an N+1 is a test failure,
       not a code smell).
+
   5. Deletes cannot surprise anyone: `'deleted'` is opt-in, `hard_delete` defaults to `guard` (skip and log), a `SoftDeletes` model archives in HubSpot on soft delete, `restored` logs and flags the stored `hubspot_id` stale without ever nulling it, and `Hubspot::withoutSyncing()` plus `HUBSPOT_DISABLED=true` suppress everything so `migrate:fresh --seed` fires zero API calls.
 
 **Requirement split written at planning time (2026-07-30, D-15):** **SYNC-01a** — Attached and API-only
@@ -202,6 +203,7 @@ Plans:
 - [x] 04-08-PLAN.md — `Model::syncManyToHubspot()`: one job and chunked identity-aware transport
   (stored-ID `updateMany()` plus identifier `upsertMany()` in independently chunked groups of at most
   100 inputs), and `assertSynced` widened to a bound model
+
 - [x] 04-09-PLAN.md — `hubspot:doctor`'s real bound-model section (REG-04b), replacing the test that held the opposite, and the phase close-out
 
 **Phase close-out, 2026-08-03.** All Phase 4 success criteria and REG-01/REG-04 are complete. SYNC-01b
@@ -233,11 +235,24 @@ and one PR that merges before its dependants begin. Waves: 1 → 2 → 3 (04-03,
 **UI hint**: no
 
 Plans:
+**Wave 1**
 
 - [ ] 05-01-PLAN.md — Tracer: one signed webhook from route macro to a queued generic Laravel event
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 05-02-PLAN.md — Durable `eventId` idempotency and the opt-in `hubspot_webhook_events` table
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 05-03-PLAN.md — Typed events, the configured handler map with `'*'`, and `assertWebhookHandled`
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 05-04-PLAN.md — `hubspot:webhooks:sync` reconciling a legacy public app, `--dry-run` included
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 05-05-PLAN.md — Legacy-private manual setup instructions and the project webhook component
 
 ### Phase 6: Signals Core
