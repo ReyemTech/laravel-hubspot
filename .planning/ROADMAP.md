@@ -226,10 +226,19 @@ and one PR that merges before its dependants begin. Waves: 1 → 2 → 3 (04-03,
   1. `Route::hubspotWebhook('hubspot/webhook')` is the only line an app adds; a request carrying a valid signature is accepted and a request with an invalid or missing one is rejected with no handler running, because verification fails **closed** by default within a 300s tolerance.
   2. Signature verification passes a signed request whose query parameters are **not** in sorted order — a test that is red against a `$request->fullUrl()` implementation and green against the shipped raw-URI reconstruction — with the HMAC comparison delegated to `HubSpot\Utils\Signature::isValid()` and the app **client secret** (not the PAT) as the key.
   3. One delivery carrying N events responds `204` immediately and queues N jobs; a redelivered `eventId` is handled exactly once; and `occurredAt` is exposed so a handler can drop a stale change, since HubSpot guarantees no ordering.
-  4. Events reach userland by both routes from a single dispatch — Laravel events (`HubspotWebhookReceived` plus typed events such as `ContactPropertyChanged`) and the configured handler map, `'*'` included — and `php artisan hubspot:webhooks:sync` declares the configured subscriptions against the portal.
+  4. Events reach userland by both routes from a single dispatch — Laravel events (`HubspotWebhookReceived` plus typed events such as `ContactPropertyChanged`) and the configured handler map, `'*'` included. `hubspot:webhooks:sync` reconciles only legacy public-app subscriptions with an app id and Developer API key; legacy private apps get local validation and rendered manual setup instructions, while current project-based apps get an exportable webhook component. Service Keys and the pull-based Webhook Journal API are not treated as HTTP-webhook management.
   5. The `hubspot_webhook_events` audit table is off by default and its migration does not exist until it is turned on, so enabling webhooks does not break zero-migration install.
 
-**Plans**: TBD
+**Plans**: 5 plans
+**UI hint**: no
+
+Plans:
+
+- [ ] 05-01-PLAN.md — Tracer: one signed webhook from route macro to a queued generic Laravel event
+- [ ] 05-02-PLAN.md — Durable `eventId` idempotency and the opt-in `hubspot_webhook_events` table
+- [ ] 05-03-PLAN.md — Typed events, the configured handler map with `'*'`, and `assertWebhookHandled`
+- [ ] 05-04-PLAN.md — `hubspot:webhooks:sync` reconciling a legacy public app, `--dry-run` included
+- [ ] 05-05-PLAN.md — Legacy-private manual setup instructions and the project webhook component
 
 ### Phase 6: Signals Core
 
@@ -286,7 +295,7 @@ and one PR that merges before its dependants begin. Waves: 1 → 2 → 3 (04-03,
 
   1. `php artisan hubspot:install` scans `app/Models`, proposes candidates by name and asks which model(s) — plural — map to each object, detects a model already using tapp's `HubspotContact` trait and offers the compat shim instead of a second binding, additionally offers to enable signals (running the buffer migration), choose a signal store driver and publish the frontend assets, skips all prompts when any flag is passed, and reconciles rather than duplicating when re-run — while skipping it entirely still leaves `composer require` plus `use SyncsToHubspot` fully working.
   2. A `tapp/laravel-hubspot` user changes one line in `composer.json` and their existing `HubspotContact` / `HubspotCompany` models keep working through `Compat\Tapp`, including `getHubspotCompanyRelation()` translated into a generic association, with `E_USER_DEPRECATED` emitted from day one and the namespace scoped for deletion in v2.
-  3. The README opens with a 60-second quickstart (install, one model, one sync), every public method has a usage example including `signal()`, `identify()` and the Blade component, the association direction table (279 vs 280, 19 vs 20, 201 vs 202) is documented prominently, every `HUBSPOT_*` env var is listed with its default, and `UPGRADE.md` and `CONTRIBUTING.md` exist with CONTRIBUTING stating that CI enforces the standards.
+  3. The README opens with a 60-second quickstart (install, one model, one sync), every public method has a usage example including `signal()`, `identify()` and the Blade component, the association direction table (279 vs 280, 19 vs 20, 201 vs 202) is documented prominently, every `HUBSPOT_*` env var is listed with its default, and `UPGRADE.md` and `CONTRIBUTING.md` exist with CONTRIBUTING stating that CI enforces the standards. Webhook documentation includes an app-model matrix: receiving requires a HubSpot app and its client secret; legacy public apps can use `hubspot:webhooks:sync` with a Developer API key and app id; legacy private apps use HubSpot's UI; project-built private apps declare subscriptions in `webhooks.json`; Service Keys do not enable webhooks or subscription management.
   4. The Astro + Starlight site in `site/` builds on push to `main` and publishes to a `docs-pages` branch, pushed with a **PAT rather than `GITHUB_TOKEN`** — because Actions suppresses workflow triggers for commits authored by `GITHUB_TOKEN`, and without that the Pages deploy silently never fires.
 
 **Blocked within this phase** (do not plan as executable):
@@ -376,7 +385,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Gateway Layer | 6/6 | Complete | 2026-07-27 |
 | 3. Registry & Stores | 3/3 | Complete | 2026-07-29 |
 | 4. Model Sync | 9/9 | Complete | 2026-08-03 |
-| 5. Inbound Webhooks | 0/TBD | Not started | - |
+| 5. Inbound Webhooks | 0/5 | Planned | - |
 | 6. Signals Core | 0/TBD | Not started | - |
 | 7. Signal Stores & Attribution | 0/TBD | Not started | - |
 | 8. Frontend & Meetings Embed | 0/TBD | Not started | - |
