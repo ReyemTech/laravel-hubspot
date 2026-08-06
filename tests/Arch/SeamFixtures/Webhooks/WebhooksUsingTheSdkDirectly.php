@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Webhooks;
 
+use HubSpot\Discovery\Discovery;
 use HubSpot\Factory;
 
 /**
@@ -22,7 +23,7 @@ use HubSpot\Factory;
  */
 final class WebhooksUsingTheSdkDirectly
 {
-    public function make(): Factory
+    public function make(): Discovery
     {
         return Factory::create();
     }

@@ -258,7 +258,7 @@ test('R4 still rejects an SDK import from Webhooks after admitting the framework
         ."layer.\n\n".$result['output'],
     );
 
-    expect(str_contains($result['output'], 'HubSpot\Factory'))->toBeTrue(
+    expect(str_contains($result['output'], 'HubSpot\\'))->toBeTrue(
         "R4 went red for a reason other than the SDK import.\n\n".$result['output'],
     );
 });

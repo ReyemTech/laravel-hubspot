@@ -216,4 +216,19 @@ final class ConfigurationException extends LogicException implements HubspotExce
             implode(', ', $validValues),
         ));
     }
+
+    /**
+     * `hubspot.webhooks.secret` (env `HUBSPOT_CLIENT_SECRET`) is missing or empty while
+     * `Gateway\WebhookGateway::verify()` is being asked to check a signature (HOOK-01, T-05-01).
+     * Thrown before `HubSpot\Utils\Signature::isValid()` is ever called: handing that SDK call a
+     * null or empty secret would silently coerce it into an HMAC key of nothing, which is the
+     * opposite of the fail-closed default D-20 requires.
+     */
+    public static function missingWebhookSecret(): self
+    {
+        return new self(
+            'HUBSPOT_CLIENT_SECRET is not set. Set it to the client secret of the HubSpot app '
+            .'that sends this webhook -- verification fails closed until it is.',
+        );
+    }
 }

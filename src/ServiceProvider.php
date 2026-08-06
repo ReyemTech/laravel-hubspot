@@ -15,9 +15,11 @@ use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Gateway\Contracts\WebhookGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
+use ReyemTech\Hubspot\Gateway\WebhookGateway;
 use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
 use ReyemTech\Hubspot\Registry\Console\AssociationsDoctorCommand;
 use ReyemTech\Hubspot\Registry\Console\DoctorCommand;
@@ -32,6 +34,7 @@ use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
+use ReyemTech\Hubspot\Webhooks\RouteRegistrar;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -163,6 +166,17 @@ final class ServiceProvider extends BaseServiceProvider
         $this->app->bind(ObjectGatewayContract::class, ObjectGateway::class);
         $this->app->bind(AssociationGatewayContract::class, AssociationGateway::class);
         $this->app->bind(AssociationDefinitionsGatewayContract::class, AssociationDefinitionsGateway::class);
+
+        // Reads hubspot.webhooks.secret at RESOLUTION time, not registration time -- the same
+        // on-demand credential boundary ExceptionTranslator's closure keeps above. Non-shared for
+        // the same reason every gateway above is: a config change (or a test's Hubspot::fake())
+        // must be observed by the next resolution, not answered from a construction-time capture.
+        $this->app->bind(WebhookGatewayContract::class, function (Application $app): WebhookGateway {
+            /** @var string|null $secret */
+            $secret = $app->make('config')->get('hubspot.webhooks.secret');
+
+            return new WebhookGateway($secret);
+        });
     }
 
     /**
@@ -188,6 +202,11 @@ final class ServiceProvider extends BaseServiceProvider
             // request for no benefit.
             $this->commands(self::consoleCommands());
         }
+
+        // Route::hubspotWebhook(string $uri) (HOOK-01). No package routes file exists or is
+        // loaded -- registering the macro IS the whole of the integration, and a consuming
+        // application adds exactly one line to its own routes file.
+        RouteRegistrar::register();
 
         $this->publishes([
             __DIR__.'/../config/hubspot.php' => $this->app->configPath('hubspot.php'),
