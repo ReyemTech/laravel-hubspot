@@ -53,6 +53,13 @@ third-party webhook package.
 - **D-12:** The command applies non-destructive changes by default and offers `--dry-run` for review
   and CI. Invalid declarations fail with a directed error when the command runs, not at application
   boot.
+- **D-16:** Webhook receipt supports every HubSpot app model that delivers signed HTTP POSTs. Runtime
+  reconciliation (`hubspot:webhooks:sync`) is for legacy public apps only, using an app id and
+  Developer API key. Legacy private apps receive guided local validation and rendered manual setup
+  instructions because HubSpot offers no subscription-management API. Current project-based apps
+  receive an exportable webhook component for deployment with the HubSpot project, rather than a
+  runtime mutation. The Webhook Journal API is a separate pull-based capability and is out of scope.
+  HubSpot Service Keys are never accepted as webhook-management credentials.
 
 ### Request Failures
 - **D-13:** Missing or invalid signatures return `401 Unauthorized` before handlers run. A signed but
@@ -66,7 +73,7 @@ third-party webhook package.
 - Exact normalized event fields, event-class names, event-id schema/indexes, retention default, and
   prune command naming.
 - The concrete core semantic families and HubSpot subscription API translation, subject to the
-  existing Gateway-only SDK boundary.
+  existing Gateway-only SDK boundary and D-16's app-model policy.
 </decisions>
 
 <canonical_refs>

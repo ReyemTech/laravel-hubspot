@@ -739,7 +739,15 @@ event trail goes.*
     method has a usage example, **including `signal()`, `identify()` and the Blade component**. The
     association direction table (279 vs 280, 19 vs 20, 201 vs 202) is documented prominently. Every
     `HUBSPOT_*` env var is listed with its default. `UPGRADE.md` exists. `CONTRIBUTING.md` states the
-    standards and that CI enforces them.
+    standards and that CI enforces them. The webhook documentation includes an app-model matrix:
+    receiving webhooks requires a HubSpot app and its client secret; legacy public apps may use
+    `hubspot:webhooks:sync` with a Developer API key and app id; legacy private-app subscriptions are
+    managed in HubSpot's UI; project-built private-app subscriptions are declared in `webhooks.json`.
+    It states plainly that HubSpot Service Keys do not enable webhooks or subscription management, and
+    distinguishes all credentials from the CRM token/PAT.
+
+  - Documentation decision, 2026-08-06: package users must be able to choose an app model before
+    enabling webhooks, rather than discovering the subscription-management limitation after setup.
 
   - Note: `CONTRIBUTING.md` is required by STANDARDS §13 and omitted by core spec §13 — ADR precedence.
 
