@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 5
 current_phase_name: Inbound Webhooks
 status: ready_for_planning
-stopped_at: "Completed 04-09-PLAN.md; Phase 4 is complete."
-last_updated: "2026-08-03T00:00:00.000Z"
-last_activity: 2026-08-03
-last_activity_desc: "Completed 04-08 and 04-09. Batch sync dispatches one job with chunked identity-aware transport: a homogeneous group of at most 100 makes one request; larger and mixed input sum independently chunked stored-ID updates and configured-identifier upserts. DeleteRaceReconciler converges only links the batch job created after confirmed unlinked upserts; a concurrent link is retained. Queued model references reload without global scopes, skipping missing rows while survivors sync. DoctorCommand::handle() retains AssociationTypeStore compatibility. HubSpot documents the 100-record limit at https://developers.hubspot.com/docs/api-reference/crm-contacts-v3/batch/post-crm-v3-objects-contacts-batch-upsert. hubspot:doctor reports every bound model's object type, id_property, SoftDeletes status and DeletePolicy-resolved action. Registry receives these facts through a Registry-owned container contract implemented by Sync, so R2 remains intact. REG-01 and REG-04 are complete; only SYNC-01b (Generated mode in Phase 9) remains open. Reconciliation gates passed: 877 tests, 3,136 assertions, 100% coverage, and 89.34% scoped MSI; all static-analysis, style, firing-harness and Composer validation gates passed."
+stopped_at: Phase 5 context gathered
+last_updated: "2026-08-06T16:06:26.888Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 25
   completed_plans: 25
+last_activity: 2026-08-05
+last_activity_desc: "Released v0.6.0 after merging the Phase 4 batch-sync completion and dependency-maintenance work. PR #52 auto-merged after the full required CI suite passed; release-please published tag reyemtech/laravel-hubspot-v0.6.0."
 ---
 
 # Project State
@@ -27,7 +27,7 @@ HubSpot CRM object type — with no per-type code, no migration step, and no cha
 association backwards. Extended 2026-07-26: …and records intent signals against an anonymous visitor
 that become attributed contact properties the moment an email appears, with no API call in the
 request lifecycle.
-**Current focus:** Phase 4 — Model Sync
+**Current focus:** Phase 5 — Inbound Webhooks
 
 ## Current Position
 
@@ -53,7 +53,7 @@ scalars rather than the model — after a hard delete the local row is gone, and
 exists to mirror. `SyncHubspotObjectJob` returns early when its model arrives trashed, closing
 `04-CONTEXT.md`'s deferred update-racing-a-soft-delete item. `illuminate/log` is now a declared
 production require — these are the package's first log calls.
-Last activity: 2026-08-02 — executed 04-06-PLAN.md and closed fourteen rounds of Codex review on
+Prior Phase 4 activity: 2026-08-02 — executed 04-06-PLAN.md and closed fourteen rounds of Codex review on
 PR #49 (28 findings). 824 tests, 2984 assertions, 100.0% coverage. MSI 88.13% measured over the six
 classes this plan changed (ConfigurationException, ArchiveHubspotObjectJob, DeletePolicy,
 HubspotObjectLink, HubspotObserver, SyncHubspotObjectJob) — a SCOPED figure, not comparable to a
@@ -242,12 +242,15 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
   `(lookup_hash, model_id, object_type)` rather than writing a duplicate, which is why it is a
   follow-up and not a blocker. Worth deciding as one rule (the package reads its own link table
   unscoped) rather than patching call sites.
+
 - **#50 and #51 — 04-06 follow-ups, both on the delete path.** Check whether #65 subsumed part of
   #51 before planning either.
+
 - **Owner decision: `archived_at` — intent or confirmation?** Blocks the redelivery-window fix.
   Options on #57.
-- **#52 — release-please 0.6.0.** Owner-gated. First release that would contain
-  `ArchiveHubspotObjectJob`.
+
+- **v0.6.0 — released 2026-08-05.** PR #52 auto-merged after required CI passed; release-please
+  published tag `reyemtech/laravel-hubspot-v0.6.0` and its GitHub release.
 
 ### Blockers/Concerns
 
@@ -302,9 +305,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - **Agent hazard:** an agent reading `apps/laravel`'s CLAUDE.md will try to convert this suite from
   Pest to PHPUnit. That rule is app-scoped. Pest is locked (D-08)
 
-- **Phase numbering shifted.** The core spec §13, the signals spec §15 prose, `BRIEF.md` and
-  `.planning/intel/` say "Phase 0"; this roadmap says "Phase 1". GSD's `roadmap.analyze` silently
-  drops a `### Phase 0:` header (verified 2026-07-26). Mapping table at the top of ROADMAP.md
+- **Phase numbering shifted.** The source documents are zero-indexed; this roadmap starts at one.
+  GSD's `roadmap.analyze` silently drops a zero-indexed phase header (verified 2026-07-26). The
+  mapping table is at the top of ROADMAP.md.
 
 - ~~Mutation required check (quality.yml) will report red for the remainder of Phase 1: pest --mutate --min=80 over the deliberately-empty src/ triggers PHPUnit's failOnPhpunitWarning path (WARN + exit 1, no score computed), mirroring plan 01's already-flagged coverage-floor gap. Resolves automatically once Phase 2 adds the first mutable file under src/.~~ **RESOLVED as predicted** — the gate has computed a real score since 02-01 and ends Phase 2 at MSI 98.84% against a floor of 80, with 7 documented equivalent survivors (string casts the SDK re-coerces, and unreachable `?? ''` fallbacks). Do not chase them.
 - Git-history attribution defect: commit 022b9e6 (plan 05) accidentally includes three of plan 04's task-2 files (tests/Arch/LayerBoundariesTest.php, SecretLoggingTest.php, StrictTypesTest.php) due to concurrent git staging in a shared (non-worktree) working directory. Content is correct and both plans are green; plan 04 lacks a dedicated GREEN commit for its rule implementations in git log. See 01-05-SUMMARY.md Issues Encountered.
@@ -327,9 +330,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-03T00:00:00.000Z
-Stopped at: Completed 04-09-PLAN.md; Phase 4 is complete and Phase 5 is ready for planning.
-Resume file: None
+Last session: 2026-08-06T16:06:26.863Z
+Stopped at: Phase 5 context gathered
+Resume file: .planning/phases/05-inbound-webhooks/05-CONTEXT.md
 
 **Landed after Phase 3 closed (2026-07-30):**
 

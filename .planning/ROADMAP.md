@@ -40,7 +40,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 - [x] **Phase 1: Foundation & Gates** - Every gate green on an empty package — the 12-job PHP matrix, the JS coverage floor, six layer boundaries, and the docs build
 - [x] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
 - [x] **Phase 3: Registry & Stores** - Directional `(from, to, label) → typeId` resolution, cache and database stores, zero-migration install, diagnostics
-- [ ] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
+- [x] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
 - [ ] **Phase 5: Inbound Webhooks** - Verified, deduped, batched, typed inbound events behind one route macro
 - [ ] **Phase 6: Signals Core** - Behavioural signals buffered against an anonymous visitor, bound to a person on identify, flushed as one batched property write
 - [ ] **Phase 7: Signal Stores & Attribution** - The event trail lands wherever the portal allows, attribution survives the sales cycle, and the buffer cannot grow without bound
@@ -375,7 +375,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Foundation & Gates | 7/7 | Complete | 2026-07-27 |
 | 2. Gateway Layer | 6/6 | Complete | 2026-07-27 |
 | 3. Registry & Stores | 3/3 | Complete | 2026-07-29 |
-| 4. Model Sync | 4/9 | In Progress|  |
+| 4. Model Sync | 9/9 | Complete | 2026-08-03 |
 | 5. Inbound Webhooks | 0/TBD | Not started | - |
 | 6. Signals Core | 0/TBD | Not started | - |
 | 7. Signal Stores & Attribution | 0/TBD | Not started | - |
