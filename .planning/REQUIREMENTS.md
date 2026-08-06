@@ -490,6 +490,13 @@ REL-02.
     can drop stale changes. Events reach userland both as Laravel events and via the configured handler
     map. The secret is the app **client secret**, not the PAT. Surface is
     `Route::hubspotWebhook('hubspot/webhook')`.
+  - **Partially delivered by 05-01 (2026-08-06), box deliberately left unchecked:** the route
+    macro, raw-URI SDK-delegated verification (fail-closed, `HubSpot\Utils\Signature::isValid()`
+    only, never `$request->fullUrl()`), one-job-per-item batch handoff with the deterministic
+    401/400/500/204 mapping, the D-15 local-dev bypass, and `occurredAt` exposure on
+    `NormalizedWebhookEvent` are all shipped and tested (`05-01-SUMMARY.md`). Still open: dedupe on
+    `eventId` (durable claim/complete persistence), and the configured handler map — both deferred
+    to a later Phase 5 plan by this plan's own scope note.
 
 - [ ] **HOOK-02**: `php artisan hubspot:webhooks:sync` declares subscriptions from config
   — `REQ-webhook-subscription-sync` (core spec §8, §13 Phase 4)

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 5
-current_phase_name: Inbound Webhooks
-status: ready_for_planning
-stopped_at: Phase 5 context gathered
-last_updated: "2026-08-06T18:18:13.498Z"
+current_phase: 05
+current_phase_name: inbound-webhooks
+status: executing
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-08-06T21:35:14.333Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 30
-  completed_plans: 25
+  completed_plans: 26
 last_activity: 2026-08-05
 last_activity_desc: "Released v0.6.0 after merging the Phase 4 batch-sync completion and dependency-maintenance work. PR #52 auto-merged after the full required CI suite passed; release-please published tag reyemtech/laravel-hubspot-v0.6.0."
 ---
@@ -27,19 +27,19 @@ HubSpot CRM object type — with no per-type code, no migration step, and no cha
 association backwards. Extended 2026-07-26: …and records intent signals against an anonymous visitor
 that become attributed contact properties the moment an email appears, with no API call in the
 request lifecycle.
-**Current focus:** Phase 5 — Inbound Webhooks
+**Current focus:** Phase 05 — inbound-webhooks
 
 ## Current Position
 
-Phase: 5 of 9 (Inbound Webhooks). Phase 4 is complete: 04-08 added a singular public collection API
+Phase: 05 (inbound-webhooks) — EXECUTING
 with chunked identity-aware transport (one request for a homogeneous group of at most 100; larger and
 mixed input sum independently chunked linked updates and unlinked upserts), and 04-09 completed the
 doctor bound-model report. `DeleteRaceReconciler` runs only for links the batch job created, so a
 concurrent link is retained. REG-01 and REG-04 are now complete; SYNC-01b remains open for Phase 9's
 Generated mode and SHIP-01.
-Plan: none in flight. `hubspot:doctor` consumes a Registry-owned container contract implemented by
+Plan: 2 of 5
 Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
-Status: **Deletes cannot surprise anyone.** `Sync\DeletePolicy` resolves design spec §7's table
+Status: Ready to execute
 from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
 Three DISTINCT events drive it — `trashed`, `forceDeleted`, and plain `deleted` gated on the
 ABSENCE of `SoftDeletes` — because `deleted` fires identically for a soft delete and a
@@ -101,7 +101,7 @@ Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the qu
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
 and the `auto_sync` config block.
 
-Progress: [██████████] 100% of Phase 4
+Progress: [█████████░] 87% of Phase 4
 
 ## Performance Metrics
 
@@ -144,6 +144,7 @@ Progress: [██████████] 100% of Phase 4
 | Phase 04-model-sync P02 | ~135min | 2 tasks | 20 files |
 | Phase 04 P03 | ~1h | 3 tasks | 7 files |
 | Phase 04 P04 | 1h10m | 2 tasks | 15 files |
+| Phase 05 P01 | 55min | 3 tasks | 20 files |
 
 ## Accumulated Context
 
@@ -230,6 +231,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: [Phase 4] 04-03: R3's architecture rule widened to admit the bare global function data_get by literal name -- it is declared unnamespaced in Illuminate\\Collections\\helpers.php, so the existing 'Illuminate' allow-list entry never matched it; pest-plugin-arch resolves a bare resolvable function name as its own first-class dependency shape
 - [Phase ?]: ModelBindings::for() throws unboundSyncModel() on every miss, collapsing the internal-invariant and genuinely-unbound cases into one directed error
 - [Phase ?]: Message-factory assertions moved to hardcoded literals across the Sync suite -- factory-vs-factory comparison can never catch a mutated internal sprintf
+- [Phase ?]: 05-01: R4 widened to admit Illuminate, proven (committed guard fixture) it still rejects HubSpot\* from Webhooks
+- [Phase ?]: 05-01: WebhookController reads hubspot.webhooks.enforce via injected Illuminate\Contracts\Config\Repository, never the bare config() helper (Illuminate\Foundation root this package does not declare)
+- [Phase ?]: 05-01: illuminate/http and illuminate/routing declared production requires; both already ship transitively via laravel/framework
 
 ### Pending Todos
 
@@ -318,6 +322,7 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase 3]: `hubspot:doctor` ships REG-04a only and NAMES its absent bound-model section in three lines rather than omitting it; REG-01 and REG-04 stay open at the end of Phase 3 with only their Phase 3 halves done
 - [Phase 3]: `Testing\HubspotFake` keys canned responses by ROUTE, not object type: the definitions route is keyed `definitions:{from}>{to}` because reconciling a pair reads both directions and each returns its own labels. The default-response family moved out to `Testing\DefaultResponses`, the extraction 02-06's deferred items named
 - 04-01-PLAN.md's acceptance criteria assume composer.lock is committed (git diff HEAD~1 -- composer.lock); it is gitignored for this library and was never committed. Verified the substance locally instead (no new packages installed); the two literal git-diff acceptance criteria are not satisfiable as written. See 04-01-SUMMARY.md Deviations.
+- 05-01 Task 3 (tdd=true) landed implementation and tests in one commit rather than RED-then-GREEN; retroactively verified non-vacuous (5/16 tests failed against the pre-Task-3 controller) but process discipline was skipped. See 05-01-SUMMARY.md TDD Gate Compliance.
 
 ## Deferred Items
 
@@ -330,9 +335,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-06T16:06:26.863Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-inbound-webhooks/05-CONTEXT.md
+Last session: 2026-08-06T21:35:14.324Z
+Stopped at: Completed 05-01-PLAN.md
+Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**
 
