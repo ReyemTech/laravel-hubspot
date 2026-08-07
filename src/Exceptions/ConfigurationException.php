@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Exceptions;
 
 use LogicException;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 
 /**
  * A caller mistake detectable before any I/O -- a missing or malformed package configuration
@@ -246,5 +247,48 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
             .'loads its own migrations whenever HUBSPOT_WEBHOOKS=true.',
         );
+    }
+
+    /**
+     * A `hubspot.webhooks.handlers` entry is not a class-string naming a class that exists and
+     * implements {@see WebhookHandler} (D-07). Thrown by `Webhooks\HandlerMap::validate()`, called
+     * from `ProcessWebhookEventJob::handle()` before the durable claim from 05-02 is taken -- a
+     * configuration typo must not burn a claim, and must not emit half an item's events before
+     * failing.
+     *
+     * Three distinct causes share this one factory, and the message names whichever one actually
+     * happened rather than a single generic sentence: a non-string value, a class name that does not
+     * exist, and a class that exists but does not implement the interface are three different fixes.
+     */
+    public static function invalidWebhookHandler(mixed $value, string $eventKey): self
+    {
+        if (! is_string($value)) {
+            return new self(sprintf(
+                'hubspot.webhooks.handlers["%s"] contains a %s, which is not a class name string. '
+                .'Each entry must be a string naming a class, or a list of such strings, that '
+                .'implements %s.',
+                $eventKey,
+                get_debug_type($value),
+                WebhookHandler::class,
+            ));
+        }
+
+        if (! class_exists($value)) {
+            return new self(sprintf(
+                'hubspot.webhooks.handlers["%s"] names "%s", which is not a class that exists. '
+                .'Correct the class name in config/hubspot.php, or remove the entry.',
+                $eventKey,
+                $value,
+            ));
+        }
+
+        return new self(sprintf(
+            'hubspot.webhooks.handlers["%s"] names "%s", which does not implement %s. Add '
+            .'"implements %s" to the class, or remove it from config/hubspot.php.',
+            $eventKey,
+            $value,
+            WebhookHandler::class,
+            WebhookHandler::class,
+        ));
     }
 }

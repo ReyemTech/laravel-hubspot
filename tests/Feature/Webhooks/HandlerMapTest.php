@@ -23,6 +23,7 @@ use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
 use ReyemTech\Hubspot\Webhooks\HandlerMap;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
+use Symfony\Component\HttpFoundation\Response;
 
 mutates(HandlerMap::class, ConfigurationException::class);
 
@@ -188,6 +189,7 @@ final class HandlerMapTest extends TestCase
 
     /**
      * @param  list<array<string, mixed>>  $items
+     * @return TestResponse<Response>
      */
     private function deliverRaw(array $items): TestResponse
     {

@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 
 use Illuminate\Foundation\Application;
 use Illuminate\Routing\Router;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Event;
@@ -202,10 +203,13 @@ final class TypedEventRoutingTest extends TestCase
         ]);
         $this->deliver([$item]);
 
-        /** @var HubspotWebhookReceived $generic */
-        $generic = Event::dispatched(HubspotWebhookReceived::class)->sole()[0];
-        /** @var ContactPropertyChanged $typed */
-        $typed = Event::dispatched(ContactPropertyChanged::class)->sole()[0];
+        /** @var Collection<int, array{0: HubspotWebhookReceived}> $genericCalls */
+        $genericCalls = Event::dispatched(HubspotWebhookReceived::class);
+        /** @var Collection<int, array{0: ContactPropertyChanged}> $typedCalls */
+        $typedCalls = Event::dispatched(ContactPropertyChanged::class);
+
+        $generic = $genericCalls->sole()[0];
+        $typed = $typedCalls->sole()[0];
 
         self::assertSame($generic->event, $typed->event);
     }
@@ -221,6 +225,7 @@ final class TypedEventRoutingTest extends TestCase
         ];
         $this->deliver($items);
 
+        /** @var Collection<int, ProcessWebhookEventJob> $dispatched */
         $dispatched = Bus::dispatched(ProcessWebhookEventJob::class);
 
         self::assertCount(3, $dispatched);

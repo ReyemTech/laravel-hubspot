@@ -388,6 +388,35 @@ return [
     |   (05-RESEARCH.md Pitfall 3). Plain scalars only, here and everywhere
     |   in this file — `php artisan config:cache` serialises with
     |   var_export(), which throws on a closure.
+    | - handlers: routes an accepted item to your OWN application classes,
+    |   in addition to the Laravel events above (D-07) — a handler runs
+    |   AFTER HubspotWebhookReceived and any typed event, never instead of
+    |   them. Each key is a HubSpot subscription type (for example
+    |   'contact.propertyChange'); a bare class-string and a list of them
+    |   are both accepted for one key:
+    |
+    |       'handlers' => [
+    |           'contact.propertyChange' => App\Webhooks\SyncContactEmail::class,
+    |           'deal.propertyChange' => [
+    |               App\Webhooks\RecalculatePipeline::class,
+    |               App\Webhooks\NotifySales::class,
+    |           ],
+    |           '*' => App\Webhooks\AuditEveryWebhook::class,
+    |       ],
+    |
+    |   '*' is a valid key on its own terms: its handlers run for EVERY
+    |   accepted item, key-specific handlers first, and a class named under
+    |   both a key and '*' runs only once. Every entry must be a class
+    |   implementing ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler —
+    |   an entry that is not a class-string, does not exist, or does not
+    |   implement that interface throws a ConfigurationException naming the
+    |   class and this key, before any event is dispatched and before the
+    |   durable claim above is even taken. Handlers MUST be idempotent: a
+    |   handler that throws fails the queued item and Laravel retries it,
+    |   which re-runs every handler configured for that item, including one
+    |   that already succeeded. Plain arrays and strings only — this key is
+    |   subject to the same config:cache/var_export() constraint as every
+    |   other key in this file.
     |
     */
     'webhooks' => [
@@ -398,6 +427,9 @@ return [
         'retention_days' => (int) env('HUBSPOT_WEBHOOK_RETENTION_DAYS', 30),
         'audit_payload' => (bool) env('HUBSPOT_WEBHOOK_AUDIT_PAYLOAD', false),
         'claim_lease' => 900,
+        'handlers' => [
+            //
+        ],
     ],
 
 ];

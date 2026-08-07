@@ -36,6 +36,7 @@ use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
+use ReyemTech\Hubspot\Webhooks\HandlerMap;
 use ReyemTech\Hubspot\Webhooks\RouteRegistrar;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
 
@@ -199,6 +200,16 @@ final class ServiceProvider extends BaseServiceProvider
                 $auditPayload,
                 $claimLease,
             );
+        });
+
+        // Non-shared, like WebhookGatewayContract above: config('hubspot.webhooks.handlers') is read
+        // fresh on every resolution, not captured once at boot, so a test's config()->set() between
+        // requests is observed the same way HubspotFake's transport swap is.
+        $this->app->bind(HandlerMap::class, function (Application $app): HandlerMap {
+            /** @var array<array-key, mixed> $handlers */
+            $handlers = $app->make('config')->get('hubspot.webhooks.handlers', []);
+
+            return new HandlerMap($handlers);
         });
     }
 

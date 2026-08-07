@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Webhooks;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
 
 /**
@@ -39,7 +41,16 @@ use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
  * is guaranteed to reach. An unrecognized subscription type resolves nothing, and no second event is
  * dispatched for it.
  *
- * Configured handler dispatch is a later plan's concern (05-CONTEXT.md D-07, D-08).
+ * ## Configured handlers (05-03, D-07, D-08)
+ *
+ * `HandlerMap::validate()` runs FIRST, before `WebhookEventStore::claim()` -- a configuration typo
+ * (a missing class, or one that does not implement `Contracts\WebhookHandler`) must not burn a claim,
+ * and must not emit half an item's events before failing. After the typed-event dispatch, every
+ * handler class `HandlerMap::resolve()` returns for this item's subscription type is resolved from
+ * the container AT EXECUTION TIME -- the same reason
+ * `Registry\Console\SyncAssociationsCommand` resolves its gateway inside `handle()` -- and invoked
+ * with no `try`/`catch` around it: a handler's own throw must reach Laravel so the job fails and
+ * D-03's retry holds, and `complete()` below is never reached for that item.
  *
  * Collaborators are resolved as `handle()` parameters, never constructor-captured properties — the
  * same reason `Sync\SyncHubspotObjectJob` does (see its own docblock): a dispatcher or store captured
@@ -60,8 +71,15 @@ final class ProcessWebhookEventJob implements ShouldQueue
 
     public function __construct(public NormalizedWebhookEvent $event) {}
 
-    public function handle(Dispatcher $events, WebhookEventStore $store, TypedEventMap $typedEvents): void
-    {
+    public function handle(
+        Dispatcher $events,
+        WebhookEventStore $store,
+        TypedEventMap $typedEvents,
+        HandlerMap $handlers,
+        Container $container,
+    ): void {
+        $handlers->validate();
+
         $claim = $store->claim($this->event);
 
         if ($claim !== WebhookEventClaim::Acquired) {
@@ -74,6 +92,17 @@ final class ProcessWebhookEventJob implements ShouldQueue
 
         if ($typedEventClass !== null) {
             $events->dispatch(new $typedEventClass($this->event));
+        }
+
+        foreach ($handlers->resolve($this->event->subscriptionType) as $handlerClass) {
+            // HandlerMap::validate() already proved every configured entry implements
+            // Contracts\WebhookHandler, before this line ever runs -- Larastan's container-make
+            // return-type extension only narrows a LITERAL `Foo::class` argument, not a runtime
+            // class-string variable, so this cast is the honest, already-proven type.
+            /** @var WebhookHandler $handler */
+            $handler = $container->make($handlerClass);
+
+            $handler->handle($this->event);
         }
 
         $store->complete($this->event->eventId);
