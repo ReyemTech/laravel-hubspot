@@ -56,7 +56,19 @@ final class LegacyPrivateAppSetupTest extends TestCase
         self::assertSame(0, $gateway->createCalls);
         self::assertSame(0, $gateway->updateCalls);
 
+        self::assertContains(
+            'HubSpot exposes no subscription-management API for a legacy private app, so this '
+            .'package cannot reconcile subscriptions automatically. Complete these steps in '
+            .'HubSpot: Settings -> Integrations -> Private Apps -> your app -> Webhooks tab.',
+            $lines,
+        );
         self::assertContains('Set the target URL to: https://app.example.com/hubspot/webhook', $lines);
+        self::assertContains(
+            'Set HUBSPOT_CLIENT_SECRET in your .env to the client secret shown on the Auth tab '
+            .'of this app.',
+            $lines,
+        );
+        self::assertContains('Add these subscriptions, one per line, under "Subscriptions":', $lines);
         self::assertContains('- deal.creation', $lines);
         self::assertContains('- contact.propertyChange (property: email)', $lines);
     }

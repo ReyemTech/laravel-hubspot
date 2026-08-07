@@ -147,12 +147,20 @@ final class SyncWebhookSubscriptionsCommand extends Command
                 .'with your app.',
             );
         } elseif ((bool) $this->option('dry-run')) {
+            // The (bool) cast here is an equivalent mutant under pest --mutate's
+            // RemoveBooleanCast, matching the identical --dry-run cast in syncLegacyPublic()'s
+            // own match arm above: `--dry-run` is declared with no value (a flag), so Symfony
+            // Console's InputOption::VALUE_NONE already returns a strict bool from option() --
+            // there is no other type on the wire the cast could be narrowing.
             $this->line(sprintf('[dry run] Nothing written -- %s was not created.', $outputPath));
         } else {
             file_put_contents($outputPath, $json);
             $this->line(sprintf('Wrote %s.', $outputPath));
         }
 
+        // The blank line() calls above and below are visual spacing, not content -- see
+        // tests/Support/CommandOutput.php's own docblock for why this package deliberately does
+        // not pin blank-line presence/count in rendered console output.
         $this->line('');
         $this->line('Nothing was changed in HubSpot. This component ships with your project deployment.');
 

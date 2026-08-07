@@ -44,8 +44,15 @@ final class ProjectWebhookComponent
      * The upper threshold of concurrent HTTP requests HubSpot will make to `targetUrl` --
      * HubSpot's own documented example value, and a reasonable default for a package with no
      * config key asking for a different one.
+     *
+     * A method rather than a class constant: `pest --mutate` reports a mutation on a constant
+     * declaration as UNCOVERED, because a constant has no executed line for coverage to attribute
+     * a test to -- the same reasoning `ServiceProvider::supportedStores()` already applies.
      */
-    private const MAX_CONCURRENT_REQUESTS = 10;
+    private static function maxConcurrentRequests(): int
+    {
+        return 10;
+    }
 
     /**
      * @param  list<WebhookSubscription>  $declarations
@@ -59,7 +66,7 @@ final class ProjectWebhookComponent
             'config' => [
                 'settings' => [
                     'targetUrl' => $targetUrl,
-                    'maxConcurrentRequests' => self::MAX_CONCURRENT_REQUESTS,
+                    'maxConcurrentRequests' => self::maxConcurrentRequests(),
                 ],
                 'subscriptions' => [
                     'crmObjects' => [],

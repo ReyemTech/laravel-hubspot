@@ -71,7 +71,7 @@ final class ProjectWebhookComponentTest extends TestCase
         self::assertSame(0, $gateway->updateCalls);
 
         $jsonPart = self::jsonPartOf($raw);
-        /** @var array{config: array{settings: array{targetUrl: string}, subscriptions: array{legacyCrmObjects: list<array<string, mixed>>}}} $decoded */
+        /** @var array<string, mixed> $decoded */
         $decoded = json_decode($jsonPart, true);
 
         self::assertSame(
@@ -80,13 +80,30 @@ final class ProjectWebhookComponentTest extends TestCase
             'Re-encoding the parsed structure must reproduce the exact printed text -- it is data, not a formatted string that only looks like JSON.',
         );
 
-        self::assertSame('https://app.example.com/hubspot/webhook', $decoded['config']['settings']['targetUrl']);
+        // Full structural equality, not per-field spot checks -- proves every documented key
+        // (uid, type, maxConcurrentRequests, the crmObjects/hubEvents siblings this package never
+        // populates) is present exactly once, not merely that the two fields this test cares most
+        // about happen to be right.
         self::assertSame(
             [
-                ['subscriptionType' => 'deal.creation', 'active' => true],
-                ['subscriptionType' => 'contact.propertyChange', 'propertyName' => 'email', 'active' => true],
+                'uid' => 'webhooks',
+                'type' => 'webhooks',
+                'config' => [
+                    'settings' => [
+                        'targetUrl' => 'https://app.example.com/hubspot/webhook',
+                        'maxConcurrentRequests' => 10,
+                    ],
+                    'subscriptions' => [
+                        'crmObjects' => [],
+                        'legacyCrmObjects' => [
+                            ['subscriptionType' => 'deal.creation', 'active' => true],
+                            ['subscriptionType' => 'contact.propertyChange', 'propertyName' => 'email', 'active' => true],
+                        ],
+                        'hubEvents' => [],
+                    ],
+                ],
             ],
-            $decoded['config']['subscriptions']['legacyCrmObjects'],
+            $decoded,
         );
 
         self::assertContains('Nothing was changed in HubSpot. This component ships with your project deployment.', $lines);
@@ -100,12 +117,32 @@ final class ProjectWebhookComponentTest extends TestCase
         Artisan::call('hubspot:webhooks:sync');
         $lines = CommandOutput::linesOf(Artisan::output());
 
-        $matching = array_values(array_filter(
+        self::assertContains(
+            'No --output given, so nothing was written to disk. Place this file at '
+            .'src/app/webhooks/<name>-hsmeta.json inside your HubSpot project so it deploys '
+            .'with your app.',
             $lines,
-            static fn (string $line): bool => str_contains($line, 'src/app/webhooks/'),
-        ));
+        );
+    }
 
-        self::assertNotSame([], $matching, 'Expected a line naming the project path to place the file at.');
+    public function test_an_empty_output_string_is_treated_as_absent_and_prints_to_stdout(): void
+    {
+        self::project();
+        $this->bindGateway(new FakeWebhookSubscriptionGateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync', ['--output' => '']);
+        $raw = Artisan::output();
+        $lines = CommandOutput::linesOf($raw);
+
+        self::assertSame(Command::SUCCESS, $exitCode);
+        $jsonPart = self::jsonPartOf($raw);
+        self::assertNotNull(json_decode($jsonPart, true), 'An empty --output value must still print the JSON to stdout.');
+        self::assertContains(
+            'No --output given, so nothing was written to disk. Place this file at '
+            .'src/app/webhooks/<name>-hsmeta.json inside your HubSpot project so it deploys '
+            .'with your app.',
+            $lines,
+        );
     }
 
     public function test_with_output_it_writes_the_file_and_names_the_written_path(): void
@@ -124,7 +161,7 @@ final class ProjectWebhookComponentTest extends TestCase
             self::assertFileExists($path);
 
             /** @var array{config: array{subscriptions: array{legacyCrmObjects: list<array<string, mixed>>}}} $decoded */
-            $decoded = json_decode((string) file_get_contents($path), true);
+            $decoded = json_decode((string) file_get_contents($path), true, flags: JSON_THROW_ON_ERROR);
 
             self::assertSame(
                 [
@@ -159,6 +196,30 @@ final class ProjectWebhookComponentTest extends TestCase
     {
         config([
             'hubspot.webhooks.app_model' => 'project',
+            'hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']],
+        ]);
+
+        $gateway = new FakeWebhookSubscriptionGateway;
+        $this->bindGateway($gateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $joined = implode("\n", CommandOutput::linesOf(Artisan::output()));
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertSame(0, $gateway->listCalls);
+        self::assertStringContainsString('HUBSPOT_WEBHOOK_TARGET_URL', $joined);
+    }
+
+    /**
+     * A whitespace-only target URL is not a usable one -- `SyncWebhookSubscriptionsCommand::targetUrl()`
+     * trims before checking emptiness, exactly as `SubscriptionDeclarations` already does for a
+     * whitespace-only event type or property name.
+     */
+    public function test_a_whitespace_only_target_url_fails_the_same_as_an_absent_one(): void
+    {
+        config([
+            'hubspot.webhooks.app_model' => 'project',
+            'hubspot.webhooks.target_url' => '   ',
             'hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']],
         ]);
 

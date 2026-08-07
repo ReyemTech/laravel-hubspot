@@ -48,7 +48,7 @@ final class ManualSetupInstructions
             'HubSpot exposes no subscription-management API for a legacy private app, so this '
                 .'package cannot reconcile subscriptions automatically. Complete these steps in '
                 .'HubSpot: Settings -> Integrations -> Private Apps -> your app -> Webhooks tab.',
-            '',
+            '', // Visual spacing, not content -- see tests/Support/CommandOutput.php's own docblock.
             sprintf('Set the target URL to: %s', $targetUrl),
             'Set HUBSPOT_CLIENT_SECRET in your .env to the client secret shown on the Auth tab '
                 .'of this app.',
@@ -59,7 +59,7 @@ final class ManualSetupInstructions
             $lines[] = self::describe($declaration);
         }
 
-        $lines[] = '';
+        $lines[] = ''; // Visual spacing, not content -- same rationale as the blank entry above.
         $lines[] = 'Nothing was changed in HubSpot. The steps above are yours to perform.';
 
         return $lines;
