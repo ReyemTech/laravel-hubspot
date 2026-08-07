@@ -54,6 +54,28 @@ final class WebhookController
             return new Response('', 401);
         }
 
+        // Receipt needs the durable store: D-01 makes dedupe durable and HOOK-01 requires a
+        // redelivered eventId to be handled exactly once, which nothing can provide without it.
+        // So refuse HERE rather than accepting and failing in the worker.
+        //
+        // 500, emphatically not 204. HubSpot treats 2xx as delivered and never re-sends, so
+        // acknowledging work this deployment cannot perform DESTROYS the event; a 5xx is retried,
+        // and an operator who then enables the feature receives the backlog instead of a silent
+        // hole. Answering "accepted" for something that will fail is the one outcome with no
+        // recovery.
+        //
+        // Placed AFTER verification on purpose: an unauthenticated caller must not be able to
+        // probe whether a deployment has webhooks enabled. An unsigned request gets 401 either way.
+        if ($this->config->get('hubspot.webhooks.enabled') !== true) {
+            Log::error('A HubSpot webhook was rejected because receipt is disabled.', [
+                'error_code' => 'webhooks_disabled',
+                'route' => $request->path(),
+                'fix' => 'Set HUBSPOT_WEBHOOKS=true and run `php artisan migrate`.',
+            ]);
+
+            return new Response('', 500);
+        }
+
         try {
             $events = $this->decodeBatch($request->getContent());
         } catch (InvalidArgumentException $exception) {

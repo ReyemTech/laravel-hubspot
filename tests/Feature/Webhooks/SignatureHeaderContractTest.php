@@ -35,6 +35,9 @@ final class SignatureHeaderContractTest extends TestCase
     protected function defineEnvironment($app): void
     {
         $app['config']->set('hubspot.webhooks.secret', self::SECRET);
+        // Receipt requires the durable store (D-01/HOOK-01), so the endpoint refuses before
+        // acknowledging when it is off. These cases exercise receipt itself, so they enable it.
+        $app['config']->set('hubspot.webhooks.enabled', true);
     }
 
     protected function defineRoutes($router): void
