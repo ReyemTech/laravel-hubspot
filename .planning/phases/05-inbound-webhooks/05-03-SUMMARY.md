@@ -201,22 +201,22 @@ own inbound receipt log -- all three reached from the single dispatch
 ## Task Commits
 
 1. **Task 1: The typed event families and the closed recognition table**
-   - `6ae4a40` (test) -- RED: `TypedEventRoutingTest` (6 of 8 failed against the unwired job)
-   - `74c8d10` (feat) -- GREEN: `TypedEventMap`, the four typed event classes, `WebhookLifecycleTransition`,
+   - `2876a4c` (test) -- RED: `TypedEventRoutingTest` (6 of 8 failed against the unwired job)
+   - `e763362` (feat) -- GREEN: `TypedEventMap`, the four typed event classes, `WebhookLifecycleTransition`,
      `ProcessWebhookEventJob` wiring
 2. **Task 2: The configured handler map, `'*'` included, validated before anything runs**
-   - `45bd57f` (test) -- RED: `HandlerMapTest` and fixture handlers (8 of 8 failed)
-   - `786972b` (feat) -- GREEN: `WebhookHandler`, `HandlerMap`, `ConfigurationException::invalidWebhookHandler()`,
+   - `d6bc1b9` (test) -- RED: `HandlerMapTest` and fixture handlers (8 of 8 failed)
+   - `c281c7e` (feat) -- GREEN: `WebhookHandler`, `HandlerMap`, `ConfigurationException::invalidWebhookHandler()`,
      `config('hubspot.webhooks.handlers')`, `ServiceProvider` binding, job wiring, plus PHPStan
      generics fixes in the new test files
 3. **Task 3: `assertWebhookHandled` on its own inbound receipt log**
-   - `7e3b02a` (test) -- RED: `AssertWebhookHandledTest` (8 of 8 failed, method undefined)
-   - `706978e` (feat) -- GREEN: `WebhookReceiptRecorder`, `WebhookReceiptLog`, `HubspotManager` /
+   - `b1d77d3` (test) -- RED: `AssertWebhookHandledTest` (8 of 8 failed, method undefined)
+   - `115868c` (feat) -- GREEN: `WebhookReceiptRecorder`, `WebhookReceiptLog`, `HubspotManager` /
      `HubspotFake` / `Facades\Hubspot` wiring, `ProcessWebhookEventJob` recording after `complete()`
 
 **Retroactive sweeps (same session, mirroring 05-01/05-02 precedent):**
-- `f678c85` (test) -- coverage gap closure, 99.5% -> 100.0%
-- `9c62e5a` (test) -- mutation gap closure, scoped MSI 88.66% -> 91.84%
+- `028b116` (test) -- coverage gap closure, 99.5% -> 100.0%
+- `1577574` (test) -- mutation gap closure, scoped MSI 88.66% -> 91.84%
 
 **Plan metadata:** this commit (docs: complete plan)
 
@@ -267,7 +267,7 @@ this package will likely reuse again when `Signals` needs the same shape.
 - **Files modified:** `src/Webhooks/ProcessWebhookEventJob.php`, `tests/Feature/Webhooks/TypedEventRoutingTest.php`,
   `tests/Feature/Webhooks/HandlerMapTest.php`
 - **Verification:** `vendor/bin/phpstan analyse` clean at level max.
-- **Committed in:** `74c8d10`, `786972b`
+- **Committed in:** `e763362`, `c281c7e`
 
 **2. [Rule 3 - Blocking] `HubspotFake`'s constructor parameter order**
 - **Found during:** Task 3 (running PHPStan after wiring `$webhookReceipts` into the constructor)
@@ -278,7 +278,7 @@ this package will likely reuse again when `Signals` needs the same shape.
   and updated the one call site (`HubspotManager::fake()`) to match.
 - **Files modified:** `src/Testing/HubspotFake.php`, `src/HubspotManager.php`
 - **Verification:** `vendor/bin/phpstan analyse` clean; full suite green.
-- **Committed in:** `706978e`
+- **Committed in:** `115868c`
 
 ---
 
@@ -316,8 +316,8 @@ only).
 
 ## Self-Check: PASSED
 
-All 22 created files verified present on disk; all 8 task/retroactive-sweep commit hashes (`6ae4a40`,
-`74c8d10`, `45bd57f`, `786972b`, `7e3b02a`, `706978e`, `f678c85`, `9c62e5a`) verified present in
+All 22 created files verified present on disk; all 8 task/retroactive-sweep commit hashes (`2876a4c`,
+`e763362`, `d6bc1b9`, `c281c7e`, `b1d77d3`, `115868c`, `028b116`, `1577574`) verified present in
 `git log --oneline --all`.
 
 ---

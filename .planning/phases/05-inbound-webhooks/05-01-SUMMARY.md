@@ -174,15 +174,15 @@ status mapping and D-15's local-development bypass.**
 ## Task Commits
 
 1. **Task 1: Admit the framework into R4 and the manifest gate, without admitting the SDK**
-   - `ac6c8d3` (test) -- RED: R4 fixture for a framework-typed Webhooks class
-   - `3bf4f27` (feat) -- GREEN: widen R4, add the SDK-rejection guard fixture/test, declare
+   - `58a2928` (test) -- RED: R4 fixture for a framework-typed Webhooks class
+   - `5bbf784` (feat) -- GREEN: widen R4, add the SDK-rejection guard fixture/test, declare
      `illuminate/http`
 2. **Task 2 (tracer): Trace one signed webhook from HTTP to a queued generic event**
-   - `973a95c` (feat) -- single commit per the plan's tracer instructions (real implementation,
+   - `40d71fb` (feat) -- single commit per the plan's tracer instructions (real implementation,
      real `<verify>`)
 3. **Task 3: Complete batch, authentication, malformed-input, and handoff failure behavior**
-   - `42319ec` (feat) -- deterministic status mapping, D-15 bypass, `WebhookBoundaryTest.php`
-   - `b2f67d8` (test) -- retroactive coverage/mutation gap closure (Rule 2, see Deviations)
+   - `b755d39` (feat) -- deterministic status mapping, D-15 bypass, `WebhookBoundaryTest.php`
+   - `334e9a0` (test) -- retroactive coverage/mutation gap closure (Rule 2, see Deviations)
 
 **Plan metadata:** this commit (docs: complete plan)
 
@@ -243,7 +243,7 @@ status mapping and D-15's local-development bypass.**
   `tests/Arch/ResolverSeamTest.php`
 - **Verification:** Non-vacuity re-proven by hand after the fix (temporarily re-admitting the SDK
   to R4, watching the guard fail, reverting); full arch suite green.
-- **Committed in:** `973a95c` (Task 2 commit)
+- **Committed in:** `40d71fb` (Task 2 commit)
 
 **2. [Rule 2 - Missing Critical] `ConfigurationException::missingWebhookSecret()` and the
    WebhookGateway secret guard**
@@ -256,7 +256,7 @@ status mapping and D-15's local-development bypass.**
 - **Files modified:** `src/Exceptions/ConfigurationException.php`, `src/Gateway/WebhookGateway.php`
 - **Verification:** `tests/Unit/Gateway/WebhookGatewayTest.php` (added in the Task 3 follow-up
   commit after a coverage sweep found the guard itself was never exercised -- see Issue below).
-- **Committed in:** `973a95c` (guard), `b2f67d8` (test)
+- **Committed in:** `40d71fb` (guard), `334e9a0` (test)
 
 **3. [Rule 3 - Blocking] `illuminate/routing` undeclared once `Illuminate\Routing\Route` appeared**
 - **Found during:** Task 2 (running `tests/Ci/ComposerManifestTest.php` after writing
@@ -267,7 +267,7 @@ status mapping and D-15's local-development bypass.**
   `composer update illuminate/routing` confirmed it installs nothing new.
 - **Files modified:** `composer.json`
 - **Verification:** `tests/Ci/ComposerManifestTest.php` green; `composer validate --strict` passes.
-- **Committed in:** `973a95c` (Task 2 commit)
+- **Committed in:** `40d71fb` (Task 2 commit)
 
 ---
 
@@ -298,10 +298,10 @@ correctness, security, or the manifest gate. No scope creep.
   test (watched fail, confirmed the framework class named in the failure message) before its GREEN
   commit, per `tdd="true"`. Task 2 is a `type="tracer"` task, which the plan explicitly commits as
   one commit rather than RED/GREEN. **Task 3 (`tdd="true"`, `type="auto"`) was written and
-  committed as a single commit (`42319ec`)**, with implementation and its covering tests authored
+  committed as a single commit (`b755d39`)**, with implementation and its covering tests authored
   together rather than the test committed first, watched red, then implemented. This was caught
   only in retrospect while preparing this SUMMARY. To recover some of the evidence TDD sequencing
-  is meant to provide, the pre-Task-3 `WebhookController.php` (from commit `973a95c`) was restored
+  is meant to provide, the pre-Task-3 `WebhookController.php` (from commit `40d71fb`) was restored
   to the working tree after the fact and `InboundWebhookFailureTest.php` /
   `WebhookGatewayTest.php` were re-run against it: 5 of 16 tests failed for the expected reasons
   (D-15 bypass and its safe-logging assertions had no code to satisfy them yet), confirming those
@@ -311,12 +311,12 @@ correctness, security, or the manifest gate. No scope creep.
 
 ## TDD Gate Compliance
 
-- **Task 1** (`tdd="true"`): RED (`ac6c8d3`) precedes GREEN (`3bf4f27`) in `git log` — compliant.
-- **Task 2** (`type="tracer"`, `tdd="true"`): single commit (`973a95c`) per the plan's explicit
+- **Task 1** (`tdd="true"`): RED (`58a2928`) precedes GREEN (`5bbf784`) in `git log` — compliant.
+- **Task 2** (`type="tracer"`, `tdd="true"`): single commit (`40d71fb`) per the plan's explicit
   tracer-task instruction (commit exactly like `type="auto"`, no RED/GREEN split required) —
   compliant with the tracer exception.
 - **Task 3** (`tdd="true"`, `type="auto"`): **non-compliant.** Implementation and its tests were
-  authored together and landed in one commit (`42319ec`) rather than a RED test commit preceding a
+  authored together and landed in one commit (`b755d39`) rather than a RED test commit preceding a
   GREEN implementation commit. See "Issues Encountered" above for the retroactive non-vacuity check
   performed to partially recover the evidence this discipline exists to provide.
 
@@ -343,8 +343,8 @@ documented env var from Phase 1's `config/hubspot.php`.
 
 ## Self-Check: PASSED
 
-All 14 created files verified present on disk; all 5 task/deviation commit hashes (`ac6c8d3`,
-`3bf4f27`, `973a95c`, `42319ec`, `b2f67d8`) verified present in `git log --oneline --all`.
+All 14 created files verified present on disk; all 5 task/deviation commit hashes (`58a2928`,
+`5bbf784`, `40d71fb`, `b755d39`, `334e9a0`) verified present in `git log --oneline --all`.
 
 ---
 *Phase: 05-inbound-webhooks*

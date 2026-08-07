@@ -223,24 +223,24 @@ distinct from every other credential this package holds.**
 ## Task Commits
 
 1. **Task 1: The Gateway subscription port and its SDK adapter**
-   - `19ec193` (test) -- RED: `WebhookSubscriptionTest`, `WebhookSubscriptionGatewayTest`,
+   - `7f0bc49` (test) -- RED: `WebhookSubscriptionTest`, `WebhookSubscriptionGatewayTest`,
      `HubspotClientFactoryTest` additions (21 of 21 new tests failed against the unwired classes)
-   - `7424cf2` (feat) -- GREEN: `WebhookSubscription`, `WebhookSubscriptionGatewayContract`,
+   - `ebefc1b` (feat) -- GREEN: `WebhookSubscription`, `WebhookSubscriptionGatewayContract`,
      `WebhookSubscriptionGateway`, `HubspotClientFactory::forWebhookManagement()`,
      `ExceptionTranslator` webhooks-namespace branch, `SdkSurfaceTest` boundary registration
-   - `8e61bc6` (test) -- same-session mutation gap closure on `WebhookSubscriptionGateway`,
+   - `dd9df3f` (test) -- same-session mutation gap closure on `WebhookSubscriptionGateway`,
      82.5% -> 95.83% scoped MSI
 2. **Task 2: Desired-state declarations, the app-model enum, and credential redaction**
-   - `858a271` (test) -- RED: `AppModelTest`, `SubscriptionDeclarationsTest` (18 of 18 failed --
+   - `b9c0191` (test) -- RED: `AppModelTest`, `SubscriptionDeclarationsTest` (18 of 18 failed --
      target classes did not exist)
-   - `ce4a928` (feat) -- GREEN: `AppModel`, `SubscriptionDeclarations`, the two new
+   - `faf41e3` (feat) -- GREEN: `AppModel`, `SubscriptionDeclarations`, the two new
      `ConfigurationException` factories, `config/hubspot.php`'s five new keys,
      `ServiceProvider`'s redaction-resolver update, `SecretLoggingTest`'s reconciled key list
 3. **Task 3: `hubspot:webhooks:sync` -- non-destructive reconciliation with `--dry-run`**
-   - `c55a1b3` (test) -- RED: `SyncWebhookSubscriptionsCommandTest`,
+   - `61fd243` (test) -- RED: `SyncWebhookSubscriptionsCommandTest`,
      `FakeWebhookSubscriptionGateway`, `ThrowingWebhookSubscriptionGateway` (12 of 12 failed --
      command not registered)
-   - `f6affe4` (feat) -- GREEN: `SyncWebhookSubscriptionsCommand`, the
+   - `60370a0` (feat) -- GREEN: `SyncWebhookSubscriptionsCommand`, the
      `WebhookSubscriptionGatewayContract` binding closure and `consoleCommands()` registration in
      `ServiceProvider`
 
@@ -298,7 +298,7 @@ registration**
 - **Files modified:** `tests/Arch/SdkSurfaceTest.php`
 - **Verification:** `tests/Arch/SdkSurfaceTest.php` passes; the new entry is exercised by the
   existing "boundary-safe return shapes" test.
-- **Committed in:** `7424cf2`
+- **Committed in:** `ebefc1b`
 
 **2. [Rule 2 - Missing critical functionality] `ServiceProviderBindingsTest` coverage for the new
 binding closure**
@@ -315,7 +315,7 @@ binding closure**
   `ConfigurationException`).
 - **Files modified:** `tests/Feature/Gateway/ServiceProviderBindingsTest.php`
 - **Verification:** `--coverage --min=100` passes at 100.0% for `ServiceProvider`.
-- **Committed in:** `f6affe4`
+- **Committed in:** `60370a0`
 
 **3. [Rule 1 - Bug] Test bug: comparing two runs that were not actually unchanged**
 - **Found during:** Task 3, first run of `SyncWebhookSubscriptionsCommandTest`
@@ -330,7 +330,7 @@ binding closure**
 - **Files modified:** `tests/Feature/Webhooks/SyncWebhookSubscriptionsCommandTest.php`
 - **Verification:** the rewritten test passes and asserts byte-identical output plus zero writes
   on both runs, not just the second.
-- **Committed in:** `f6affe4`
+- **Committed in:** `60370a0`
 
 ---
 
@@ -381,8 +381,8 @@ to set `HUBSPOT_WEBHOOK_APP_MODEL=legacy_public`, `HUBSPOT_WEBHOOK_APP_ID`, and
 
 ## Self-Check: PASSED
 
-All 13 created files verified present on disk; all 7 task/mutation-sweep commit hashes (`19ec193`,
-`7424cf2`, `8e61bc6`, `858a271`, `ce4a928`, `c55a1b3`, `f6affe4`) verified present in
+All 13 created files verified present on disk; all 7 task/mutation-sweep commit hashes (`7f0bc49`,
+`ebefc1b`, `dd9df3f`, `b9c0191`, `faf41e3`, `61fd243`, `60370a0`) verified present in
 `git log --oneline --all`.
 
 ---

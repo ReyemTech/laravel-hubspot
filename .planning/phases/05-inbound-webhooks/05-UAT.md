@@ -20,7 +20,7 @@ updated: 2026-08-07
 ### 1. Cold Start Smoke Test (zero-migration install)
 expected: From a clean clone with no credentials and no network — `composer install` succeeds, the suite runs, and a consuming app's `php artisan migrate` creates no `hubspot_webhook_events` table until `HUBSPOT_WEBHOOKS=true`. Enabling without migrating raises a directed ConfigurationException naming `php artisan migrate`, not a raw SQLSTATE.
 result: pass
-resolved_by: 9787ab9
+resolved_by: 75161c2
 reported: "Initially FAILED. Executed on a real cold clone in a sandbox rather than by inspection: the zero-migration half passed fully; the fresh-install half failed — a bare `vendor/bin/pest` on a clean clone exited 2 with `Allowed memory size of 134217728 bytes exhausted` inside the R9 strict_types arch scan. Fixed inline and re-verified bare on the same cold clone (exit 0, 1070 passed)."
 severity: major
 executed_by: automated sandbox run, 2026-08-07
@@ -41,8 +41,8 @@ identical `vendor/`:
 
 | Commit | `vendor/bin/pest` (bare, as a new contributor types it) |
 |---|---|
-| `cd9c4d7` (immediately pre-Phase 5) | exit 0 — 898 passed |
-| Phase 5 HEAD (`30666ff`) | exit 2 — `Allowed memory size of 134217728 bytes exhausted` |
+| `55303c5` (immediately pre-Phase 5) | exit 0 — 898 passed |
+| Phase 5 HEAD (`33c8f50`) | exit 2 — `Allowed memory size of 134217728 bytes exhausted` |
 
 Phase 5 grew the suite past PHP's default 128M `memory_limit`. `phpunit.xml.dist` declares no
 `memory_limit`, so the failure lands on every fresh clone. It does NOT affect the shipped library's
@@ -319,10 +319,10 @@ skipped: 0
 - gap_id: G-05-1
   truth: "A fresh clone runs `composer install` then `vendor/bin/pest` green, with no credentials and no network (FOUND-01 acceptance criterion 4)."
   status: resolved
-  resolved_by: 9787ab9
+  resolved_by: 75161c2
   resolved_at: 2026-08-07
   resolution: "phpunit.xml.dist now declares <ini name=\"memory_limit\" value=\"512M\"/>. Re-verified BARE on the same cold clone: exit 0, 1070 passed. Measured floor is between 128M and 160M; 512M is headroom for the four remaining phases that add to the same whole-tree scan."
-  reason: "Bare `vendor/bin/pest` exits 2 on a clean clone: Allowed memory size of 134217728 bytes exhausted, inside the R9 strict_types arch scan. Bisected in a sandbox with identical vendor/: cd9c4d7 (pre-Phase 5) exits 0 with 898 passed; Phase 5 HEAD exits 2. Phase 5 grew the suite past PHP's default 128M and phpunit.xml.dist declares no memory_limit."
+  reason: "Bare `vendor/bin/pest` exits 2 on a clean clone: Allowed memory size of 134217728 bytes exhausted, inside the R9 strict_types arch scan. Bisected in a sandbox with identical vendor/: 55303c5 (pre-Phase 5) exits 0 with 898 passed; Phase 5 HEAD exits 2. Phase 5 grew the suite past PHP's default 128M and phpunit.xml.dist declares no memory_limit."
   severity: major
   test: 1
   artifacts:
@@ -340,7 +340,7 @@ Sweeping for the class of the defect (per CLAUDE.md) turned up a second gate wit
 `PHPStan process crashed because it reached configured PHP memory limit: 128M`, and
 `phpstan.neon` declares no `memoryLimit`.
 
-It is **pre-existing, not a Phase 5 regression** — bisected on the same cold clone, `cd9c4d7`
+It is **pre-existing, not a Phase 5 regression** — bisected on the same cold clone, `55303c5`
 fails identically (exit 1). It therefore does not belong to G-05-1 and does not block this
 phase's UAT. FOUND-01 criterion 4 names `vendor/bin/pest`, `pnpm test` and `pnpm build`
 specifically, not phpstan, so the Phase 1 contract is satisfied by the fix above.

@@ -218,19 +218,19 @@ command.**
    - Resolved by the human before this executor was spawned (`checkpoint:decision`, `option-a`). No
      commit of its own -- the decision is implemented across Task 2's commits.
 2. **Task 2: Feature-gate the store, ship the migration, and build the durable claim**
-   - `53dbfea` (test) -- RED: `WebhookEventStoreTest`, `ServiceProviderWebhookStoreTest`, T-05-11's
+   - `ac88021` (test) -- RED: `WebhookEventStoreTest`, `ServiceProviderWebhookStoreTest`, T-05-11's
      length-guard tests
-   - `8f6566f` (feat) -- GREEN: config keys, `ConfigurationException::missingWebhookEventsTable()`,
+   - `981aa00` (feat) -- GREEN: config keys, `ConfigurationException::missingWebhookEventsTable()`,
      `WebhookEventClaim`, `WebhookEventStore` contract, `DatabaseWebhookEventStore`, the migration,
      `ServiceProvider` wiring, `NormalizedWebhookEvent::MAX_EVENT_ID_LENGTH`
 3. **Task 3: Wire claim → dispatch → complete into the job, and ship the prune command**
-   - `2fb6ed3` (test) -- RED: `WebhookDedupeTest`, `PruneWebhookEventsCommandTest`
-   - `a198c4b` (feat) -- GREEN: `ProcessWebhookEventJob` claim/dispatch/complete,
+   - `1ff04b1` (test) -- RED: `WebhookDedupeTest`, `PruneWebhookEventsCommandTest`
+   - `dfae6fa` (feat) -- GREEN: `ProcessWebhookEventJob` claim/dispatch/complete,
      `PruneWebhookEventsCommand`, `ServiceProvider::consoleCommands()`, plus a Rule 1 fix to
      `InboundWebhookTracerTest` (see Deviations)
-   - `36b39e6` (test) -- retroactive mutation-gap closure on `DatabaseWebhookEventStore` (see
+   - `d420b98` (test) -- retroactive mutation-gap closure on `DatabaseWebhookEventStore` (see
      Deviations)
-   - `31cbc9b` (test) -- fixed a factory-vs-factory message assertion (see Deviations)
+   - `9dcfd9d` (test) -- fixed a factory-vs-factory message assertion (see Deviations)
 
 **Plan metadata:** this commit (docs: complete plan)
 
@@ -302,7 +302,7 @@ command.**
   `tests/Unit/Webhooks/NormalizedWebhookEventTest.php`
 - **Verification:** `test_it_accepts_an_event_id_at_exactly_the_column_width`,
   `test_it_rejects_an_event_id_exceeding_the_column_width`
-- **Committed in:** `53dbfea` (RED), `8f6566f` (GREEN)
+- **Committed in:** `ac88021` (RED), `981aa00` (GREEN)
 
 **2. [Rule 1 - Bug] `InboundWebhookTracerTest` needed `hubspot.webhooks.enabled` and a migration**
 - **Found during:** Task 3 (running the full `tests/Feature/Webhooks` suite after wiring the claim
@@ -318,7 +318,7 @@ command.**
 - **Files modified:** `tests/Feature/Webhooks/InboundWebhookTracerTest.php`
 - **Verification:** All three tests in the file pass; full `tests/Feature/Webhooks` suite green (36
   tests).
-- **Committed in:** `a198c4b` (Task 3 GREEN commit)
+- **Committed in:** `dfae6fa` (Task 3 GREEN commit)
 
 **3. [Rule 3 - Blocking] `ServiceProviderWebhookStoreTest.php` added as a new, isolated test file**
 - **Found during:** Task 2 (writing the off-by-default acceptance behavior)
@@ -333,7 +333,7 @@ command.**
   `hubspot_webhook_events` table against the unmodified default environment.
 - **Files modified:** `tests/Feature/ServiceProviderWebhookStoreTest.php` (new)
 - **Verification:** `test_a_default_install_registers_no_webhook_migration_path_and_migrate_creates_no_table`
-- **Committed in:** `53dbfea` (RED), `8f6566f` (GREEN)
+- **Committed in:** `ac88021` (RED), `981aa00` (GREEN)
 
 **4. [Rule 1 - Bug] Two message assertions compared a factory's output against itself**
 - **Found during:** Task 3 follow-up (retroactive mutation sweep)
@@ -349,7 +349,7 @@ command.**
 - **Verification:** Re-ran `pest --mutate --class=ReyemTech\Hubspot\Exceptions\
   ConfigurationException`; the three survivors on `missingWebhookEventsTable()`'s own message are
   gone (the remaining survivors are all pre-existing 05-01 methods, out of this plan's scope).
-- **Committed in:** `31cbc9b`
+- **Committed in:** `9dcfd9d`
 
 ---
 
@@ -371,9 +371,9 @@ correctness, testability, or a genuinely catchable mutation gap. No scope creep.
 
 ## TDD Gate Compliance
 
-- **Task 2** (`tdd="true"`): RED (`53dbfea`) precedes GREEN (`8f6566f`) in `git log` -- compliant.
-- **Task 3** (`tdd="true"`): RED (`2fb6ed3`) precedes GREEN (`a198c4b`) in `git log` -- compliant.
-  Two follow-up `test(...)` commits (`36b39e6`, `31cbc9b`) land after GREEN as retroactive
+- **Task 2** (`tdd="true"`): RED (`ac88021`) precedes GREEN (`981aa00`) in `git log` -- compliant.
+- **Task 3** (`tdd="true"`): RED (`1ff04b1`) precedes GREEN (`dfae6fa`) in `git log` -- compliant.
+  Two follow-up `test(...)` commits (`d420b98`, `9dcfd9d`) land after GREEN as retroactive
   mutation-gap and assertion-quality fixes, mirroring 05-01's own same-session pattern; they do not
   reopen the RED/GREEN sequence, they strengthen it.
 
@@ -402,8 +402,8 @@ None -- no external service configuration required. `HUBSPOT_WEBHOOKS`,
 
 ## Self-Check: PASSED
 
-All 9 created files verified present on disk; all 6 task/deviation commit hashes (`53dbfea`,
-`8f6566f`, `2fb6ed3`, `a198c4b`, `36b39e6`, `31cbc9b`) verified present in `git log --oneline --all`.
+All 9 created files verified present on disk; all 6 task/deviation commit hashes (`ac88021`,
+`981aa00`, `1ff04b1`, `dfae6fa`, `d420b98`, `9dcfd9d`) verified present in `git log --oneline --all`.
 
 ---
 *Phase: 05-inbound-webhooks*

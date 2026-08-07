@@ -186,7 +186,7 @@ No orphaned requirements found for Phase 5 in `REQUIREMENTS.md`.
 ## Known Context — confirmed, not new findings
 
 - **TDD gap, 05-01 Task 3.** Confirmed present in `05-01-SUMMARY.md:297-320`: implementation and its
-  tests landed in one commit (`42319ec`) rather than RED-then-GREEN, self-reported with a retroactive
+  tests landed in one commit (`b755d39`) rather than RED-then-GREEN, self-reported with a retroactive
   non-vacuity check. **Assessment: no unverified behavior remains.** The behavior Task 3 shipped
   (batching, authentication, malformed-input, handoff-failure mapping) is exhaustively covered by
   `InboundWebhookFailureTest`'s 13 tests, all of which I confirmed pass both in the full suite and

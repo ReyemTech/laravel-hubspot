@@ -200,19 +200,19 @@ request or presenting local rendering as an applied remote change.**
 ## Task Commits
 
 1. **Task 1: Legacy private apps -- validated, rendered manual setup instructions**
-   - `851ad90` (test) -- RED: `LegacyPrivateAppSetupTest` (6 of 6 tests failed against the
+   - `4f456ee` (test) -- RED: `LegacyPrivateAppSetupTest` (6 of 6 tests failed against the
      unfixed command -- `legacy_private` still routed to the not-yet-implemented branch)
-   - `604f5f0` (feat) -- GREEN: `ManualSetupInstructions`,
+   - `c986b61` (feat) -- GREEN: `ManualSetupInstructions`,
      `ConfigurationException::missingWebhookTargetUrl()`, the command's `legacyPrivate()` branch
      and `targetUrl()` helper; removed `SyncWebhookSubscriptionsCommandTest`'s now-stale
      `legacy_private` not-yet-implemented test (Rule 1 deviation)
 2. **Task 2: Project-based apps -- the exportable webhook component**
-   - `d508609` (test) -- RED: `ProjectWebhookComponentTest` (6 of 6 tests failed -- the class did
+   - `55268a9` (test) -- RED: `ProjectWebhookComponentTest` (6 of 6 tests failed -- the class did
      not exist, `--output` was not a registered option, `project` still routed to
      not-yet-implemented)
-   - `eb17b3e` (feat) -- GREEN: `ProjectWebhookComponent`, the `--output=` option, the command's
+   - `18e5d87` (feat) -- GREEN: `ProjectWebhookComponent`, the `--output=` option, the command's
      `project()` branch; removed the analogous stale `project` not-yet-implemented test
-   - `e87d088` (test) -- same-session mutation gap closure: exact-line assertions replacing
+   - `6c1d4a0` (test) -- same-session mutation gap closure: exact-line assertions replacing
      substring checks, a whitespace-only-target-URL test, an empty-`--output`-value test, and
      `ProjectWebhookComponent::maxConcurrentRequests()` becoming a method (not a class constant) so
      `pest --mutate` can attribute a covering test to it -- scoped MSI 83.70% -> 85.91%
@@ -257,7 +257,7 @@ not-yet-implemented tests**
 - **Files modified:** `tests/Feature/Webhooks/SyncWebhookSubscriptionsCommandTest.php`
 - **Verification:** the full `tests/Feature/Webhooks/` suite passes; `--coverage --min=100` holds
   at 100.0%.
-- **Committed in:** `604f5f0` (legacy_private), `eb17b3e` (project)
+- **Committed in:** `c986b61` (legacy_private), `18e5d87` (project)
 
 **2. [Rule 2 - Missing critical functionality] `ProjectWebhookComponent::maxConcurrentRequests()`
 as a method, not a class constant**
@@ -271,7 +271,7 @@ as a method, not a class constant**
 - **Files modified:** `src/Webhooks/ProjectWebhookComponent.php`
 - **Verification:** the mutation re-run shows no further survivor on that line; `--coverage
   --min=100` and the full test suite stay green.
-- **Committed in:** `e87d088`
+- **Committed in:** `6c1d4a0`
 
 ---
 
@@ -318,8 +318,8 @@ stdout.
 
 ## Self-Check: PASSED
 
-All 4 created files verified present on disk; all 5 task commit hashes (`851ad90`, `604f5f0`,
-`d508609`, `eb17b3e`, `e87d088`) verified present in `git log --oneline --all`.
+All 4 created files verified present on disk; all 5 task commit hashes (`4f456ee`, `c986b61`,
+`55268a9`, `18e5d87`, `6c1d4a0`) verified present in `git log --oneline --all`.
 
 ---
 *Phase: 05-inbound-webhooks*

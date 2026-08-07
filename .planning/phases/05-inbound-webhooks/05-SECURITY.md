@@ -106,8 +106,8 @@ half had shipped — verified absent by grep and by `git log -p` over the file's
 other three open items (T-05-10, T-05-26, T-05-27) were `accept` dispositions with no accepted-risk
 log to verify against, since no phase SECURITY.md existed yet.
 
-**Remediation:** `7a756f4` (RED — asserts the announcement exists *and* precedes the first write),
-`73395e5` (GREEN). The three `accept` items are closed by AR-01…AR-03 above.
+**Remediation:** `a407a3f` (RED — asserts the announcement exists *and* precedes the first write),
+`6cde668` (GREEN). The three `accept` items are closed by AR-01…AR-03 above.
 
 **Not re-litigated:** the auditor independently re-executed the R4 SDK-boundary guard, the stale-claim
 lease-recovery test, and R10 secret-logging rather than trusting SUMMARY claims. Phase gates after
