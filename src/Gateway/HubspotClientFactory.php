@@ -119,6 +119,19 @@ final class HubspotClientFactory
             throw ConfigurationException::missingWebhookManagementCredentials();
         }
 
+        // A canonical positive integer, checked as a STRING before anything casts it. The caller
+        // ends up doing `(int) $appId` to reach the subscriptions endpoint, and PHP's cast is
+        // lossy in exactly the way that matters here: `(int) "123abc"` is 123, a different app
+        // that really exists. Since `hubspot:webhooks:sync` reconciles APP-LEVEL subscriptions,
+        // that silently rewrites subscriptions for every account the wrong app is installed on --
+        // so a typo has to fail loudly rather than land somewhere plausible (T-05-17).
+        //
+        // `ctype_digit` alone would admit "0" and "0123"; neither is an app id HubSpot issues, and
+        // both indicate a mis-set variable rather than a value worth guessing at.
+        if (! ctype_digit($appId) || $appId[0] === '0') {
+            throw ConfigurationException::malformedWebhookAppId($appId);
+        }
+
         return new self(Factory::createWithDeveloperApiKey($developerApiKey));
     }
 

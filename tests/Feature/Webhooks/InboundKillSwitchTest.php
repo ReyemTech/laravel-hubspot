@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 
 use DateTimeImmutable;
-use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Event;
 use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
 use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
 use ReyemTech\Hubspot\Webhooks\ProcessWebhookEventJob;
@@ -110,7 +110,7 @@ final class InboundKillSwitchTest extends TestCase
     }
 }
 
-final class KillSwitchSpyHandler implements \ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler
+final class KillSwitchSpyHandler implements WebhookHandler
 {
     public static int $calls = 0;
 

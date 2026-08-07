@@ -232,10 +232,14 @@ final class ServiceProvider extends BaseServiceProvider
             /** @var int $claimLease */
             $claimLease = $config->get('hubspot.webhooks.claim_lease');
 
+            /** @var bool $featureEnabled */
+            $featureEnabled = $config->get('hubspot.webhooks.enabled');
+
             return new DatabaseWebhookEventStore(
                 $app->make(DatabaseManager::class)->connection(),
                 $auditPayload,
                 $claimLease,
+                $featureEnabled,
             );
         });
 

@@ -55,6 +55,10 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         private readonly Connection $connection,
         private readonly bool $auditPayload,
         private readonly int $claimLeaseSeconds,
+        // Carried only so the missing-table error can describe the state the operator is actually
+        // in. The store does not gate on it -- ServiceProvider decides whether this store is
+        // reachable at all; by the time a query runs, the answer here only shapes the diagnosis.
+        private readonly bool $featureEnabled = true,
     ) {}
 
     public function claim(NormalizedWebhookEvent $event): WebhookEventClaim
@@ -236,7 +240,7 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
                 throw $exception;
             }
 
-            throw ConfigurationException::missingWebhookEventsTable();
+            throw ConfigurationException::missingWebhookEventsTable($this->featureEnabled);
         }
     }
 }

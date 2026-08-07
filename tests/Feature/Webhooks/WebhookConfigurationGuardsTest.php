@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 
 use DateTimeImmutable;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Tests\TestCase;
@@ -68,7 +69,7 @@ final class WebhookConfigurationGuardsTest extends TestCase
      *
      * @param  non-empty-string  $appId
      */
-    #[\PHPUnit\Framework\Attributes\DataProvider('malformedAppIds')]
+    #[DataProvider('malformedAppIds')]
     public function test_a_malformed_app_id_is_refused_rather_than_coerced(string $appId): void
     {
         $this->expectException(ConfigurationException::class);
@@ -82,16 +83,16 @@ final class WebhookConfigurationGuardsTest extends TestCase
     public static function malformedAppIds(): array
     {
         return [
-            'trailing letters'  => ['123abc'],
-            'leading letters'   => ['abc123'],
-            'inner space'       => ['12 34'],
-            'leading plus'      => ['+123'],
-            'negative'          => ['-123'],
-            'zero'              => ['0'],
-            'decimal'           => ['123.4'],
-            'leading zero'      => ['0123'],
+            'trailing letters' => ['123abc'],
+            'leading letters' => ['abc123'],
+            'inner space' => ['12 34'],
+            'leading plus' => ['+123'],
+            'negative' => ['-123'],
+            'zero' => ['0'],
+            'decimal' => ['123.4'],
+            'leading zero' => ['0123'],
             'whitespace padded' => [' 123 '],
-            'hex'               => ['0x7b'],
+            'hex' => ['0x7b'],
         ];
     }
 

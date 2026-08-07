@@ -9,6 +9,7 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Facades\Config;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
@@ -86,6 +87,20 @@ final class ProcessWebhookEventJob implements ShouldQueue
         Container $container,
         WebhookReceiptRecorder $receipts,
     ): void {
+        // The inbound half of `hubspot.disabled`, which config/hubspot.php writes as governing BOTH
+        // directions. Checked HERE, on the worker, and not only at dispatch: that is what stops
+        // items already sitting on the queue when the switch was thrown, exactly as
+        // `Sync\SyncGate` does for the outbound half. The same documented limit applies -- a
+        // `queue:work` daemon keeps the config it booted with, so flipping this still needs
+        // `php artisan queue:restart`.
+        //
+        // Returns BEFORE the claim, deliberately. A disabled package must leave no trace: taking a
+        // claim and then discarding the item would dedupe a redelivery against work nothing ever
+        // did, so re-enabling the switch would silently skip everything HubSpot retried meanwhile.
+        if (Config::get('hubspot.disabled') === true) {
+            return;
+        }
+
         $handlers->validate();
 
         $claim = $store->claim($this->event);

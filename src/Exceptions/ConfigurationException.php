@@ -240,13 +240,51 @@ final class ConfigurationException extends LogicException implements HubspotExce
      * table, name `php artisan migrate`, and pre-empt the publish question, because every other
      * Laravel package that ships a migration expects `vendor:publish` first and this one does not.
      */
-    public static function missingWebhookEventsTable(): self
+    public static function missingWebhookEventsTable(bool $featureEnabled = true): self
     {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis. This used to assert "HUBSPOT_WEBHOOKS is true" unconditionally -- which on
+        // a default install was simply false, and sent the reader to verify a setting that was
+        // already correct while the actual cause (the flag being OFF) went unmentioned.
+        if (! $featureEnabled) {
+            return new self(
+                'Receiving webhooks requires HUBSPOT_WEBHOOKS=true, and it is currently false. The '
+                .'"hubspot_webhook_events" table is how a redelivered eventId is handled exactly '
+                .'once, so receipt cannot run without it. Set HUBSPOT_WEBHOOKS=true and run `php '
+                .'artisan migrate` (+ `php artisan config:cache` if you cache config). Nothing '
+                .'needs publishing first: this package loads its own migrations whenever '
+                .'HUBSPOT_WEBHOOKS=true.',
+            );
+        }
+
         return new self(
             'HUBSPOT_WEBHOOKS is true but the "hubspot_webhook_events" table does not exist. Run '
             .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
             .'loads its own migrations whenever HUBSPOT_WEBHOOKS=true.',
         );
+    }
+
+    /**
+     * `hubspot.webhooks.app_id` is set but is not a canonical positive integer. Raised by
+     * `Gateway\HubspotClientFactory::forWebhookManagement()` -- named as a PATH, not as a
+     * `{@see}`, because pint's fully_qualified_strict_types rule rewrites a docblock class
+     * reference into a real `use` statement and this layer must not import Gateway (the same
+     * reason `Sync\SyncGate` records for its own docblock) -- before any
+     * client exists, because the value is later cast with `(int)` to address the subscriptions
+     * endpoint and that cast is lossy: `"123abc"` becomes `123`, an app that exists and is not
+     * yours. Reconciliation is app-level, so the blast radius is every account with that app
+     * installed (T-05-17).
+     */
+    public static function malformedWebhookAppId(string $appId): self
+    {
+        return new self(sprintf(
+            'HUBSPOT_WEBHOOK_APP_ID must be a HubSpot app id -- digits only, no leading zero -- '
+            .'but is "%s". It is not guessed at or coerced: a value like "123abc" would otherwise '
+            .'become app 123 and reconcile THAT app\'s subscriptions, for every account it is '
+            .'installed on. Find the numeric id on the app\'s "Auth" tab in your HubSpot developer '
+            .'account.',
+            $appId,
+        ));
     }
 
     /**
