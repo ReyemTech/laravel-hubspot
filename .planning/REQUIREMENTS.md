@@ -518,6 +518,18 @@ REL-02.
     `/gsd-plan-phase`. Still absent after the 2026-07-26 spec review; do not invent criteria at
     roadmap level.
 
+  - **Runtime half shipped 2026-08-07 (05-04); still open pending 05-05.** `05-04-PLAN.md` derived
+    HOOK-02's acceptance criteria from D-10 through D-12 and D-16 and pinned each with a test
+    (`05-04-SUMMARY.md`). Delivered: `Gateway\WebhookSubscriptionGatewayContract` (list/create/update
+    only, no delete — D-11), `Gateway\WebhookSubscriptionGateway`, a management client authenticated
+    with a Developer API key rather than the CRM token (D-16), `Webhooks\AppModel` (the three D-16 app
+    types, no default), `Webhooks\SubscriptionDeclarations` (`hubspot.webhooks.subscriptions`,
+    validated at read time, never at boot — D-12), and `hubspot:webhooks:sync --dry-run` reconciling
+    `legacy_public` apps only. `legacy_private` and `project` app models fail with a directed message
+    rather than a silent no-op. **05-05 owns the remainder**: legacy-private manual setup instructions
+    and the project-based webhook component export, per D-16's app-model matrix. The checkbox stays
+    unchecked until 05-05 closes both.
+
 - [x] **HOOK-03**: Optional `hubspot_webhook_events` audit table
   — `REQ-webhook-audit-trail` (core spec §8)
 
@@ -884,7 +896,7 @@ Deferred. Tracked but not in the current roadmap.
 | SYNC-04 | Phase 4 | **Complete 2026-08-01 (04-06).** Three DISTINCT Eloquent events drive the policy table -- `trashed`, `forceDeleted`, and `deleted` gated on the ABSENCE of `SoftDeletes` -- because `deleted` fires identically for a soft delete and a `forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()` implementation archives twice. D-21: `hard_delete => 'warn'` SKIPS exactly as `guard` does and differs only in log level; only `allow` archives. `restored` flags the link row stale and never nulls `hubspot_id`; `on_restore => 'recreate'` is the opt-in that forks CRM history. A property-push job arriving with its model trashed returns without pushing |
 | SYNC-05 | Phase 4 | **Complete 2026-08-02 (04-07).** `withoutSyncing()`, `HUBSPOT_DISABLED`, testing defaults and Octane state reset are all covered. |
 | HOOK-01 | Phase 5 | Complete |
-| HOOK-02 | Phase 5 | Pending — acceptance absent in source |
+| HOOK-02 | Phase 5 | Pending — legacy-public runtime half complete (05-04); 05-05 owns legacy-private/project |
 | HOOK-03 | Phase 5 | Complete |
 | SIG-01 | Phase 6 | Pending |
 | SIG-02 | Phase 6 | Pending |

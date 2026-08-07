@@ -5,13 +5,13 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: inbound-webhooks
 status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-08-07T01:33:24.672Z"
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-08-07T02:11:16.355Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 30
-  completed_plans: 28
+  completed_plans: 29
 last_activity: 2026-08-05
 last_activity_desc: "Released v0.6.0 after merging the Phase 4 batch-sync completion and dependency-maintenance work. PR #52 auto-merged after the full required CI suite passed; release-please published tag reyemtech/laravel-hubspot-v0.6.0."
 ---
@@ -37,7 +37,7 @@ mixed input sum independently chunked linked updates and unlinked upserts), and 
 doctor bound-model report. `DeleteRaceReconciler` runs only for links the batch job created, so a
 concurrent link is retained. REG-01 and REG-04 are now complete; SYNC-01b remains open for Phase 9's
 Generated mode and SHIP-01.
-Plan: 4 of 5
+Plan: 5 of 5
 Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
 Status: Ready to execute
 from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
@@ -101,7 +101,7 @@ Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the qu
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
 and the `auto_sync` config block.
 
-Progress: [█████████░] 93% of Phase 4
+Progress: [██████████] 97% of Phase 4
 
 ## Performance Metrics
 
@@ -147,6 +147,7 @@ Progress: [█████████░] 93% of Phase 4
 | Phase 05 P01 | 55min | 3 tasks | 20 files |
 | Phase 05 P02 | 55min | 3 tasks | 16 files |
 | Phase 05 P03 | 35min | 3 tasks | 30 files |
+| Phase 05 P04 | ~2h | 3 tasks | 22 files |
 
 ## Accumulated Context
 
@@ -245,6 +246,11 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: 05-03: WebhookReceiptRecorder is the SECOND R4 inversion (mirroring Sync\SyncStateContract) -- Webhooks declares the port, HubspotManager implements it, since Webhooks may not depend on ReyemTech\Hubspot\Testing
 - [Phase ?]: 05-03: HubspotManager owns the canonical WebhookReceiptLog, hands the same instance to every HubspotFake it builds, and resets it in flushState() alongside $fake/$syncingSuppressed
 - [Phase ?]: 05-03: HOOK-01 complete and checked in REQUIREMENTS.md across 05-01/05-02/05-03; the stale 'cache driver by default' acceptance wording is left unedited and flagged via annotation, per 05-CONTEXT.md D-01
+- [Phase ?]: 05-04: SubscriptionsApi::update() only patches active (verified against pinned 14.1.0) -- makes WebhookSubscription::identity() (eventType+propertyName) the only field set an update can ever differ on
+- [Phase ?]: 05-04: WebhookSubscriptionGatewayContract declares list/create/update only -- no delete method exists on it at all (D-11's strongest form)
+- [Phase ?]: 05-04: hubspot.webhooks.developer_api_key is a third credential class, distinct from hubspot.token and hubspot.webhooks.secret, redacted through the same ExceptionTranslator resolver
+- [Phase ?]: 05-04: WebhookSubscriptionGatewayContract tested via an in-container fake (FakeWebhookSubscriptionGateway), not Hubspot::fake() -- HubspotFake's route table has no key for /webhooks/v3/{appId}/subscriptions
+- [Phase ?]: 05-04: HOOK-02's legacy_public runtime half complete; legacy_private and project app models fail with a directed not-yet message, owned by 05-05
 
 ### Pending Todos
 
@@ -346,8 +352,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-07T01:33:15.092Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-08-07T02:11:16.346Z
+Stopped at: Completed 05-04-PLAN.md
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**
