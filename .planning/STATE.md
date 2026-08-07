@@ -5,13 +5,13 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: inbound-webhooks
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-08-07T00:46:00.996Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-08-07T01:33:24.672Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 30
-  completed_plans: 27
+  completed_plans: 28
 last_activity: 2026-08-05
 last_activity_desc: "Released v0.6.0 after merging the Phase 4 batch-sync completion and dependency-maintenance work. PR #52 auto-merged after the full required CI suite passed; release-please published tag reyemtech/laravel-hubspot-v0.6.0."
 ---
@@ -37,7 +37,7 @@ mixed input sum independently chunked linked updates and unlinked upserts), and 
 doctor bound-model report. `DeleteRaceReconciler` runs only for links the batch job created, so a
 concurrent link is retained. REG-01 and REG-04 are now complete; SYNC-01b remains open for Phase 9's
 Generated mode and SHIP-01.
-Plan: 3 of 5
+Plan: 4 of 5
 Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
 Status: Ready to execute
 from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
@@ -101,7 +101,7 @@ Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the qu
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
 and the `auto_sync` config block.
 
-Progress: [█████████░] 90% of Phase 4
+Progress: [█████████░] 93% of Phase 4
 
 ## Performance Metrics
 
@@ -146,6 +146,7 @@ Progress: [█████████░] 90% of Phase 4
 | Phase 04 P04 | 1h10m | 2 tasks | 15 files |
 | Phase 05 P01 | 55min | 3 tasks | 20 files |
 | Phase 05 P02 | 55min | 3 tasks | 16 files |
+| Phase 05 P03 | 35min | 3 tasks | 30 files |
 
 ## Accumulated Context
 
@@ -239,6 +240,11 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: 05-02: insert-first atomic claim catches SQLSTATE class 23, never read-then-write; conditional-UPDATE lease recovery decides on affected-row count
 - [Phase ?]: 05-02: a lost reclaim race resolves to Held, not recursion -- ProcessWebhookEventJob treats Held/Handled identically
 - [Phase ?]: 05-02: NormalizedWebhookEvent::MAX_EVENT_ID_LENGTH (191) added as Rule 2 fix closing T-05-11, rejecting an over-long eventId rather than truncating it
+- [Phase ?]: 05-03: TypedEventMap resolves most-specific-first over a closed table (contact.propertyChange beats *.propertyChange); never constructs a class name from the payload
+- [Phase ?]: 05-03: HandlerMap::validate() runs before WebhookEventStore::claim() in ProcessWebhookEventJob::handle() so a config typo never burns a claim or emits half an item's events
+- [Phase ?]: 05-03: WebhookReceiptRecorder is the SECOND R4 inversion (mirroring Sync\SyncStateContract) -- Webhooks declares the port, HubspotManager implements it, since Webhooks may not depend on ReyemTech\Hubspot\Testing
+- [Phase ?]: 05-03: HubspotManager owns the canonical WebhookReceiptLog, hands the same instance to every HubspotFake it builds, and resets it in flushState() alongside $fake/$syncingSuppressed
+- [Phase ?]: 05-03: HOOK-01 complete and checked in REQUIREMENTS.md across 05-01/05-02/05-03; the stale 'cache driver by default' acceptance wording is left unedited and flagged via annotation, per 05-CONTEXT.md D-01
 
 ### Pending Todos
 
@@ -340,8 +346,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-07T00:46:00.985Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-08-07T01:33:15.092Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**

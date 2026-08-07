@@ -480,7 +480,7 @@ REL-02.
 
 ### Webhooks
 
-- [ ] **HOOK-01**: Inbound webhooks — verification, batching, idempotency, typed events
+- [x] **HOOK-01**: Inbound webhooks — verification, batching, idempotency, typed events
   — `REQ-inbound-webhooks` (core spec §2 goal 3, §8, §13 Phase 4)
 
   - Acceptance: Signature verification delegates to `HubSpot\Utils\Signature::isValid()` and
@@ -491,16 +491,24 @@ REL-02.
     map. The secret is the app **client secret**, not the PAT. Surface is
     `Route::hubspotWebhook('hubspot/webhook')`.
 
-  - **Partially delivered by 05-01 and 05-02 (2026-08-06), box deliberately left unchecked.**
-    Shipped by 05-01: the route macro, raw-URI SDK-delegated verification (fail-closed,
-    `HubSpot\Utils\Signature::isValid()` only, never `$request->fullUrl()`), one-job-per-item batch
-    handoff with the deterministic 401/400/500/204 mapping, the D-15 local-dev bypass, and
-    `occurredAt` exposure on `NormalizedWebhookEvent` (`05-01-SUMMARY.md`). Shipped by 05-02: durable
-    dedupe on `eventId` via the lease-recovered claim/complete store (`05-02-SUMMARY.md`) — note this
-    supersedes the "cache driver by default" wording in the Acceptance paragraph above, per
-    `05-CONTEXT.md` D-01. **Still open:** typed events (`ContactPropertyChanged` and siblings) and
-    the configured handler map including `'*'` — both owned by 05-03. Check this box only when
-    05-03 lands.
+  - **Complete 2026-08-07 (05-03), delivered across three plans.** Shipped by 05-01: the route macro,
+    raw-URI SDK-delegated verification (fail-closed, `HubSpot\Utils\Signature::isValid()` only, never
+    `$request->fullUrl()`), one-job-per-item batch handoff with the deterministic 401/400/500/204
+    mapping, the D-15 local-dev bypass, and `occurredAt` exposure on `NormalizedWebhookEvent`
+    (`05-01-SUMMARY.md`). Shipped by 05-02: durable dedupe on `eventId` via the lease-recovered
+    claim/complete store (`05-02-SUMMARY.md`) — note this supersedes the "cache driver by default"
+    wording in the Acceptance paragraph above, per `05-CONTEXT.md` D-01; the paragraph is left
+    unedited on purpose (historical acceptance text) and this annotation is the record of record.
+    Shipped by 05-03 (`05-03-SUMMARY.md`): the closed, most-specific-first typed-event recognition
+    table (`Webhooks\TypedEventMap`) resolving `ContactPropertyChanged`, the `*.propertyChange`
+    family fallback `ObjectPropertyChanged`, `ObjectLifecycleChanged` and `ObjectAssociationChanged`;
+    the configured handler map (`Webhooks\HandlerMap`) including `'*'`, validated whole before any
+    claim is taken, key-handlers-before-wildcard, deduplicated, container-resolved; and
+    `Hubspot::assertWebhookHandled()` against its own inbound receipt log, closing Phase 2's deferred
+    item (`.planning/phases/02-gateway-layer/deferred-items.md` §02-06). Both userland routes — the
+    Laravel events and the configured handler map — fire from the single dispatch
+    `ProcessWebhookEventJob::handle()` performs, in the fixed order D-08 specifies: generic event,
+    typed event, key handlers, `'*'` handlers, complete, receipt.
 
 - [ ] **HOOK-02**: `php artisan hubspot:webhooks:sync` declares subscriptions from config
   — `REQ-webhook-subscription-sync` (core spec §8, §13 Phase 4)
