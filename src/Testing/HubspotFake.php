@@ -51,6 +51,18 @@ final class HubspotFake
     private ?HubspotClientFactory $factoryBeforeThisFake = null;
 
     /**
+     * `$webhookReceipts` is LAST and defaulted, not third, and that ordering is load-bearing:
+     * `v0.6.0` released this constructor as `(Container, array, ?self $replacing = null)`, so
+     * inserting a required third parameter both raised the required-argument count and changed
+     * position 3's type from `?self` to `WebhookReceiptLog` — two backwards-incompatible changes
+     * roave catches. Appending with a default keeps the released signature as a prefix, so
+     * `new HubspotFake($container, $responses, $previousFake)` still means what it always meant.
+     *
+     * The default exists only to preserve that shape. `HubspotManager` always passes the shared
+     * instance explicitly — a fake built without one gets a private log, so `assertWebhookHandled()`
+     * would read a different log than the job wrote to. That is why `Hubspot::fake()`, not direct
+     * construction, is the supported path.
+     *
      * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by route key —
      *                                                                            see {@see self::routeKeyOf()}
      * @param  WebhookReceiptLog  $webhookReceipts  owned by `HubspotManager`, not this class — passed
@@ -62,8 +74,8 @@ final class HubspotFake
     public function __construct(
         private readonly Container $container,
         private readonly array $responses,
-        private readonly WebhookReceiptLog $webhookReceipts,
         ?self $replacing = null,
+        private readonly WebhookReceiptLog $webhookReceipts = new WebhookReceiptLog,
     ) {
         // Constructed per fake, which is what restarts the id counter it owns on every
         // Hubspot::fake() call (02-CONTEXT.md: "ids from a counter").

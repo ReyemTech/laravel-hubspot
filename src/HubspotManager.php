@@ -142,7 +142,14 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
         // `$this->webhookReceipts` is the SAME instance every fake in this process receives -- never
         // constructed fresh here -- so `recordWebhookHandled()` below and `assertWebhookHandled()` on
         // whichever fake a consumer holds always read and write the identical log.
-        return $this->fake = new HubspotFake($this->container, $responses, $this->webhookReceipts, $this->fake);
+        // Named for the trailing argument: its position is fixed by the released v0.6.0 signature
+        // (see HubspotFake::__construct), not by reading order here.
+        return $this->fake = new HubspotFake(
+            $this->container,
+            $responses,
+            $this->fake,
+            webhookReceipts: $this->webhookReceipts,
+        );
     }
 
     /**
