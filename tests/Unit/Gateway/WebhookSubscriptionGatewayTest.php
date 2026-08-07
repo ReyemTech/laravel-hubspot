@@ -190,4 +190,50 @@ final class WebhookSubscriptionGatewayTest extends TestCase
             self::assertSame(404, $exception->status());
         }
     }
+
+    public function test_update_rejects_a_subscription_with_no_portal_id(): void
+    {
+        $mock = new MockHandler;
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('requires $subscription->portalId');
+
+        $this->gateway($mock)->update(new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true));
+    }
+
+    /**
+     * The SDK's generated switch deserialises a status other than the one it expects for success
+     * into `Model\Error` rather than throwing (02-RESEARCH.md Pitfall 3, the same guard
+     * `AssociationDefinitionsGateway` carries) -- 202 is a genuine 2xx Guzzle never throws for, and
+     * exercises the same code the SDK reaches for any status its own switch does not name.
+     */
+    public function test_list_throws_when_the_portal_answers_an_unexpected_success_status(): void
+    {
+        $mock = new MockHandler([new Response(202, ['Content-Type' => 'application/json'], (string) json_encode(['message' => 'accepted']))]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unexpected response shape');
+
+        $this->gateway($mock)->list();
+    }
+
+    public function test_create_throws_when_the_portal_answers_an_unexpected_success_status(): void
+    {
+        $mock = new MockHandler([new Response(202, ['Content-Type' => 'application/json'], (string) json_encode(['message' => 'accepted']))]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unexpected response shape');
+
+        $this->gateway($mock)->create(new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true));
+    }
+
+    public function test_update_throws_when_the_portal_answers_an_unexpected_success_status(): void
+    {
+        $mock = new MockHandler([new Response(202, ['Content-Type' => 'application/json'], (string) json_encode(['message' => 'accepted']))]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unexpected response shape');
+
+        $this->gateway($mock)->update(new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true, portalId: '1'));
+    }
 }

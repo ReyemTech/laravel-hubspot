@@ -15,7 +15,7 @@ use ReyemTech\Hubspot\Gateway\WebhookSubscription;
  */
 final class ThrowingWebhookSubscriptionGateway implements WebhookSubscriptionGatewayContract
 {
-    public function __construct(private readonly HubspotException $exception) {}
+    public function __construct(private readonly HubspotException&\Throwable $exception) {}
 
     public function list(): array
     {

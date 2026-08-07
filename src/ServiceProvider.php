@@ -16,10 +16,12 @@ use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\WebhookGatewayContract;
+use ReyemTech\Hubspot\Gateway\Contracts\WebhookSubscriptionGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
 use ReyemTech\Hubspot\Gateway\WebhookGateway;
+use ReyemTech\Hubspot\Gateway\WebhookSubscriptionGateway;
 use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
 use ReyemTech\Hubspot\Registry\Console\AssociationsDoctorCommand;
 use ReyemTech\Hubspot\Registry\Console\DoctorCommand;
@@ -35,6 +37,7 @@ use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
+use ReyemTech\Hubspot\Webhooks\Console\SyncWebhookSubscriptionsCommand;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
 use ReyemTech\Hubspot\Webhooks\HandlerMap;
@@ -193,6 +196,29 @@ final class ServiceProvider extends BaseServiceProvider
             return new WebhookGateway($secret);
         });
 
+        // Non-shared, on the same terms as WebhookGatewayContract above: reads its two config keys
+        // at RESOLUTION time, not registration time, so Hubspot::fake()-style container rebinding
+        // in a test is observed by the next resolution rather than answered from a construction-
+        // time capture. HubspotClientFactory::forWebhookManagement() -- built fresh here, never
+        // shared with the singleton CRM-token factory above -- throws ConfigurationException before
+        // any client exists when either credential is missing (D-16, T-05-17).
+        $this->app->bind(WebhookSubscriptionGatewayContract::class, function (Application $app): WebhookSubscriptionGateway {
+            $config = $app->make('config');
+
+            /** @var string|null $appId */
+            $appId = $config->get('hubspot.webhooks.app_id');
+            /** @var string|null $developerApiKey */
+            $developerApiKey = $config->get('hubspot.webhooks.developer_api_key');
+
+            $clientFactory = HubspotClientFactory::forWebhookManagement($appId, $developerApiKey);
+
+            return new WebhookSubscriptionGateway(
+                $clientFactory,
+                $app->make(ExceptionTranslator::class),
+                (int) $appId,
+            );
+        });
+
         // Shared, like AssociationTypeStore above: this store holds no transport Hubspot::fake()
         // would ever need to invalidate, only a database connection. `hubspot.webhooks.audit_payload`
         // and `hubspot.webhooks.claim_lease` are read once, at resolution -- both are plain scalars
@@ -315,6 +341,7 @@ final class ServiceProvider extends BaseServiceProvider
             DoctorCommand::class,
             AssociationsDoctorCommand::class,
             PruneWebhookEventsCommand::class,
+            SyncWebhookSubscriptionsCommand::class,
         ];
     }
 

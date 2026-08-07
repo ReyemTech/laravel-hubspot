@@ -28,7 +28,7 @@ final class SyncWebhookSubscriptionsCommandTest extends TestCase
 {
     private function bindGateway(FakeWebhookSubscriptionGateway|ThrowingWebhookSubscriptionGateway $gateway): void
     {
-        $this->app->instance(WebhookSubscriptionGatewayContract::class, $gateway);
+        app()->instance(WebhookSubscriptionGatewayContract::class, $gateway);
     }
 
     private static function legacyPublic(): void
@@ -234,6 +234,66 @@ final class SyncWebhookSubscriptionsCommandTest extends TestCase
         self::assertStringContainsString('project', $joined);
     }
 
+    public function test_legacy_private_app_model_fails_with_a_directed_not_yet_message(): void
+    {
+        config([
+            'hubspot.webhooks.app_model' => 'legacy_private',
+            'hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']],
+        ]);
+        $gateway = new FakeWebhookSubscriptionGateway;
+        app()->instance(WebhookSubscriptionGatewayContract::class, $gateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $joined = implode("\n", CommandOutput::linesOf(Artisan::output()));
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertSame(0, $gateway->listCalls);
+        self::assertStringContainsString('legacy_private', $joined);
+        self::assertStringContainsString('does not reconcile yet', $joined);
+    }
+
+    public function test_project_app_model_fails_with_a_directed_not_yet_message(): void
+    {
+        config([
+            'hubspot.webhooks.app_model' => 'project',
+            'hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']],
+        ]);
+        $gateway = new FakeWebhookSubscriptionGateway;
+        app()->instance(WebhookSubscriptionGatewayContract::class, $gateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $joined = implode("\n", CommandOutput::linesOf(Artisan::output()));
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertSame(0, $gateway->listCalls);
+        self::assertStringContainsString('project', $joined);
+        self::assertStringContainsString('does not reconcile yet', $joined);
+    }
+
+    /**
+     * A declaration-level failure (here, a duplicate) is caught inside `syncLegacyPublic()` itself,
+     * distinct from the empty-list branch above -- both reach `ConfigurationException`, from two
+     * different call sites.
+     */
+    public function test_a_malformed_declaration_fails_with_its_own_configuration_error(): void
+    {
+        self::legacyPublic();
+        config(['hubspot.webhooks.subscriptions' => [
+            ['event_type' => 'deal.creation'],
+            ['event_type' => 'deal.creation'],
+        ]]);
+
+        $gateway = new FakeWebhookSubscriptionGateway;
+        $this->bindGateway($gateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $joined = implode("\n", CommandOutput::linesOf(Artisan::output()));
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertSame(0, $gateway->listCalls);
+        self::assertStringContainsString('deal.creation', $joined);
+    }
+
     public function test_a_gateway_failure_is_printed_as_its_own_message_and_exits_non_zero(): void
     {
         self::legacyPublic();
@@ -250,25 +310,26 @@ final class SyncWebhookSubscriptionsCommandTest extends TestCase
         self::assertStringContainsString('corr-500', $joined);
     }
 
-    public function test_running_twice_against_unchanged_config_and_portal_issues_zero_writes_the_second_time(): void
+    public function test_running_twice_against_an_unchanged_portal_produces_identical_output_and_zero_writes_both_times(): void
     {
         self::legacyPublic();
         config(['hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']]]);
 
-        $gateway = new FakeWebhookSubscriptionGateway;
-        $this->bindGateway($gateway);
+        // Genuinely unchanged from the start: the portal already carries exactly what the
+        // declaration wants, so both runs report "unchanged" and neither writes anything --
+        // which is what makes the two runs' text comparable at all. The container binding is
+        // non-shared, so a fresh fake per resolution mirrors a real portal's state persisting
+        // between two separate process invocations rather than one shared in-memory object.
+        $seed = static fn (): FakeWebhookSubscriptionGateway => new FakeWebhookSubscriptionGateway([
+            new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true, portalId: '1'),
+        ]);
 
+        $this->bindGateway($seed());
         Artisan::call('hubspot:webhooks:sync');
         $first = Artisan::output();
 
-        // Rebind: the container binding is non-shared and the command resolves it fresh, so a
-        // fresh fake seeded with what the first run actually wrote proves the second run is a
-        // true no-op against real portal state, not merely against a fake nobody advanced.
-        $secondGateway = new FakeWebhookSubscriptionGateway([
-            new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true, portalId: '1'),
-        ]);
+        $secondGateway = $seed();
         $this->bindGateway($secondGateway);
-
         Artisan::call('hubspot:webhooks:sync');
         $second = Artisan::output();
 

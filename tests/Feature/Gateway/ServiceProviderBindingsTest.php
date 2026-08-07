@@ -12,9 +12,11 @@ use ReyemTech\Hubspot\Gateway\AssociationType;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Gateway\Contracts\WebhookSubscriptionGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
+use ReyemTech\Hubspot\Gateway\WebhookSubscriptionGateway;
 use ReyemTech\Hubspot\HubspotManager;
 use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
 use ReyemTech\Hubspot\ServiceProvider;
@@ -174,5 +176,43 @@ final class ServiceProviderBindingsTest extends TestCase
         $second = app(ExceptionTranslator::class);
 
         self::assertSame($first, $second);
+    }
+
+    /**
+     * The 05-04 binding: resolved through the real closure, never `Hubspot::fake()` or an
+     * `instance()` override, so this exercises `HubspotClientFactory::forWebhookManagement()`
+     * actually being called with the configured app id and Developer API key.
+     */
+    public function test_webhook_subscription_gateway_contract_resolves_to_webhook_subscription_gateway_non_shared(): void
+    {
+        config([
+            'hubspot.webhooks.app_id' => '998877',
+            'hubspot.webhooks.developer_api_key' => 'a-developer-key',
+        ]);
+
+        $first = app(WebhookSubscriptionGatewayContract::class);
+        $second = app(WebhookSubscriptionGatewayContract::class);
+
+        self::assertInstanceOf(WebhookSubscriptionGateway::class, $first);
+        self::assertNotSame(
+            $first,
+            $second,
+            'WebhookSubscriptionGatewayContract must resolve a fresh instance every time, on the same '
+            .'terms as WebhookGatewayContract -- a config()->set() between resolutions must be observed.',
+        );
+    }
+
+    public function test_webhook_subscription_gateway_contract_throws_when_no_credentials_are_configured(): void
+    {
+        self::assertNull(config('hubspot.webhooks.app_id'));
+        self::assertNull(config('hubspot.webhooks.developer_api_key'));
+
+        try {
+            app(WebhookSubscriptionGatewayContract::class);
+            self::fail('Expected resolving with no management credentials configured to throw.');
+        } catch (ConfigurationException $exception) {
+            self::assertStringContainsString('HUBSPOT_WEBHOOK_APP_ID', $exception->getMessage());
+            self::assertStringContainsString('HUBSPOT_DEVELOPER_API_KEY', $exception->getMessage());
+        }
     }
 }
