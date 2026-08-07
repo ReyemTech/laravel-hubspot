@@ -480,7 +480,7 @@ REL-02.
 
 ### Webhooks
 
-- [ ] **HOOK-01**: Inbound webhooks — verification, batching, idempotency, typed events
+- [x] **HOOK-01**: Inbound webhooks — verification, batching, idempotency, typed events
   — `REQ-inbound-webhooks` (core spec §2 goal 3, §8, §13 Phase 4)
 
   - Acceptance: Signature verification delegates to `HubSpot\Utils\Signature::isValid()` and
@@ -490,6 +490,7 @@ REL-02.
     can drop stale changes. Events reach userland both as Laravel events and via the configured handler
     map. The secret is the app **client secret**, not the PAT. Surface is
     `Route::hubspotWebhook('hubspot/webhook')`.
+
   - **Partially delivered by 05-01 (2026-08-06), box deliberately left unchecked:** the route
     macro, raw-URI SDK-delegated verification (fail-closed, `HubSpot\Utils\Signature::isValid()`
     only, never `$request->fullUrl()`), one-job-per-item batch handoff with the deterministic
@@ -506,7 +507,7 @@ REL-02.
     `/gsd-plan-phase`. Still absent after the 2026-07-26 spec review; do not invent criteria at
     roadmap level.
 
-- [ ] **HOOK-03**: Optional `hubspot_webhook_events` audit table
+- [x] **HOOK-03**: Optional `hubspot_webhook_events` audit table
   — `REQ-webhook-audit-trail` (core spec §8)
 
   - Acceptance: Off by default, consistent with zero-migration install.
@@ -871,9 +872,9 @@ Deferred. Tracked but not in the current roadmap.
 | SYNC-03c | Phase 4 | **Complete 2026-08-03 (04-08).** `syncManyToHubspot()` dispatches one job; linked and unlinked records are independently sent through chunked `updateMany()` and `upsertMany()` requests. |
 | SYNC-04 | Phase 4 | **Complete 2026-08-01 (04-06).** Three DISTINCT Eloquent events drive the policy table -- `trashed`, `forceDeleted`, and `deleted` gated on the ABSENCE of `SoftDeletes` -- because `deleted` fires identically for a soft delete and a `forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()` implementation archives twice. D-21: `hard_delete => 'warn'` SKIPS exactly as `guard` does and differs only in log level; only `allow` archives. `restored` flags the link row stale and never nulls `hubspot_id`; `on_restore => 'recreate'` is the opt-in that forks CRM history. A property-push job arriving with its model trashed returns without pushing |
 | SYNC-05 | Phase 4 | **Complete 2026-08-02 (04-07).** `withoutSyncing()`, `HUBSPOT_DISABLED`, testing defaults and Octane state reset are all covered. |
-| HOOK-01 | Phase 5 | Pending |
+| HOOK-01 | Phase 5 | Complete |
 | HOOK-02 | Phase 5 | Pending — acceptance absent in source |
-| HOOK-03 | Phase 5 | Pending |
+| HOOK-03 | Phase 5 | Complete |
 | SIG-01 | Phase 6 | Pending |
 | SIG-02 | Phase 6 | Pending |
 | SIG-03 | Phase 6 | Pending |

@@ -5,13 +5,13 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: inbound-webhooks
 status: executing
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-08-06T21:35:14.333Z"
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-08-07T00:46:00.996Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 30
-  completed_plans: 26
+  completed_plans: 27
 last_activity: 2026-08-05
 last_activity_desc: "Released v0.6.0 after merging the Phase 4 batch-sync completion and dependency-maintenance work. PR #52 auto-merged after the full required CI suite passed; release-please published tag reyemtech/laravel-hubspot-v0.6.0."
 ---
@@ -37,7 +37,7 @@ mixed input sum independently chunked linked updates and unlinked upserts), and 
 doctor bound-model report. `DeleteRaceReconciler` runs only for links the batch job created, so a
 concurrent link is retained. REG-01 and REG-04 are now complete; SYNC-01b remains open for Phase 9's
 Generated mode and SHIP-01.
-Plan: 2 of 5
+Plan: 3 of 5
 Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
 Status: Ready to execute
 from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
@@ -101,7 +101,7 @@ Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the qu
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
 and the `auto_sync` config block.
 
-Progress: [█████████░] 87% of Phase 4
+Progress: [█████████░] 90% of Phase 4
 
 ## Performance Metrics
 
@@ -145,6 +145,7 @@ Progress: [█████████░] 87% of Phase 4
 | Phase 04 P03 | ~1h | 3 tasks | 7 files |
 | Phase 04 P04 | 1h10m | 2 tasks | 15 files |
 | Phase 05 P01 | 55min | 3 tasks | 20 files |
+| Phase 05 P02 | 55min | 3 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -234,6 +235,10 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: 05-01: R4 widened to admit Illuminate, proven (committed guard fixture) it still rejects HubSpot\* from Webhooks
 - [Phase ?]: 05-01: WebhookController reads hubspot.webhooks.enforce via injected Illuminate\Contracts\Config\Repository, never the bare config() helper (Illuminate\Foundation root this package does not declare)
 - [Phase ?]: 05-01: illuminate/http and illuminate/routing declared production requires; both already ship transitively via laravel/framework
+- [Phase ?]: 05-02: Task 1 decided option-a (one table, lease-recovered claim) by human before executor resumed
+- [Phase ?]: 05-02: insert-first atomic claim catches SQLSTATE class 23, never read-then-write; conditional-UPDATE lease recovery decides on affected-row count
+- [Phase ?]: 05-02: a lost reclaim race resolves to Held, not recursion -- ProcessWebhookEventJob treats Held/Handled identically
+- [Phase ?]: 05-02: NormalizedWebhookEvent::MAX_EVENT_ID_LENGTH (191) added as Rule 2 fix closing T-05-11, rejecting an over-long eventId rather than truncating it
 
 ### Pending Todos
 
@@ -335,8 +340,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-06T21:35:14.324Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-08-07T00:46:00.985Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**

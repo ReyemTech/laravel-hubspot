@@ -231,7 +231,7 @@ and one PR that merges before its dependants begin. Waves: 1 → 2 → 3 (04-03,
   4. Events reach userland by both routes from a single dispatch — Laravel events (`HubspotWebhookReceived` plus typed events such as `ContactPropertyChanged`) and the configured handler map, `'*'` included. `hubspot:webhooks:sync` reconciles only legacy public-app subscriptions with an app id and Developer API key; legacy private apps get local validation and rendered manual setup instructions, while current project-based apps get an exportable webhook component. Service Keys and the pull-based Webhook Journal API are not treated as HTTP-webhook management.
   5. The `hubspot_webhook_events` audit table is off by default and its migration does not exist until it is turned on, so enabling webhooks does not break zero-migration install.
 
-**Plans**: 1/5 plans executed
+**Plans**: 2/5 plans executed
 **UI hint**: no
 
 Plans:
@@ -241,7 +241,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 05-02-PLAN.md — Durable `eventId` idempotency and the opt-in `hubspot_webhook_events` table
+- [x] 05-02-PLAN.md — Durable `eventId` idempotency and the opt-in `hubspot_webhook_events` table
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -400,7 +400,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Gateway Layer | 6/6 | Complete | 2026-07-27 |
 | 3. Registry & Stores | 3/3 | Complete | 2026-07-29 |
 | 4. Model Sync | 9/9 | Complete | 2026-08-03 |
-| 5. Inbound Webhooks | 1/5 | In Progress|  |
+| 5. Inbound Webhooks | 2/5 | In Progress|  |
 | 6. Signals Core | 0/TBD | Not started | - |
 | 7. Signal Stores & Attribution | 0/TBD | Not started | - |
 | 8. Frontend & Meetings Embed | 0/TBD | Not started | - |
