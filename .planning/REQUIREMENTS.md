@@ -510,7 +510,7 @@ REL-02.
     `ProcessWebhookEventJob::handle()` performs, in the fixed order D-08 specifies: generic event,
     typed event, key handlers, `'*'` handlers, complete, receipt.
 
-- [ ] **HOOK-02**: `php artisan hubspot:webhooks:sync` declares subscriptions from config
+- [x] **HOOK-02**: `php artisan hubspot:webhooks:sync` declares subscriptions from config
   — `REQ-webhook-subscription-sync` (core spec §8, §13 Phase 4)
 
   - Acceptance: **absent in source** — the spec states the capability and notes "nobody in this
@@ -518,17 +518,25 @@ REL-02.
     `/gsd-plan-phase`. Still absent after the 2026-07-26 spec review; do not invent criteria at
     roadmap level.
 
-  - **Runtime half shipped 2026-08-07 (05-04); still open pending 05-05.** `05-04-PLAN.md` derived
+  - **Complete 2026-08-06, delivered across two plans (05-04, 05-05).** `05-04-PLAN.md` derived
     HOOK-02's acceptance criteria from D-10 through D-12 and D-16 and pinned each with a test
-    (`05-04-SUMMARY.md`). Delivered: `Gateway\WebhookSubscriptionGatewayContract` (list/create/update
-    only, no delete — D-11), `Gateway\WebhookSubscriptionGateway`, a management client authenticated
-    with a Developer API key rather than the CRM token (D-16), `Webhooks\AppModel` (the three D-16 app
-    types, no default), `Webhooks\SubscriptionDeclarations` (`hubspot.webhooks.subscriptions`,
-    validated at read time, never at boot — D-12), and `hubspot:webhooks:sync --dry-run` reconciling
-    `legacy_public` apps only. `legacy_private` and `project` app models fail with a directed message
-    rather than a silent no-op. **05-05 owns the remainder**: legacy-private manual setup instructions
-    and the project-based webhook component export, per D-16's app-model matrix. The checkbox stays
-    unchecked until 05-05 closes both.
+    (`05-04-SUMMARY.md`). Shipped by 05-04: `Gateway\WebhookSubscriptionGatewayContract`
+    (list/create/update only, no delete — D-11), `Gateway\WebhookSubscriptionGateway`, a management
+    client authenticated with a Developer API key rather than the CRM token (D-16),
+    `Webhooks\AppModel` (the three D-16 app types, no default), `Webhooks\SubscriptionDeclarations`
+    (`hubspot.webhooks.subscriptions`, validated at read time, never at boot — D-12), and
+    `hubspot:webhooks:sync --dry-run` reconciling `legacy_public` apps only.
+
+  - Shipped by 05-05 (`05-05-SUMMARY.md`), closing D-16's remaining two app models: the
+    `legacy_private` branch renders validated, honest manual setup instructions
+    (`Webhooks\ManualSetupInstructions`) since HubSpot exposes no subscription-management API for
+    that app model, and the `project` branch renders the exportable webhook-component artefact
+    (`Webhooks\ProjectWebhookComponent`) HubSpot's developer-platform apps deploy with their
+    project, field names and shape verified against live HubSpot documentation on 2026-08-06 rather
+    than recalled. `--output=` writes the component to a file; `--dry-run` combined with `--output=`
+    writes nothing. Neither of the two new branches issues a single HubSpot request or resolves the
+    subscription gateway, and both state plainly that nothing was changed in HubSpot — a test proves
+    it for each. All three D-16 app models are now covered end to end.
 
 - [x] **HOOK-03**: Optional `hubspot_webhook_events` audit table
   — `REQ-webhook-audit-trail` (core spec §8)
@@ -896,7 +904,7 @@ Deferred. Tracked but not in the current roadmap.
 | SYNC-04 | Phase 4 | **Complete 2026-08-01 (04-06).** Three DISTINCT Eloquent events drive the policy table -- `trashed`, `forceDeleted`, and `deleted` gated on the ABSENCE of `SoftDeletes` -- because `deleted` fires identically for a soft delete and a `forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()` implementation archives twice. D-21: `hard_delete => 'warn'` SKIPS exactly as `guard` does and differs only in log level; only `allow` archives. `restored` flags the link row stale and never nulls `hubspot_id`; `on_restore => 'recreate'` is the opt-in that forks CRM history. A property-push job arriving with its model trashed returns without pushing |
 | SYNC-05 | Phase 4 | **Complete 2026-08-02 (04-07).** `withoutSyncing()`, `HUBSPOT_DISABLED`, testing defaults and Octane state reset are all covered. |
 | HOOK-01 | Phase 5 | Complete |
-| HOOK-02 | Phase 5 | Pending — legacy-public runtime half complete (05-04); 05-05 owns legacy-private/project |
+| HOOK-02 | Phase 5 | **Complete 2026-08-06 (05-04, 05-05).** All three D-16 app models covered: legacy-public reconciliation, legacy-private manual instructions, project component export |
 | HOOK-03 | Phase 5 | Complete |
 | SIG-01 | Phase 6 | Pending |
 | SIG-02 | Phase 6 | Pending |
