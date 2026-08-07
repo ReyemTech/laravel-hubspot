@@ -71,9 +71,9 @@ final class ProjectWebhookComponentTest extends TestCase
         self::assertSame(0, $gateway->updateCalls);
 
         $jsonPart = self::jsonPartOf($raw);
+        /** @var array{config: array{settings: array{targetUrl: string}, subscriptions: array{legacyCrmObjects: list<array<string, mixed>>}}} $decoded */
         $decoded = json_decode($jsonPart, true);
 
-        self::assertIsArray($decoded);
         self::assertSame(
             $jsonPart,
             json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
@@ -123,6 +123,7 @@ final class ProjectWebhookComponentTest extends TestCase
             self::assertSame(Command::SUCCESS, $exitCode);
             self::assertFileExists($path);
 
+            /** @var array{config: array{subscriptions: array{legacyCrmObjects: list<array<string, mixed>>}}} $decoded */
             $decoded = json_decode((string) file_get_contents($path), true);
 
             self::assertSame(

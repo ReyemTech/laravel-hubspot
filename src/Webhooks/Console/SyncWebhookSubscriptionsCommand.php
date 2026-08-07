@@ -11,6 +11,7 @@ use ReyemTech\Hubspot\Gateway\Contracts\WebhookSubscriptionGatewayContract;
 use ReyemTech\Hubspot\Gateway\WebhookSubscription;
 use ReyemTech\Hubspot\Webhooks\AppModel;
 use ReyemTech\Hubspot\Webhooks\ManualSetupInstructions;
+use ReyemTech\Hubspot\Webhooks\ProjectWebhookComponent;
 use ReyemTech\Hubspot\Webhooks\SubscriptionDeclarations;
 
 /**
@@ -33,15 +34,17 @@ use ReyemTech\Hubspot\Webhooks\SubscriptionDeclarations;
  *
  * `legacy_public` reconciles subscriptions through `WebhookSubscriptionGatewayContract` -- the
  * only path that ever calls HubSpot. `legacy_private` renders validated manual setup instructions
- * via `Webhooks\ManualSetupInstructions` and never resolves the gateway at all, because HubSpot
- * exposes no subscription-management API for that app model. `project` remains this release's one
- * unfinished branch, failing with a directed message rather than exiting zero having done nothing
- * -- a later plan's work, dispatched through an explicit `match` over `Webhooks\AppModel` so that
- * plan adds a branch rather than rewriting this method.
+ * via `Webhooks\ManualSetupInstructions`, and `project` renders an exportable webhook component via
+ * `Webhooks\ProjectWebhookComponent` -- neither of the latter two ever resolves the gateway,
+ * because neither app model exposes a runtime subscription-management API HubSpot lets this
+ * package call. Dispatched through an explicit `match` over `Webhooks\AppModel` so a future app
+ * model adds a branch rather than rewriting this method.
  */
 final class SyncWebhookSubscriptionsCommand extends Command
 {
-    protected $signature = 'hubspot:webhooks:sync {--dry-run : Print the diff without writing anything}';
+    protected $signature = 'hubspot:webhooks:sync
+        {--dry-run : Print the diff without writing anything}
+        {--output= : Write the rendered project webhook component to this path instead of stdout}';
 
     protected $description = 'Reconcile configured webhook subscriptions into HubSpot without ever deleting one';
 
@@ -69,7 +72,7 @@ final class SyncWebhookSubscriptionsCommand extends Command
         return match ($appModel) {
             AppModel::LegacyPublic => $this->syncLegacyPublic($declarations, (bool) $this->option('dry-run')),
             AppModel::LegacyPrivate => $this->legacyPrivate($declarations),
-            AppModel::Project => $this->notYetImplemented($appModel),
+            AppModel::Project => $this->project($declarations),
         };
     }
 
@@ -113,16 +116,47 @@ final class SyncWebhookSubscriptionsCommand extends Command
         return $raw;
     }
 
-    private function notYetImplemented(AppModel $appModel): int
+    /**
+     * The `project` branch: an exportable webhook component, never a HubSpot request. See
+     * {@see ProjectWebhookComponent} for why -- a project-based app declares its subscriptions in
+     * a config artefact deployed WITH the project rather than through a runtime API.
+     */
+    private function project(SubscriptionDeclarations $declarations): int
     {
-        $this->error(sprintf(
-            'hubspot.webhooks.app_model is "%s", which this release does not reconcile yet -- only '
-            .'"legacy_public" runs hubspot:webhooks:sync today. Webhook RECEIPT already works for '
-            .'every app model regardless of this command.',
-            $appModel->value,
-        ));
+        try {
+            $declared = $declarations->all();
+            $targetUrl = $this->targetUrl();
+        } catch (HubspotException $exception) {
+            $this->error($exception->getMessage());
 
-        return self::FAILURE;
+            return self::FAILURE;
+        }
+
+        $json = ProjectWebhookComponent::encode(ProjectWebhookComponent::render($declared, $targetUrl));
+
+        /** @var mixed $rawOutput */
+        $rawOutput = $this->option('output');
+        $outputPath = is_string($rawOutput) && $rawOutput !== '' ? $rawOutput : null;
+
+        if ($outputPath === null) {
+            $this->line($json);
+            $this->line('');
+            $this->line(
+                'No --output given, so nothing was written to disk. Place this file at '
+                .'src/app/webhooks/<name>-hsmeta.json inside your HubSpot project so it deploys '
+                .'with your app.',
+            );
+        } elseif ((bool) $this->option('dry-run')) {
+            $this->line(sprintf('[dry run] Nothing written -- %s was not created.', $outputPath));
+        } else {
+            file_put_contents($outputPath, $json);
+            $this->line(sprintf('Wrote %s.', $outputPath));
+        }
+
+        $this->line('');
+        $this->line('Nothing was changed in HubSpot. This component ships with your project deployment.');
+
+        return self::SUCCESS;
     }
 
     private function syncLegacyPublic(SubscriptionDeclarations $declarations, bool $dryRun): int

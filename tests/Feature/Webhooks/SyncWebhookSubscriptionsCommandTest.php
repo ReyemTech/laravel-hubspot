@@ -235,30 +235,11 @@ final class SyncWebhookSubscriptionsCommandTest extends TestCase
     }
 
     /**
-     * `legacy_private` is fully implemented as of 05-05 --
-     * {@see LegacyPrivateAppSetupTest} covers its
-     * rendering, zero-request, secret-redaction and validation behaviour. This file keeps only the
-     * remaining not-yet-implemented app model.
-     */
-    public function test_project_app_model_fails_with_a_directed_not_yet_message(): void
-    {
-        config([
-            'hubspot.webhooks.app_model' => 'project',
-            'hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']],
-        ]);
-        $gateway = new FakeWebhookSubscriptionGateway;
-        app()->instance(WebhookSubscriptionGatewayContract::class, $gateway);
-
-        $exitCode = Artisan::call('hubspot:webhooks:sync');
-        $joined = implode("\n", CommandOutput::linesOf(Artisan::output()));
-
-        self::assertSame(Command::FAILURE, $exitCode);
-        self::assertSame(0, $gateway->listCalls);
-        self::assertStringContainsString('project', $joined);
-        self::assertStringContainsString('does not reconcile yet', $joined);
-    }
-
-    /**
+     * `legacy_private` and `project` are both fully implemented as of 05-05 --
+     * {@see LegacyPrivateAppSetupTest} and {@see ProjectWebhookComponentTest} cover their
+     * rendering, zero-request, secret-redaction and validation behaviour respectively. This file
+     * keeps only `legacy_public`'s own reconciliation behaviour, tested above.
+     *
      * A declaration-level failure (here, a duplicate) is caught inside `syncLegacyPublic()` itself,
      * distinct from the empty-list branch above -- both reach `ConfigurationException`, from two
      * different call sites.
