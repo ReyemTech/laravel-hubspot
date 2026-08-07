@@ -10,6 +10,8 @@ use HubSpot\Client\Crm\Associations\V4\Schema\ApiException as SdkAssociationsV4S
 use HubSpot\Client\Crm\Associations\V4\Schema\Model\Error as SdkAssociationsV4SchemaError;
 use HubSpot\Client\Crm\Objects\ApiException as SdkObjectsApiException;
 use HubSpot\Client\Crm\Objects\Model\Error as SdkObjectsError;
+use HubSpot\Client\Webhooks\ApiException as SdkWebhooksApiException;
+use HubSpot\Client\Webhooks\Model\Error as SdkWebhooksError;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use RuntimeException;
 use Throwable;
@@ -19,8 +21,8 @@ use Throwable;
  * `HubSpot\*` exception never reaches userland (STANDARDS §9). The SDK has no shared
  * `ApiException` base class — it is codegen'd once per API namespace (02-RESEARCH.md Pitfall 1,
  * 60 distinct FQCNs, each independently `extends \Exception`). Recognises the Objects,
- * Associations\V4 and Associations\V4\Schema namespaces — the three the Gateway calls into
- * (tests/Arch/SdkSurfaceTest.php proves this list stays complete against the Gateway's own
+ * Associations\V4, Associations\V4\Schema and Webhooks namespaces — the four the Gateway calls
+ * into (tests/Arch/SdkSurfaceTest.php proves this list stays complete against the Gateway's own
  * source).
  *
  * **Associations\V4\Schema was added by plan 03-03, when something finally called it.** Phase 2
@@ -31,6 +33,10 @@ use Throwable;
  * codegen'd `ApiException` and its own `Model\Error` — so without this branch a failed definitions
  * read would fall through to the untyped tail below and lose HubSpot's correlation id, which is the
  * one field a support ticket needs.
+ *
+ * **Webhooks was added by plan 05-04, for the same reason.** `Gateway\WebhookSubscriptionGateway`
+ * reads `HubSpot\Client\Webhooks\Api\SubscriptionsApi`, whose namespace has its own codegen'd
+ * `ApiException` and `Model\Error` — recognised here on the identical terms as the other three.
  */
 final class ExceptionTranslator
 {
@@ -75,6 +81,7 @@ final class ExceptionTranslator
             SdkObjectsApiException::class,
             SdkAssociationsV4ApiException::class,
             SdkAssociationsV4SchemaApiException::class,
+            SdkWebhooksApiException::class,
         ];
     }
 
@@ -124,6 +131,13 @@ final class ExceptionTranslator
             return $this->translateRecognised($exception, $correlationId);
         }
 
+        if ($exception instanceof SdkWebhooksApiException) {
+            $responseObject = $exception->getResponseObject();
+            $correlationId = $responseObject instanceof SdkWebhooksError ? $responseObject->getCorrelationId() : null;
+
+            return $this->translateRecognised($exception, $correlationId);
+        }
+
         // Not one of the recognised SDK namespaces — still never let it escape untranslated.
         return ApiException::httpError((int) $exception->getCode(), null, null, $exception, $this->redactions());
     }
@@ -152,9 +166,9 @@ final class ExceptionTranslator
      * throw site is named in the message instead.
      */
     private static function withoutTheInlinedBody(
-        SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException $exception,
+        SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException|SdkWebhooksApiException $exception,
         int $status,
-    ): SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException {
+    ): SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException|SdkWebhooksApiException {
         $message = sprintf(
             '%s (HTTP %d) thrown at %s:%d. Its message is withheld here: the SDK inlines the raw '
             .'response body, which can echo submitted values into logs. Call getResponseBody(), or '
@@ -171,7 +185,8 @@ final class ExceptionTranslator
         $rebuilt = match (true) {
             $exception instanceof SdkObjectsApiException => new SdkObjectsApiException($message, $status, $headers, $body),
             $exception instanceof SdkAssociationsV4ApiException => new SdkAssociationsV4ApiException($message, $status, $headers, $body),
-            default => new SdkAssociationsV4SchemaApiException($message, $status, $headers, $body),
+            $exception instanceof SdkAssociationsV4SchemaApiException => new SdkAssociationsV4SchemaApiException($message, $status, $headers, $body),
+            default => new SdkWebhooksApiException($message, $status, $headers, $body),
         };
 
         // The deserialised error object travels too. It is not a constructor argument -- the SDK
@@ -185,13 +200,13 @@ final class ExceptionTranslator
     }
 
     /**
-     * All three recognised namespaces expose the identical method shape (`getCode()`,
+     * All four recognised namespaces expose the identical method shape (`getCode()`,
      * `getResponseBody()`, `getResponseObject()`) since they come from the same code generator —
      * one routine handles them once the caller has already resolved the namespace-specific
      * correlation id above.
      */
     private function translateRecognised(
-        SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException $exception,
+        SdkObjectsApiException|SdkAssociationsV4ApiException|SdkAssociationsV4SchemaApiException|SdkWebhooksApiException $exception,
         ?string $correlationId,
     ): ApiException {
         $status = (int) $exception->getCode();

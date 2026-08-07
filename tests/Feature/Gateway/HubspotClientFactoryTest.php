@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Gateway;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\HandlerStack;
+use HubSpot\Client\Webhooks\Api\SubscriptionsApi;
 use HubSpot\Discovery\Discovery;
 use ReflectionClass;
 use ReflectionMethod;
@@ -256,11 +257,11 @@ final class HubspotClientFactoryTest extends TestCase
     {
         $factory = HubspotClientFactory::forWebhookManagement('998877', 'a-developer-key');
 
-        // Reaching a real Discovery instance -- with no exception -- is the whole of what this
-        // factory promises: it does not attach the retry middleware or an explicit timeout the way
-        // fromConfig() does, since a hand-run admin command is not the queued-worker transport those
-        // exist to protect.
-        self::assertNotNull($factory->discovery());
+        // Reaching a real, usable Discovery instance -- with no exception -- is the whole of what
+        // this factory promises: it does not attach the retry middleware or an explicit timeout the
+        // way fromConfig() does, since a hand-run admin command is not the queued-worker transport
+        // those exist to protect.
+        self::assertInstanceOf(SubscriptionsApi::class, $factory->discovery()->webhooks()->subscriptionsApi());
     }
 
     public function test_guzzle_middleware_returns_the_wrapped_middlewares_result_when_it_is_callable(): void

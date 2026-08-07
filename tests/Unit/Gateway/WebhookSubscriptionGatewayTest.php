@@ -92,16 +92,15 @@ final class WebhookSubscriptionGatewayTest extends TestCase
 
     public function test_the_list_request_targets_the_configured_app_id(): void
     {
-        $mock = new MockHandler([
-            new Response(200, ['Content-Type' => 'application/json'], (string) json_encode(['results' => []])),
-        ]);
-
         $capturedRequest = null;
-        $mock->push(function (RequestInterface $request) use (&$capturedRequest): Response {
-            $capturedRequest = $request;
 
-            return new Response(200, ['Content-Type' => 'application/json'], (string) json_encode(['results' => []]));
-        });
+        $mock = new MockHandler([
+            function (RequestInterface $request) use (&$capturedRequest): Response {
+                $capturedRequest = $request;
+
+                return new Response(200, ['Content-Type' => 'application/json'], (string) json_encode(['results' => []]));
+            },
+        ]);
 
         $this->gateway($mock)->list();
 

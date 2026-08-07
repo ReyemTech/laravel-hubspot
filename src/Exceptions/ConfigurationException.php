@@ -291,4 +291,91 @@ final class ConfigurationException extends LogicException implements HubspotExce
             WebhookHandler::class,
         ));
     }
+
+    /**
+     * `hubspot.webhooks.app_id` or `hubspot.webhooks.developer_api_key` is missing or empty while
+     * `Gateway\HubspotClientFactory::forWebhookManagement()` is building the management client
+     * `hubspot:webhooks:sync` needs (D-16, HOOK-02, T-05-17). Thrown before any client is
+     * constructed, for the same reason `missingToken()` is: a missing credential must never surface
+     * as an unauthenticated request that looks like a permissions problem.
+     *
+     * Named as a THIRD, distinct credential class throughout, because this package already has two:
+     * `hubspot.token` (the CRM access token) and `hubspot.webhooks.secret` (the inbound signature
+     * secret). A Developer API key authenticates neither of those calls, and neither of those
+     * credentials authenticates this one.
+     */
+    public static function missingWebhookManagementCredentials(): self
+    {
+        return new self(
+            'HUBSPOT_WEBHOOK_APP_ID and HUBSPOT_DEVELOPER_API_KEY must both be set to run '
+            .'hubspot:webhooks:sync. Find the app ID on the app\'s "Auth" tab in your HubSpot '
+            .'developer account, and create a Developer API key from your HubSpot account '
+            .'(Settings -> Integrations -> Private Apps is NOT it -- look for "Get HubSpot API '
+            .'key" / the legacy Developer API key page for your developer account). This is a '
+            .'THIRD credential, distinct from HUBSPOT_TOKEN (the CRM access token) and '
+            .'HUBSPOT_CLIENT_SECRET (the webhook signature secret) -- a HubSpot Service Key is '
+            .'never accepted here, only a Developer API key.',
+        );
+    }
+
+    /**
+     * `hubspot.webhooks.app_model` is unset or holds a value `Webhooks\AppModel` does not
+     * recognise (D-16). Thrown by `Webhooks\AppModel::resolve()`, reached from
+     * `Webhooks\Console\SyncWebhookSubscriptionsCommand::handle()` -- never while the application
+     * boots, since a consumer who never runs the sync command should never pay for this key.
+     *
+     * Deliberately no default: guessing one would either issue remote writes for a consumer who
+     * wanted a legacy-private or project-based component export, or silently refuse to reconcile
+     * for one who wanted the legacy-public API path -- the same reasoning `unknownStore()` already
+     * applies to `hubspot.store`.
+     *
+     * @param  list<string>  $validValues
+     */
+    public static function unknownWebhookAppModel(string $given, array $validValues): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.app_model is set to "%s", which is not a supported app model. '
+            .'Supported values are: %s. There is no default -- set it explicitly to the HubSpot '
+            .'app type this application actually is.',
+            $given,
+            implode(', ', $validValues),
+        ));
+    }
+
+    /**
+     * An entry in `hubspot.webhooks.subscriptions` is not an array, names no `event_type`, or names
+     * a `property_name` that is not a string (D-10, D-12). Thrown by
+     * `Webhooks\SubscriptionDeclarations::all()`, reached only when the command reads declarations
+     * -- never while the application boots, so a consumer who never runs `hubspot:webhooks:sync`
+     * never pays for a malformed entry they have not touched yet.
+     */
+    public static function invalidWebhookSubscription(mixed $entry): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.subscriptions contains an invalid entry: %s. Each entry must be an '
+            .'array naming "event_type" (a string, for example "contact.propertyChange") and, '
+            .'only for a *.propertyChange event type, "property_name" (the internal HubSpot '
+            .'property name to filter on). Given: %s.',
+            get_debug_type($entry),
+            var_export($entry, true),
+        ));
+    }
+
+    /**
+     * Two entries in `hubspot.webhooks.subscriptions` share the same identity -- the same event
+     * type and, when present, the same property name (D-10). Thrown by
+     * `Webhooks\SubscriptionDeclarations::all()`. Two declarations that would resolve to the same
+     * portal subscription make the command's own matching ambiguous: which one is the desired
+     * state, and which one is the duplicate the operator meant to delete?
+     */
+    public static function duplicateWebhookSubscription(string $eventType, ?string $propertyName): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.subscriptions declares "%s"%s more than once. Remove the duplicate '
+            .'entry -- two declarations that resolve to the same portal subscription make the '
+            .'sync command\'s own matching ambiguous.',
+            $eventType,
+            $propertyName === null ? '' : sprintf(' with property "%s"', $propertyName),
+        ));
+    }
 }
