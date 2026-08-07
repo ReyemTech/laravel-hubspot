@@ -1,0 +1,242 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Webhooks\Stores;
+
+use DateTimeImmutable;
+use DateTimeInterface;
+use Illuminate\Database\Connection;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
+use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
+use ReyemTech\Hubspot\Webhooks\WebhookEventClaim;
+use RuntimeException;
+
+/**
+ * The opt-in, database-backed durable claim/complete/prune store (HOOK-01's durable half, HOOK-03's
+ * audit table). `HUBSPOT_WEBHOOKS=true`.
+ *
+ * ## Insert-first, never read-then-write
+ *
+ * `claim()` always attempts an INSERT before it ever reads a row. Reading first and then deciding
+ * whether to insert is exactly the race two concurrent workers can both win: both observe "no row",
+ * both proceed. A unique-constraint violation on `event_id` (SQLSTATE class `23`, the same class
+ * every driver in this package's support matrix -- SQLite, MySQL, PostgreSQL -- reports an integrity
+ * constraint violation under) is the ONLY reason this insert can fail once the table genuinely
+ * exists, so catching it and re-reading is what makes the claim atomic without a `SELECT ... FOR
+ * UPDATE` this package's query-builder-only boundary has no portable way to express.
+ *
+ * ## Lease recovery is also a conditional UPDATE, not a read-then-write
+ *
+ * Reclaiming an abandoned lease runs `WHERE handled_at IS NULL AND claimed_at < deadline` as the
+ * update's own predicate and inspects the AFFECTED ROW COUNT to decide the answer, rather than
+ * reading the row, deciding it looks reclaimable, and writing separately. Two workers racing to
+ * reclaim the same stale row can both attempt this UPDATE; only one affects a row, and that one alone
+ * returns {@see WebhookEventClaim::Acquired}.
+ *
+ * ## A missing table names the fix
+ *
+ * `HUBSPOT_WEBHOOKS=true` without `php artisan migrate` is the most likely first encounter with this
+ * store, and `SQLSTATE[42S02]` teaches the reader nothing about this package (STANDARDS §9). Every
+ * public method runs through {@see self::guarded()}, which asks the schema whether the table is
+ * genuinely absent before saying so -- a refused connection or a hand-edited schema keeps its own
+ * exception, because a directed error pointing at the wrong fix is worse than an undirected one. This
+ * mirrors `Registry\Stores\DatabaseAssociationTypeStore::guarded()` in shape.
+ */
+final class DatabaseWebhookEventStore implements WebhookEventStore
+{
+    public const TABLE = 'hubspot_webhook_events';
+
+    public function __construct(
+        private readonly Connection $connection,
+        private readonly bool $auditPayload,
+        private readonly int $claimLeaseSeconds,
+    ) {}
+
+    public function claim(NormalizedWebhookEvent $event): WebhookEventClaim
+    {
+        return $this->guarded(function () use ($event): WebhookEventClaim {
+            try {
+                $this->rows()->insert([
+                    'event_id' => $event->eventId,
+                    'subscription_type' => $event->subscriptionType,
+                    'portal_id' => $event->portalId,
+                    'object_id' => $event->objectId,
+                    'occurred_at' => $event->occurredAt,
+                    'attempts' => 1,
+                    'claimed_at' => Carbon::now(),
+                    'handled_at' => null,
+                    'payload' => $this->payloadFor($event),
+                    'created_at' => Carbon::now(),
+                    'updated_at' => Carbon::now(),
+                ]);
+
+                return WebhookEventClaim::Acquired;
+            } catch (QueryException $exception) {
+                if (! self::isIntegrityConstraintViolation($exception)) {
+                    throw $exception;
+                }
+            }
+
+            // A row already exists for this eventId -- either a genuine concurrent claim, a
+            // HubSpot redelivery, or a lease recovery. resolveExistingClaim() decides which.
+            return $this->resolveExistingClaim($event);
+        });
+    }
+
+    public function complete(string $eventId): void
+    {
+        $this->guarded(function () use ($eventId): void {
+            $this->rows()
+                ->where('event_id', $eventId)
+                ->update(['handled_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+        });
+    }
+
+    public function prune(DateTimeImmutable $before): int
+    {
+        return $this->guarded(fn (): int => $this->rows()
+            ->whereNotNull('handled_at')
+            ->where('handled_at', '<', $before)
+            ->delete());
+    }
+
+    /**
+     * Reads the row this `eventId` already has and answers handled, held, or -- if the existing
+     * claim's lease has elapsed -- reclaims it atomically and answers acquired.
+     *
+     * **No recursion, and no read-then-decide-then-write gap left unresolved.** A row that is
+     * `null` here (the unique-constraint failure implied one existed, but a concurrent `prune()` or
+     * hand-edited schema removed it since) falls through the identical array cast every other
+     * branch uses -- `(array) null` is `[]` -- so a missing `claimed_at` surfaces through
+     * `parseTimestamp()`'s own directed error rather than a second special case. If the conditional
+     * reclaim UPDATE below affects zero rows, a concurrent worker's write already changed this row
+     * between this method's own read and its write -- `Held` is the correct answer either way,
+     * because `ProcessWebhookEventJob::handle()` responds to `Held` and `Handled` identically (do
+     * nothing, do not fail the job), so re-deriving which of the two is exact would change no
+     * caller-observable behaviour.
+     */
+    private function resolveExistingClaim(NormalizedWebhookEvent $event): WebhookEventClaim
+    {
+        $row = $this->rows()->where('event_id', $event->eventId)->first();
+
+        // A plain object with dynamic properties -- see DatabaseAssociationTypeStore::hydrate()'s
+        // own docblock for why every store in this package decodes through an array cast rather
+        // than trusting an unchecked property access on the query builder's generic return type.
+        /** @var array<string, mixed> $columns */
+        $columns = (array) $row;
+
+        if (($columns['handled_at'] ?? null) !== null) {
+            return WebhookEventClaim::Handled;
+        }
+
+        $leaseDeadline = Carbon::now()->subSeconds($this->claimLeaseSeconds);
+
+        if (self::parseTimestamp($columns['claimed_at'] ?? null)->greaterThan($leaseDeadline)) {
+            return WebhookEventClaim::Held;
+        }
+
+        $reclaimed = $this->rows()
+            ->where('event_id', $event->eventId)
+            ->whereNull('handled_at')
+            ->where('claimed_at', '<', $leaseDeadline)
+            ->increment('attempts', 1, ['claimed_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+
+        return $reclaimed > 0 ? WebhookEventClaim::Acquired : WebhookEventClaim::Held;
+    }
+
+    /**
+     * Every driver in this package's support matrix (SQLite, MySQL, PostgreSQL) returns a
+     * `timestamp()` column as a string through the plain query builder used here (no Eloquent cast
+     * is in play). Rejected rather than silently cast when it is not a string, because a value that
+     * is not one means the schema or the row holds a shape this store's own migration never
+     * produces.
+     */
+    private static function parseTimestamp(mixed $value): Carbon
+    {
+        if (! is_string($value)) {
+            throw new RuntimeException(sprintf(
+                'hubspot_webhook_events.claimed_at held a %s, which no supported driver produces '
+                .'for a timestamp column read through the query builder.',
+                get_debug_type($value),
+            ));
+        }
+
+        return Carbon::parse($value);
+    }
+
+    private function rows(): Builder
+    {
+        return $this->connection->table(self::TABLE);
+    }
+
+    /**
+     * The audit payload, or null when `hubspot.webhooks.audit_payload` is false (the default).
+     * Deliberately built from `NormalizedWebhookEvent`'s own package-owned fields only -- the raw
+     * request body, the signature header and the configured secret never reach this store, so there
+     * is nothing here that could carry any of the three (T-05-07, threat register).
+     */
+    private function payloadFor(NormalizedWebhookEvent $event): ?string
+    {
+        if (! $this->auditPayload) {
+            return null;
+        }
+
+        return json_encode([
+            'eventId' => $event->eventId,
+            'subscriptionType' => $event->subscriptionType,
+            'portalId' => $event->portalId,
+            'appId' => $event->appId,
+            'objectId' => $event->objectId,
+            'occurredAt' => $event->occurredAt->format(DateTimeInterface::ATOM),
+            'attemptNumber' => $event->attemptNumber,
+            'changeSource' => $event->changeSource,
+            'changeFlag' => $event->changeFlag,
+            'propertyName' => $event->propertyName,
+            'propertyValue' => $event->propertyValue,
+            'associationType' => $event->associationType,
+            'fromObjectId' => $event->fromObjectId,
+            'toObjectId' => $event->toObjectId,
+        ], JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * SQLSTATE class `23` is "Integrity Constraint Violation" on every driver this package's
+     * support matrix covers -- SQLite and MySQL both report `23000`, PostgreSQL reports `23505` for
+     * a unique violation specifically, and both fall under the same two-character class prefix. The
+     * only constraint this table declares is the unique index on `event_id`, so within `claim()`'s
+     * insert this is unambiguous.
+     */
+    private static function isIntegrityConstraintViolation(QueryException $exception): bool
+    {
+        return str_starts_with((string) $exception->getCode(), '23');
+    }
+
+    /**
+     * Runs one operation, translating "the table this package owns has never been created" into a
+     * message naming the command that creates it, and leaving every other database failure alone.
+     *
+     * @template TReturn
+     *
+     * @param  callable(): TReturn  $operation
+     * @return TReturn
+     *
+     * @throws ConfigurationException if the table is genuinely absent
+     */
+    private function guarded(callable $operation): mixed
+    {
+        try {
+            return $operation();
+        } catch (QueryException $exception) {
+            if ($this->connection->getSchemaBuilder()->hasTable(self::TABLE)) {
+                throw $exception;
+            }
+
+            throw ConfigurationException::missingWebhookEventsTable();
+        }
+    }
+}

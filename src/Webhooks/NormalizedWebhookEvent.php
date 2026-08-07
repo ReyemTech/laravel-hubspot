@@ -31,6 +31,17 @@ use ReyemTech\Hubspot\Gateway\ObjectRef;
  */
 final readonly class NormalizedWebhookEvent
 {
+    /**
+     * The width `database/migrations/webhooks/*_create_hubspot_webhook_events_table.php` bounds
+     * `event_id` to. Enforced here, at normalization, rather than left to the database driver: a
+     * driver that silently truncated an over-long value would alias two distinct HubSpot events
+     * onto the same dedupe row (T-05-11, 05-02-PLAN.md threat register), which is exactly the
+     * silent-wrong-id failure class this package exists to prevent. Rejecting it here means the
+     * failure surfaces as a `400` (D-13) naming the shape problem, never as a query that quietly
+     * wrote the wrong key.
+     */
+    public const int MAX_EVENT_ID_LENGTH = 191;
+
     public function __construct(
         public string $eventId,
         public string $subscriptionType,
@@ -60,7 +71,7 @@ final readonly class NormalizedWebhookEvent
     public static function fromArray(array $item): self
     {
         return new self(
-            eventId: self::requireIdentifier($item, 'eventId'),
+            eventId: self::requireEventId($item),
             subscriptionType: self::requireString($item, 'subscriptionType'),
             portalId: self::requireInt($item, 'portalId'),
             appId: self::optionalInt($item, 'appId'),
@@ -93,6 +104,31 @@ final readonly class NormalizedWebhookEvent
         }
 
         throw new InvalidArgumentException(sprintf('A webhook event is missing a valid "%s".', $key));
+    }
+
+    /**
+     * `eventId` specifically -- see {@see self::MAX_EVENT_ID_LENGTH}'s own docblock for why this is
+     * the one identifier this class bounds the length of. `objectId` and the other opaque
+     * identifiers below are not columns this package indexes on a fixed width, so they carry no
+     * equivalent restriction.
+     *
+     * @param  array<string, mixed>  $item
+     */
+    private static function requireEventId(array $item): string
+    {
+        $eventId = self::requireIdentifier($item, 'eventId');
+
+        if (strlen($eventId) > self::MAX_EVENT_ID_LENGTH) {
+            throw new InvalidArgumentException(sprintf(
+                'A webhook event\'s "eventId" is %d characters, which exceeds the %d-character '
+                .'column width hubspot_webhook_events indexes it at. Rejecting it here rather than '
+                .'truncating it keeps two distinct events from silently aliasing onto one dedupe row.',
+                strlen($eventId),
+                self::MAX_EVENT_ID_LENGTH,
+            ));
+        }
+
+        return $eventId;
     }
 
     /**

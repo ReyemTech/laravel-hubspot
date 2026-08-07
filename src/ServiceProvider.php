@@ -34,7 +34,9 @@ use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\RouteRegistrar;
+use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -177,6 +179,26 @@ final class ServiceProvider extends BaseServiceProvider
 
             return new WebhookGateway($secret);
         });
+
+        // Shared, like AssociationTypeStore above: this store holds no transport Hubspot::fake()
+        // would ever need to invalidate, only a database connection. `hubspot.webhooks.audit_payload`
+        // and `hubspot.webhooks.claim_lease` are read once, at resolution -- both are plain scalars
+        // (config:cache-safe), not credentials, so there is no on-demand-secret reason to defer this
+        // the way WebhookGatewayContract above does.
+        $this->app->singleton(WebhookEventStore::class, function (Application $app): DatabaseWebhookEventStore {
+            $config = $app->make('config');
+
+            /** @var bool $auditPayload */
+            $auditPayload = $config->get('hubspot.webhooks.audit_payload');
+            /** @var int $claimLease */
+            $claimLease = $config->get('hubspot.webhooks.claim_lease');
+
+            return new DatabaseWebhookEventStore(
+                $app->make(DatabaseManager::class)->connection(),
+                $auditPayload,
+                $claimLease,
+            );
+        });
     }
 
     /**
@@ -291,6 +313,11 @@ final class ServiceProvider extends BaseServiceProvider
      * plan early: gated on `hubspot.models` being non-empty rather than rewriting the entry above,
      * so an install with no bound models still registers no migration path at all (REG-03).
      *
+     * `database/migrations/webhooks` (D-02, Phase 5) is the THIRD, gated on `hubspot.webhooks.enabled`
+     * -- a distinct flag from both of the above, so an install that syncs models or reconciles the
+     * registry through the database store still registers no webhook migration path until it opts
+     * into that separately.
+     *
      * @return array<string, bool> absolute directory => whether to load it
      */
     private function migrationGroups(): array
@@ -298,6 +325,7 @@ final class ServiceProvider extends BaseServiceProvider
         return [
             __DIR__.'/../database/migrations' => $this->app->make('config')->get('hubspot.store') === 'database',
             __DIR__.'/../database/migrations/sync' => $this->app->make('config')->get('hubspot.models') !== [],
+            __DIR__.'/../database/migrations/webhooks' => $this->app->make('config')->get('hubspot.webhooks.enabled') === true,
         ];
     }
 

@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 
 use Closure;
 use DateTimeImmutable;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
@@ -19,6 +20,7 @@ use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\WebhookEventClaim;
+use RuntimeException;
 
 mutates(DatabaseWebhookEventStore::class);
 
@@ -233,10 +235,10 @@ final class WebhookEventStoreTest extends TestCase
 
         $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-audit')->first();
         self::assertNotNull($row);
-        self::assertNotNull($row->payload);
+        self::assertIsString($row->payload);
 
         /** @var array<string, mixed> $decoded */
-        $decoded = json_decode((string) $row->payload, true, flags: JSON_THROW_ON_ERROR);
+        $decoded = json_decode($row->payload, true, flags: JSON_THROW_ON_ERROR);
         self::assertSame('evt-audit', $decoded['eventId']);
         self::assertSame('contact.creation', $decoded['subscriptionType']);
     }
@@ -252,5 +254,74 @@ final class WebhookEventStoreTest extends TestCase
         $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-complete')->first();
         self::assertNotNull($row);
         self::assertNotNull($row->handled_at);
+    }
+
+    /**
+     * SQLite's loose column typing means a `timestamp()` column can genuinely hold a non-string
+     * value if a row is written outside this store's own `claim()`/`complete()` -- a hand-edited
+     * schema or a manual `INSERT`, not something an operator following this package's documented
+     * surface would produce. `parseTimestamp()` rejects it rather than silently coercing it.
+     */
+    public function test_a_non_string_claimed_at_raises_rather_than_silently_coercing(): void
+    {
+        $this->migrate();
+
+        DB::statement(
+            'INSERT INTO '.DatabaseWebhookEventStore::TABLE
+            .' (event_id, subscription_type, portal_id, attempts, claimed_at, created_at, updated_at) '
+            .'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            ['evt-corrupt', 'contact.creation', 62515, 1, 12345, now(), now()],
+        );
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('hubspot_webhook_events.claimed_at held a int,');
+
+        $this->store()->claim(self::event('evt-corrupt'));
+    }
+
+    /**
+     * A conditional reclaim UPDATE that affects zero rows means a concurrent worker's write already
+     * changed this row between this store's own read and its write. Simulated deterministically via
+     * `DB::listen()`, which fires synchronously right after the read `resolveExistingClaim()`
+     * performs and before its own reclaim UPDATE runs -- no real concurrency or sleeping needed.
+     * `Held` is the correct answer regardless of whether the other worker reclaimed or completed it:
+     * `ProcessWebhookEventJob::handle()` responds to both identically.
+     */
+    public function test_a_lost_reclaim_race_answers_held_rather_than_recursing(): void
+    {
+        $this->migrate();
+        $store = $this->store();
+
+        $store->claim(self::event('evt-race'));
+
+        DB::table(DatabaseWebhookEventStore::TABLE)
+            ->where('event_id', 'evt-race')
+            ->update(['claimed_at' => now()->subSeconds(901)]);
+
+        $armed = true;
+
+        DB::listen(function (QueryExecuted $query) use (&$armed): void {
+            if (! $armed) {
+                return;
+            }
+
+            if (
+                str_contains($query->sql, 'select *')
+                && str_contains($query->sql, DatabaseWebhookEventStore::TABLE)
+                && str_contains($query->sql, 'event_id')
+            ) {
+                $armed = false;
+
+                // The "concurrent worker": reclaims the row first, so the resolveExistingClaim()
+                // call already in flight loses the race when its own UPDATE runs next.
+                DB::table(DatabaseWebhookEventStore::TABLE)
+                    ->where('event_id', 'evt-race')
+                    ->update(['claimed_at' => now(), 'attempts' => 2]);
+            }
+        });
+
+        $claim = $store->claim(self::event('evt-race'));
+
+        self::assertSame(WebhookEventClaim::Held, $claim);
     }
 }

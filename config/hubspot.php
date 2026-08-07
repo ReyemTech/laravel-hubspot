@@ -363,12 +363,41 @@ return [
     | - tolerance: the signature timestamp window, in seconds. Too large
     |   widens the replay-attack window; too small rejects valid requests
     |   under normal clock drift.
+    | - enabled: the false-by-default feature flag (D-02, HOOK-03). This is
+    |   what activates the `hubspot_webhook_events` migration — leaving it
+    |   false preserves zero-migration install exactly the way HUBSPOT_STORE
+    |   and hubspot.models already do for their own migration groups. Setting
+    |   it true is what makes a redelivered eventId a no-op after successful
+    |   handling (D-01): the receipt route and queued job both work with it
+    |   false, but with no persisted claim a HubSpot redelivery reprocesses
+    |   the event every time.
+    | - retention_days: how long a HANDLED row survives before
+    |   `hubspot:webhooks:prune` deletes it (D-04). A claimed-but-unhandled
+    |   row is never pruned regardless of age — it is still awaiting its
+    |   lease, not its retention window.
+    | - audit_payload: false by default because the persisted item carries
+    |   the consumer's OWN customers' personal data (T-05-07, threat
+    |   register) — a package that defaulted this true would be an opt-out
+    |   data retention decision made on somebody else's behalf. Set true only
+    |   when the operator wants the normalized item inspectable alongside the
+    |   claim row it dedupes.
+    | - claim_lease: seconds a claim holds before it is considered
+    |   abandoned and becomes re-claimable (D-01, D-03). A worker that dies
+    |   after claiming and before completing costs a delay of at most this
+    |   many seconds, never a permanently stranded event
+    |   (05-RESEARCH.md Pitfall 3). Plain scalars only, here and everywhere
+    |   in this file — `php artisan config:cache` serialises with
+    |   var_export(), which throws on a closure.
     |
     */
     'webhooks' => [
         'enforce' => (bool) env('HUBSPOT_WEBHOOK_ENFORCE', true),
         'secret' => env('HUBSPOT_CLIENT_SECRET'),
         'tolerance' => 300,
+        'enabled' => (bool) env('HUBSPOT_WEBHOOKS', false),
+        'retention_days' => (int) env('HUBSPOT_WEBHOOK_RETENTION_DAYS', 30),
+        'audit_payload' => (bool) env('HUBSPOT_WEBHOOK_AUDIT_PAYLOAD', false),
+        'claim_lease' => 900,
     ],
 
 ];

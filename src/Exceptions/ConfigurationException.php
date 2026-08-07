@@ -231,4 +231,20 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'that sends this webhook -- verification fails closed until it is.',
         );
     }
+
+    /**
+     * `HUBSPOT_WEBHOOKS=true` is set but the `hubspot_webhook_events` table this package owns has
+     * never been created. Raised by `Webhooks\Stores\DatabaseWebhookEventStore` in place of the
+     * driver's own `SQLSTATE[42S02]`, mirroring `missingRegistryTable()`'s shape exactly: name the
+     * table, name `php artisan migrate`, and pre-empt the publish question, because every other
+     * Laravel package that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingWebhookEventsTable(): self
+    {
+        return new self(
+            'HUBSPOT_WEBHOOKS is true but the "hubspot_webhook_events" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_WEBHOOKS=true.',
+        );
+    }
 }
