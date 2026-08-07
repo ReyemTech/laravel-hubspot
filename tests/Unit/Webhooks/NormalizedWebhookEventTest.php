@@ -127,4 +127,29 @@ final class NormalizedWebhookEventTest extends TestCase
 
         NormalizedWebhookEvent::fromArray($item);
     }
+
+    /**
+     * T-05-11 (05-02-PLAN.md threat register): a truncated `eventId` would silently alias two
+     * distinct events onto the same `hubspot_webhook_events` dedupe row, so an over-long id is
+     * rejected here rather than truncated to fit the column.
+     */
+    public function test_it_accepts_an_event_id_at_exactly_the_column_width(): void
+    {
+        $item = self::rawItem();
+        $item['eventId'] = str_repeat('a', NormalizedWebhookEvent::MAX_EVENT_ID_LENGTH);
+
+        $event = NormalizedWebhookEvent::fromArray($item);
+
+        self::assertSame(NormalizedWebhookEvent::MAX_EVENT_ID_LENGTH, strlen($event->eventId));
+    }
+
+    public function test_it_rejects_an_event_id_exceeding_the_column_width(): void
+    {
+        $item = self::rawItem();
+        $item['eventId'] = str_repeat('a', NormalizedWebhookEvent::MAX_EVENT_ID_LENGTH + 1);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
 }
