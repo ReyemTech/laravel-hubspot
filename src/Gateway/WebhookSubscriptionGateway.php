@@ -103,6 +103,11 @@ final class WebhookSubscriptionGateway implements WebhookSubscriptionGatewayCont
         $request = new SubscriptionPatchRequest(['active' => $subscription->active]);
 
         try {
+            // The (int) cast documents the SDK's own untyped $subscription_id parameter as
+            // numeric; it is an equivalent mutant under pest --mutate's RemoveIntegerCast, since
+            // SubscriptionsApi::update() interpolates the value into the URL path via
+            // ObjectSerializer::toPathValue(), which stringifies an int and a numeric string
+            // identically -- no request on the wire can distinguish the two.
             $result = $this->subscriptionsApi()->update((int) $subscription->portalId, $this->appId, $request);
         } catch (SdkWebhooksApiException $exception) {
             throw $this->exceptionTranslator->translate($exception);

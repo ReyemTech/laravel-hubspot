@@ -195,10 +195,92 @@ final class WebhookSubscriptionGatewayTest extends TestCase
     {
         $mock = new MockHandler;
 
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('requires $subscription->portalId');
+        try {
+            $this->gateway($mock)->update(new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true));
+            self::fail('Expected a null portalId to throw.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame(
+                'WebhookSubscriptionGateway::update() requires $subscription->portalId -- only a '
+                .'subscription list() or create() returned carries one.',
+                $exception->getMessage(),
+            );
+        }
+    }
 
-        $this->gateway($mock)->update(new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true));
+    /**
+     * The wire, not just the return value -- proves `event_type`, `property_name` and `active` are
+     * all actually sent, not merely accepted as constructor arguments this test never inspected.
+     */
+    public function test_create_sends_all_three_declared_fields_on_the_wire(): void
+    {
+        $capturedBody = null;
+
+        $mock = new MockHandler([
+            function (RequestInterface $request) use (&$capturedBody): Response {
+                $capturedBody = (string) $request->getBody();
+
+                return new Response(201, ['Content-Type' => 'application/json'], (string) json_encode([
+                    'id' => '1',
+                    'eventType' => 'contact.propertyChange',
+                    'propertyName' => 'email',
+                    'active' => false,
+                    'createdAt' => '2026-01-01T00:00:00.000Z',
+                ]));
+            },
+        ]);
+
+        $this->gateway($mock)->create(new WebhookSubscription(
+            eventType: 'contact.propertyChange',
+            propertyName: 'email',
+            active: false,
+        ));
+
+        self::assertNotNull($capturedBody);
+        /** @var array<string, mixed> $decoded */
+        $decoded = json_decode($capturedBody, true);
+        self::assertSame('contact.propertyChange', $decoded['eventType']);
+        self::assertSame('email', $decoded['propertyName']);
+        self::assertFalse($decoded['active']);
+    }
+
+    /**
+     * The wire, again: `update()` targets the subscription's own portal id in the URL and sends
+     * exactly the requested `active` value in the body.
+     */
+    public function test_update_targets_the_portal_id_in_the_url_and_sends_the_active_flag(): void
+    {
+        $capturedRequest = null;
+        $capturedBody = null;
+
+        $mock = new MockHandler([
+            function (RequestInterface $request) use (&$capturedRequest, &$capturedBody): Response {
+                $capturedRequest = $request;
+                $capturedBody = (string) $request->getBody();
+
+                return new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+                    'id' => '77',
+                    'eventType' => 'deal.creation',
+                    'active' => false,
+                    'createdAt' => '2026-01-01T00:00:00.000Z',
+                ]));
+            },
+        ]);
+
+        $this->gateway($mock)->update(new WebhookSubscription(
+            eventType: 'deal.creation',
+            propertyName: null,
+            active: false,
+            portalId: '77',
+        ));
+
+        self::assertNotNull($capturedRequest);
+        self::assertStringContainsString('/subscriptions/77', (string) $capturedRequest->getUri());
+
+        self::assertNotNull($capturedBody);
+        /** @var array<string, mixed> $decoded */
+        $decoded = json_decode($capturedBody, true);
+        self::assertFalse($decoded['active']);
+        self::assertArrayNotHasKey('eventType', $decoded);
     }
 
     /**
