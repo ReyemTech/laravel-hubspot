@@ -31,8 +31,15 @@ use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
  * makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a second,
  * concurrent run of the same handlers.
  *
- * Recognized-subscription-type events and configured handlers are a later plan's concern
- * (05-CONTEXT.md D-06, D-08); this plan ships the generic receipt path only.
+ * ## Typed events (05-03, D-06, D-08, D-09)
+ *
+ * Immediately after the generic dispatch, `handle()` asks {@see TypedEventMap} to resolve at most
+ * one typed event class for the item's `subscriptionType` and, when one resolves, dispatches it
+ * too -- never before the generic event, since D-06 makes the generic one the only event every item
+ * is guaranteed to reach. An unrecognized subscription type resolves nothing, and no second event is
+ * dispatched for it.
+ *
+ * Configured handler dispatch is a later plan's concern (05-CONTEXT.md D-07, D-08).
  *
  * Collaborators are resolved as `handle()` parameters, never constructor-captured properties — the
  * same reason `Sync\SyncHubspotObjectJob` does (see its own docblock): a dispatcher or store captured
@@ -53,7 +60,7 @@ final class ProcessWebhookEventJob implements ShouldQueue
 
     public function __construct(public NormalizedWebhookEvent $event) {}
 
-    public function handle(Dispatcher $events, WebhookEventStore $store): void
+    public function handle(Dispatcher $events, WebhookEventStore $store, TypedEventMap $typedEvents): void
     {
         $claim = $store->claim($this->event);
 
@@ -62,6 +69,12 @@ final class ProcessWebhookEventJob implements ShouldQueue
         }
 
         $events->dispatch(new HubspotWebhookReceived($this->event));
+
+        $typedEventClass = $typedEvents->resolve($this->event->subscriptionType);
+
+        if ($typedEventClass !== null) {
+            $events->dispatch(new $typedEventClass($this->event));
+        }
 
         $store->complete($this->event->eventId);
     }
