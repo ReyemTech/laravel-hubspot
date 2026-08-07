@@ -349,6 +349,99 @@ final class SyncWebhookSubscriptionsCommandTest extends TestCase
         self::assertContains('[dry run] Reconciling app 998877.', $lines);
     }
 
+    /**
+     * The tally is the command's headline output — the one line an operator reads to know what a
+     * reconciliation did — and nothing pinned it. A mixed run is used deliberately: with 1/1/1 each
+     * counter is distinguishable from the others, so a miscounted or transposed field cannot hide
+     * behind a shared value.
+     */
+    public function test_the_summary_tallies_one_of_each_outcome_exactly(): void
+    {
+        self::legacyPublic();
+        config(['hubspot.webhooks.subscriptions' => [
+            ['event_type' => 'deal.creation'],                          // absent  -> created
+            ['event_type' => 'ticket.creation'],                        // matches -> unchanged
+            ['event_type' => 'contact.creation'],                       // differs -> updated
+        ]]);
+
+        $gateway = new FakeWebhookSubscriptionGateway([
+            new WebhookSubscription(eventType: 'ticket.creation', propertyName: null, active: true, portalId: '1'),
+            new WebhookSubscription(eventType: 'contact.creation', propertyName: null, active: false, portalId: '2'),
+        ]);
+        $this->bindGateway($gateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertSame(Command::SUCCESS, $exitCode);
+        self::assertSame(1, $gateway->createCalls);
+        self::assertSame(1, $gateway->updateCalls);
+        self::assertContains('1 created, 1 updated, 1 unchanged.', $lines);
+    }
+
+    /**
+     * The dry-run prefix on the summary specifically: without this, a run that wrote nothing and a
+     * run that wrote everything are indistinguishable in the line an operator actually reads.
+     */
+    public function test_the_summary_is_prefixed_and_writes_nothing_under_dry_run(): void
+    {
+        self::legacyPublic();
+        config(['hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']]]);
+
+        $gateway = new FakeWebhookSubscriptionGateway;
+        $this->bindGateway($gateway);
+
+        Artisan::call('hubspot:webhooks:sync', ['--dry-run' => true]);
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertContains('[dry run] 1 created, 0 updated, 0 unchanged.', $lines);
+        self::assertNotContains('1 created, 0 updated, 0 unchanged.', $lines);
+        self::assertSame(0, $gateway->createCalls);
+    }
+
+    /**
+     * A zero-work run must still report zeroes rather than silently printing nothing — this is what
+     * distinguishes "reconciled, nothing to do" from "did not run".
+     */
+    public function test_a_run_with_nothing_to_do_reports_all_three_counters_at_zero(): void
+    {
+        self::legacyPublic();
+        config(['hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']]]);
+
+        $this->bindGateway(new FakeWebhookSubscriptionGateway([
+            new WebhookSubscription(eventType: 'deal.creation', propertyName: null, active: true, portalId: '1'),
+        ]));
+
+        Artisan::call('hubspot:webhooks:sync');
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertContains('0 created, 0 updated, 1 unchanged.', $lines);
+    }
+
+    /**
+     * The empty-declaration error names the config key AND carries a copy-pasteable example. Pinned
+     * as a whole line because the message is assembled by concatenation — exactly the shape
+     * `tests/Support/CommandOutput.php` records as having leaked 31 concat-mutation survivors when
+     * asserted by substring.
+     */
+    public function test_an_empty_declaration_list_errors_with_the_whole_directed_message(): void
+    {
+        self::legacyPublic();
+        config(['hubspot.webhooks.subscriptions' => []]);
+        $this->bindGateway(new FakeWebhookSubscriptionGateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertContains(
+            'hubspot.webhooks.subscriptions is empty. Add at least one declaration, for example '
+            .'["event_type" => "contact.propertyChange", "property_name" => "email"], then run this '
+            .'command again.',
+            $lines,
+        );
+    }
+
     public function test_the_command_is_registered_by_the_service_provider(): void
     {
         self::legacyPublic();
