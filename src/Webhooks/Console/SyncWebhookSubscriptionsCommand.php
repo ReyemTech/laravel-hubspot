@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Webhooks\Console;
 
 use Illuminate\Console\Command;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Gateway\Contracts\WebhookSubscriptionGatewayContract;
 use ReyemTech\Hubspot\Gateway\WebhookSubscription;
 use ReyemTech\Hubspot\Webhooks\AppModel;
+use ReyemTech\Hubspot\Webhooks\ManualSetupInstructions;
 use ReyemTech\Hubspot\Webhooks\SubscriptionDeclarations;
 
 /**
@@ -27,13 +29,15 @@ use ReyemTech\Hubspot\Webhooks\SubscriptionDeclarations;
  * `HubspotException` is printed via `getMessage()` alone, since every member's message already
  * names its own fix.
  *
- * ## Only `legacy_public` is implemented
+ * ## Three app models, three different behaviours (D-16)
  *
- * `hubspot.webhooks.app_model` accepts `legacy_private` and `project` too (D-16), and both are
- * a later plan's work. Dispatched through an explicit `match` over `Webhooks\AppModel` so that
- * plan adds branches rather than rewriting this method -- and both unfinished branches fail with a
- * directed message rather than exiting zero having done nothing, which is this package's own
- * standing rule against a silent no-op.
+ * `legacy_public` reconciles subscriptions through `WebhookSubscriptionGatewayContract` -- the
+ * only path that ever calls HubSpot. `legacy_private` renders validated manual setup instructions
+ * via `Webhooks\ManualSetupInstructions` and never resolves the gateway at all, because HubSpot
+ * exposes no subscription-management API for that app model. `project` remains this release's one
+ * unfinished branch, failing with a directed message rather than exiting zero having done nothing
+ * -- a later plan's work, dispatched through an explicit `match` over `Webhooks\AppModel` so that
+ * plan adds a branch rather than rewriting this method.
  */
 final class SyncWebhookSubscriptionsCommand extends Command
 {
@@ -64,8 +68,49 @@ final class SyncWebhookSubscriptionsCommand extends Command
 
         return match ($appModel) {
             AppModel::LegacyPublic => $this->syncLegacyPublic($declarations, (bool) $this->option('dry-run')),
-            AppModel::LegacyPrivate, AppModel::Project => $this->notYetImplemented($appModel),
+            AppModel::LegacyPrivate => $this->legacyPrivate($declarations),
+            AppModel::Project => $this->notYetImplemented($appModel),
         };
+    }
+
+    /**
+     * The `legacy_private` branch: validated, rendered manual setup guidance, never a HubSpot
+     * request. See {@see ManualSetupInstructions} for why -- HubSpot exposes no
+     * subscription-management API for this app model at all.
+     */
+    private function legacyPrivate(SubscriptionDeclarations $declarations): int
+    {
+        try {
+            $declared = $declarations->all();
+            $targetUrl = $this->targetUrl();
+        } catch (HubspotException $exception) {
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
+
+        foreach (ManualSetupInstructions::render($declared, $targetUrl) as $line) {
+            $this->line($line);
+        }
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * `hubspot.webhooks.target_url`, validated. Both non-API artefacts embed this value, and a
+     * wrong one silently sends production traffic elsewhere -- see
+     * `ConfigurationException::missingWebhookTargetUrl()`.
+     */
+    private function targetUrl(): string
+    {
+        /** @var mixed $raw */
+        $raw = $this->laravel->make('config')->get('hubspot.webhooks.target_url');
+
+        if (! is_string($raw) || trim($raw) === '') {
+            throw ConfigurationException::missingWebhookTargetUrl();
+        }
+
+        return $raw;
     }
 
     private function notYetImplemented(AppModel $appModel): int

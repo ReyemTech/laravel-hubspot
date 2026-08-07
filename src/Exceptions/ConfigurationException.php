@@ -378,4 +378,28 @@ final class ConfigurationException extends LogicException implements HubspotExce
             $propertyName === null ? '' : sprintf(' with property "%s"', $propertyName),
         ));
     }
+
+    /**
+     * `hubspot.webhooks.target_url` (env `HUBSPOT_WEBHOOK_TARGET_URL`) is missing or empty while
+     * either non-API app-model path is about to render an artefact that embeds it (D-16, HOOK-02).
+     * Thrown by `Webhooks\Console\SyncWebhookSubscriptionsCommand` before rendering either
+     * `Webhooks\ManualSetupInstructions` or `Webhooks\ProjectWebhookComponent` -- never while the
+     * application boots, since a consumer who never runs `hubspot:webhooks:sync` never pays for it.
+     *
+     * The message says why a WRONG value is dangerous, not merely that a missing one is broken:
+     * HubSpot signs the URI it actually calls, so a target URL that does not match where
+     * `Route::hubspotWebhook()` is mounted produces rejected deliveries that look exactly like a
+     * credential problem rather than a configuration one -- the same failure mode
+     * `missingWebhookSecret()` exists to name before it is mistaken for something else.
+     */
+    public static function missingWebhookTargetUrl(): self
+    {
+        return new self(
+            'HUBSPOT_WEBHOOK_TARGET_URL is not set. Set it to the absolute URL where '
+            .'Route::hubspotWebhook() is mounted -- the exact URL HubSpot will call. A wrong '
+            .'value here is dangerous, not merely broken: HubSpot signs the URI it calls, so a '
+            .'mismatch produces rejected deliveries that look like a credential problem rather '
+            .'than a configuration one.',
+        );
+    }
 }

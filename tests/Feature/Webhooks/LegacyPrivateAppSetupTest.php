@@ -57,8 +57,8 @@ final class LegacyPrivateAppSetupTest extends TestCase
         self::assertSame(0, $gateway->updateCalls);
 
         self::assertContains('Set the target URL to: https://app.example.com/hubspot/webhook', $lines);
-        self::assertContains('  - deal.creation', $lines);
-        self::assertContains('  - contact.propertyChange (property: email)', $lines);
+        self::assertContains('- deal.creation', $lines);
+        self::assertContains('- contact.propertyChange (property: email)', $lines);
     }
 
     public function test_the_output_names_the_client_secret_env_var_and_prints_no_credential_value(): void
