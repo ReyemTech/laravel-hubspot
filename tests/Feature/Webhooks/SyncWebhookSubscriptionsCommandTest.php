@@ -307,6 +307,48 @@ final class SyncWebhookSubscriptionsCommandTest extends TestCase
         self::assertSame(0, $secondGateway->updateCalls);
     }
 
+    /**
+     * T-05-17: `hubspot:webhooks:sync` reconciles **app-level** subscriptions, so a wrong
+     * `HUBSPOT_WEBHOOK_APP_ID` writes to every account with that app installed. The operator gets
+     * one in-band chance to notice, and it is only worth anything *before* the first write --
+     * hence the position assertion, not merely a presence one.
+     */
+    public function test_it_names_the_app_it_is_reconciling_before_the_first_write(): void
+    {
+        self::legacyPublic();
+        config(['hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']]]);
+
+        $gateway = new FakeWebhookSubscriptionGateway;
+        $this->bindGateway($gateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertSame(Command::SUCCESS, $exitCode);
+        self::assertContains('Reconciling app 998877.', $lines);
+
+        $announced = array_search('Reconciling app 998877.', $lines, true);
+        $firstWrite = array_search('created "deal.creation"', $lines, true);
+
+        self::assertIsInt($announced);
+        self::assertIsInt($firstWrite);
+        self::assertLessThan($firstWrite, $announced);
+    }
+
+    /** T-05-17: the announcement carries the dry-run prefix like every other line this command prints. */
+    public function test_the_app_announcement_is_marked_when_the_run_is_a_dry_run(): void
+    {
+        self::legacyPublic();
+        config(['hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']]]);
+
+        $this->bindGateway(new FakeWebhookSubscriptionGateway);
+
+        Artisan::call('hubspot:webhooks:sync', ['--dry-run' => true]);
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertContains('[dry run] Reconciling app 998877.', $lines);
+    }
+
     public function test_the_command_is_registered_by_the_service_provider(): void
     {
         self::legacyPublic();
