@@ -81,13 +81,14 @@ final class AssertWebhookHandledTest extends TestCase
             self::rawEventItem('evt-b', 'contact.propertyChange', ['propertyName' => 'firstname']),
         ]);
 
-        // Neither receipt alone carries BOTH this eventId and that propertyName.
-        FailedAssertion::messageOf(static fn () => Hubspot::assertWebhookHandled('contact.propertyChange', [
+        // Neither receipt alone carries BOTH this eventId and that propertyName --
+        // FailedAssertion::messageOf() itself fails this test if the assertion unexpectedly passed.
+        $message = FailedAssertion::messageOf(static fn () => Hubspot::assertWebhookHandled('contact.propertyChange', [
             'eventId' => 'evt-a',
             'propertyName' => 'firstname',
         ]));
 
-        self::assertTrue(true, 'FailedAssertion::messageOf() already fails this test if the assertion passed.');
+        self::assertStringContainsString('no single receipt did', $message);
     }
 
     public function test_a_delivery_whose_handler_throws_leaves_the_assertion_failing_for_that_key(): void

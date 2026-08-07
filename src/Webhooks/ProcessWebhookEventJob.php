@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
 use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
 
 /**
@@ -52,6 +53,12 @@ use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
  * with no `try`/`catch` around it: a handler's own throw must reach Laravel so the job fails and
  * D-03's retry holds, and `complete()` below is never reached for that item.
  *
+ * ## The inbound receipt (05-03, T-05-16)
+ *
+ * `WebhookReceiptRecorder::recordWebhookHandled()` is called LAST, after `complete()` returns and
+ * never before: a receipt is a record that the work finished, and recording it earlier would let
+ * `Hubspot::assertWebhookHandled()` pass for an item whose handler threw.
+ *
  * Collaborators are resolved as `handle()` parameters, never constructor-captured properties — the
  * same reason `Sync\SyncHubspotObjectJob` does (see its own docblock): a dispatcher or store captured
  * at construction would still answer after `Hubspot::fake()` or a container rebind changed what a
@@ -77,6 +84,7 @@ final class ProcessWebhookEventJob implements ShouldQueue
         TypedEventMap $typedEvents,
         HandlerMap $handlers,
         Container $container,
+        WebhookReceiptRecorder $receipts,
     ): void {
         $handlers->validate();
 
@@ -106,5 +114,7 @@ final class ProcessWebhookEventJob implements ShouldQueue
         }
 
         $store->complete($this->event->eventId);
+
+        $receipts->recordWebhookHandled($this->event);
     }
 }

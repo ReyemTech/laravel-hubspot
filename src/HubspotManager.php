@@ -17,14 +17,23 @@ use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Testing\RequestLog;
+use ReyemTech\Hubspot\Testing\WebhookReceiptLog;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
+use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
 use RuntimeException;
 
 /**
  * The object `ReyemTech\Hubspot\Facades\Hubspot` resolves. Lives in the package root namespace
  * (not `Gateway`) — it must never name a `HubSpot\*` SDK class (R1); a single reference here
  * would break the rule in a layer that is not allowed to carry it.
+ *
+ * Implements `Webhooks\Contracts\WebhookReceiptRecorder` for the identical reason it implements
+ * `Sync\SyncStateContract` (see that interface's own docblock): `Webhooks` may not depend on
+ * `ReyemTech\Hubspot\Testing` (R4), so the layer that needs the capability declares the port and this
+ * composition root implements it. This is the SECOND instance of that same inversion, not a new
+ * pattern.
  */
-final class HubspotManager implements SyncStateContract
+final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
 {
     private ?HubspotFake $fake = null;
 
@@ -40,9 +49,18 @@ final class HubspotManager implements SyncStateContract
      */
     private bool $syncingSuppressed;
 
+    /**
+     * The canonical inbound receipt log `Hubspot::assertWebhookHandled()` reads. Owned HERE, not on
+     * `HubspotFake`, so `recordWebhookHandled()` can write to it purely by asking `isFaked()` --
+     * every `fake()` call below hands the SAME instance to the fresh `HubspotFake` it constructs, so
+     * a consumer asserting through the value `Hubspot::fake()` returned reads this identical log.
+     */
+    private WebhookReceiptLog $webhookReceipts;
+
     public function __construct(private readonly Container $container)
     {
         $this->syncingSuppressed = false;
+        $this->webhookReceipts = new WebhookReceiptLog;
     }
 
     /**
@@ -53,9 +71,14 @@ final class HubspotManager implements SyncStateContract
      * and this never runs a second time; on a long-lived worker it is what stops one request's
      * state from becoming the next request's starting point.
      *
-     * BOTH properties are reset, not just the newer one. `$fake` has the same process-wide shape and
-     * has had it since 02-xx; resetting only the property this plan happened to add would have been
-     * arbitrary, and would leave a fake installed by one request answering for the next.
+     * ALL THREE properties are reset, not just the newer ones. `$fake` has the same process-wide
+     * shape and has had it since 02-xx; resetting only the property a later plan happened to add
+     * would have been arbitrary, and would leave a fake -- or a webhook receipt -- installed by one
+     * request answering for the next.
+     *
+     * `$webhookReceipts` is reset for the identical Octane reason as `$fake` and
+     * `$syncingSuppressed`: a worker that carried inbound receipts forward would let one request's
+     * handled webhook satisfy `assertWebhookHandled()` on a request that never received it.
      */
     public function flushState(): void
     {
@@ -67,6 +90,7 @@ final class HubspotManager implements SyncStateContract
 
         $this->fake = null;
         $this->syncingSuppressed = false;
+        $this->webhookReceipts = new WebhookReceiptLog;
     }
 
     public function objects(): ObjectGatewayContract
@@ -114,7 +138,11 @@ final class HubspotManager implements SyncStateContract
     {
         // The outgoing fake is handed to the incoming one, so a second `fake()` call inherits the
         // ORIGINAL transport as its predecessor rather than recording the first fake's mock.
-        return $this->fake = new HubspotFake($this->container, $responses, $this->fake);
+        //
+        // `$this->webhookReceipts` is the SAME instance every fake in this process receives -- never
+        // constructed fresh here -- so `recordWebhookHandled()` below and `assertWebhookHandled()` on
+        // whichever fake a consumer holds always read and write the identical log.
+        return $this->fake = new HubspotFake($this->container, $responses, $this->webhookReceipts, $this->fake);
     }
 
     /**
@@ -181,6 +209,32 @@ final class HubspotManager implements SyncStateContract
     public function assertAssociated(AssociationPair $pair, ?string $label = null): void
     {
         $this->fakeOrFail()->assertAssociated($pair, $label);
+    }
+
+    /**
+     * `Webhooks\Contracts\WebhookReceiptRecorder`. Records only while a fake is installed -- reusing
+     * the existing {@see self::isFaked()} question rather than adding a second notion of "is this a
+     * test" -- so a production process, where no fake is ever bound, accumulates no receipts.
+     */
+    public function recordWebhookHandled(NormalizedWebhookEvent $event): void
+    {
+        if (! $this->isFaked()) {
+            return;
+        }
+
+        $this->webhookReceipts->record($event);
+    }
+
+    /**
+     * Reads the INBOUND receipt log `recordWebhookHandled()` writes to, never the outbound Guzzle
+     * request history {@see self::assertSynced()} and its siblings read -- see
+     * `Testing\WebhookReceiptLog`'s own docblock for why the two must stay disjoint.
+     *
+     * @param  array<string, mixed>  $expected
+     */
+    public function assertWebhookHandled(string $eventKey, array $expected = []): void
+    {
+        $this->fakeOrFail()->assertWebhookHandled($eventKey, $expected);
     }
 
     /**

@@ -36,6 +36,7 @@ use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
 use ReyemTech\Hubspot\Webhooks\HandlerMap;
 use ReyemTech\Hubspot\Webhooks\RouteRegistrar;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
@@ -155,6 +156,10 @@ final class ServiceProvider extends BaseServiceProvider
         // The inverted arrow R3 requires: `Sync` declares what it needs, the root namespace
         // implements it, and this line is the only place the two meet. See `Sync\SyncStateContract`.
         $this->app->bind(SyncStateContract::class, HubspotManager::class);
+
+        // The SECOND instance of that same inversion, for R4's identical reason: `Webhooks` declares
+        // the port, `HubspotManager` implements it. See `Webhooks\Contracts\WebhookReceiptRecorder`.
+        $this->app->bind(WebhookReceiptRecorder::class, HubspotManager::class);
 
         // Read fresh from config by every collaborator that resolves it (HubspotObserver,
         // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport

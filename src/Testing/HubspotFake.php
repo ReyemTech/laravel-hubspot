@@ -53,10 +53,16 @@ final class HubspotFake
     /**
      * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by route key —
      *                                                                            see {@see self::routeKeyOf()}
+     * @param  WebhookReceiptLog  $webhookReceipts  owned by `HubspotManager`, not this class — passed
+     *                                              in rather than constructed here so
+     *                                              `HubspotManager::recordWebhookHandled()` writes
+     *                                              to the SAME log this fake reads (05-03,
+     *                                              assertWebhookHandled)
      */
     public function __construct(
         private readonly Container $container,
         private readonly array $responses,
+        private readonly WebhookReceiptLog $webhookReceipts,
         ?self $replacing = null,
     ) {
         // Constructed per fake, which is what restarts the id counter it owns on every
@@ -171,6 +177,18 @@ final class HubspotFake
     public function assertAssociated(AssociationPair $pair, ?string $label = null): void
     {
         $this->requestLog()->assertAssociated($pair, $label);
+    }
+
+    /**
+     * Reads the INBOUND receipt log, never the outbound Guzzle history {@see self::requestLog()}
+     * builds every other assertion in this class from -- see {@see WebhookReceiptLog}'s own docblock
+     * for why the two must stay two disjoint records rather than one merged log.
+     *
+     * @param  array<string, mixed>  $expected
+     */
+    public function assertWebhookHandled(string $eventKey, array $expected = []): void
+    {
+        $this->webhookReceipts->assertWebhookHandled($eventKey, $expected);
     }
 
     private function requestLog(): RequestLog
