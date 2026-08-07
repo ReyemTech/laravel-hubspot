@@ -7,6 +7,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 use DateTimeImmutable;
 use Illuminate\Foundation\Application;
 use Illuminate\Routing\Router;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
@@ -29,6 +30,14 @@ mutates(
  *
  * `HUBSPOT_TOKEN` (the management credential) is deliberately never set here: only
  * `hubspot.webhooks.secret` is configured, proving the receipt path is independent of it (D-16).
+ *
+ * `hubspot.webhooks.enabled` and a migrate() in `setUp()` were added in 05-02: since that plan,
+ * `ProcessWebhookEventJob::handle()` opens by claiming through `Webhooks\Contracts\WebhookEventStore`
+ * (D-01, D-03) before it ever dispatches, so a test that actually RUNS the job -- as opposed to
+ * intercepting it with `Bus::fake()` -- now needs the durable claim table to exist, exactly as
+ * `WebhookDedupeTest` (05-02) does. The two tests that keep `Bus::fake()` never execute `handle()`
+ * at all and would pass with the table absent regardless; migrating here anyway costs nothing and
+ * keeps every test in this class on one shared, boring setup.
  */
 final class InboundWebhookTracerTest extends TestCase
 {
@@ -61,6 +70,14 @@ final class InboundWebhookTracerTest extends TestCase
     protected function defineEnvironment($app): void
     {
         $app['config']->set('hubspot.webhooks.secret', self::SECRET);
+        $app['config']->set('hubspot.webhooks.enabled', true);
+    }
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Artisan::call('migrate', ['--force' => true]);
     }
 
     public function test_a_correctly_signed_single_item_batch_dispatches_one_job_and_returns_no_content(): void

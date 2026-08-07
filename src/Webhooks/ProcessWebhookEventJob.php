@@ -8,6 +8,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
 
 /**
@@ -16,14 +17,26 @@ use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
  * queue-worker failure on one item never blocks the others, and D-14's "dispatch failure means 500"
  * rule is asserted at the handoff loop in the controller, not inside this job.
  *
- * This plan (05-01) ships the generic receipt path only: `handle()` fires
- * {@see HubspotWebhookReceived} and stops there. Recognized-subscription-type events, configured
- * handlers, and the durable claim/complete event store are a later plan's concern (05-CONTEXT.md
- * D-01, D-06, D-08).
+ * ## Claim, dispatch, complete -- in that order, with nothing between dispatch and either end (D-03)
+ *
+ * `handle()` opens by claiming the event's id ({@see WebhookEventStore::claim()}). A `Handled` claim
+ * means this exact eventId already completed successfully -- HOOK-01's durable redelivery guarantee
+ * -- so `handle()` returns having done nothing. A `Held` claim means another worker's claim on this
+ * event is still inside its lease window, doing the work right now; `handle()` returns without
+ * emitting anything and, critically, WITHOUT failing the job -- failing here would retry a race the
+ * other worker is already winning. Only an `Acquired` claim reaches the dispatch this plan's
+ * predecessor (05-01) established, and `complete()` is called only AFTER that dispatch returns, with
+ * no `try`/`catch` around it: a handler exception must escape `handle()` so Laravel retries the
+ * queued job, and the row this claim wrote is left claimed rather than marked handled. This is what
+ * makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a second,
+ * concurrent run of the same handlers.
+ *
+ * Recognized-subscription-type events and configured handlers are a later plan's concern
+ * (05-CONTEXT.md D-06, D-08); this plan ships the generic receipt path only.
  *
  * Collaborators are resolved as `handle()` parameters, never constructor-captured properties — the
- * same reason `Sync\SyncHubspotObjectJob` does (see its own docblock): a dispatcher captured at
- * construction would still answer after `Hubspot::fake()` or a container rebind changed what a
+ * same reason `Sync\SyncHubspotObjectJob` does (see its own docblock): a dispatcher or store captured
+ * at construction would still answer after `Hubspot::fake()` or a container rebind changed what a
  * fresh resolution would return.
  *
  * `$event` is a public, plain (non-readonly) property rather than constructor-promoted `readonly`,
@@ -40,8 +53,16 @@ final class ProcessWebhookEventJob implements ShouldQueue
 
     public function __construct(public NormalizedWebhookEvent $event) {}
 
-    public function handle(Dispatcher $events): void
+    public function handle(Dispatcher $events, WebhookEventStore $store): void
     {
+        $claim = $store->claim($this->event);
+
+        if ($claim !== WebhookEventClaim::Acquired) {
+            return;
+        }
+
         $events->dispatch(new HubspotWebhookReceived($this->event));
+
+        $store->complete($this->event->eventId);
     }
 }

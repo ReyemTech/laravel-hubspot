@@ -34,6 +34,7 @@ use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
+use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\RouteRegistrar;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
@@ -291,6 +292,7 @@ final class ServiceProvider extends BaseServiceProvider
             SyncAssociationsCommand::class,
             DoctorCommand::class,
             AssociationsDoctorCommand::class,
+            PruneWebhookEventsCommand::class,
         ];
     }
 
