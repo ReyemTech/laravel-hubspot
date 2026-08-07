@@ -8,7 +8,6 @@ use DateTimeInterface;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Tests\Support\CommandOutput;
 use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
@@ -94,8 +93,13 @@ final class PruneWebhookEventsCommandTest extends TestCase
         $exitCode = Artisan::call('hubspot:webhooks:prune');
 
         self::assertSame(Command::FAILURE, $exitCode);
+        // A hardcoded literal, never `ConfigurationException::missingWebhookEventsTable()
+        // ->getMessage()`: comparing a factory's output against itself can never catch a mutated
+        // internal string (this project's own established precedent).
         self::assertContains(
-            ConfigurationException::missingWebhookEventsTable()->getMessage(),
+            'HUBSPOT_WEBHOOKS is true but the "hubspot_webhook_events" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_WEBHOOKS=true.',
             CommandOutput::linesOf(Artisan::output()),
         );
     }

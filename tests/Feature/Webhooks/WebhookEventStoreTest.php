@@ -98,12 +98,16 @@ final class WebhookEventStoreTest extends TestCase
 
             self::fail('Expected a directed ConfigurationException for the absent table.');
         } catch (ConfigurationException $exception) {
+            // A hardcoded literal, never `ConfigurationException::missingWebhookEventsTable()
+            // ->getMessage()`: comparing a factory's output against itself can never catch a
+            // mutated internal string this project's own history has already learned that lesson
+            // from (see 04-03-SUMMARY.md's "message-factory assertions" decision).
             self::assertSame(
-                ConfigurationException::missingWebhookEventsTable()->getMessage(),
+                'HUBSPOT_WEBHOOKS is true but the "hubspot_webhook_events" table does not exist. Run '
+                .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+                .'loads its own migrations whenever HUBSPOT_WEBHOOKS=true.',
                 $exception->getMessage(),
             );
-            self::assertStringContainsString('php artisan migrate', $exception->getMessage());
-            self::assertStringContainsString(DatabaseWebhookEventStore::TABLE, $exception->getMessage());
         }
     }
 
