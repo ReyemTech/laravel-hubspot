@@ -21,11 +21,16 @@ use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
  * `Contracts\WebhookEventStore::complete()` returns -- a receipt is a record that the work finished,
  * never that it merely started, so an item whose handler threw leaves no receipt at all
  * (T-05-16, threat register).
+ *
+ * Keys are not renumbered anywhere in this class, mirroring {@see RequestLog}'s own documented
+ * reason: nothing here reads a position, so every collection is `array<int, ...>` rather than
+ * `list<...>`, and an `array_values()` call to satisfy a narrower docblock would be a line no test
+ * could distinguish from its own absence.
  */
 final class WebhookReceiptLog
 {
     /**
-     * @var list<NormalizedWebhookEvent>
+     * @var array<int, NormalizedWebhookEvent>
      */
     private array $handled = [];
 
@@ -44,10 +49,10 @@ final class WebhookReceiptLog
      */
     public function assertWebhookHandled(string $eventKey, array $expected = []): void
     {
-        $matchingKey = array_values(array_filter(
+        $matchingKey = array_filter(
             $this->handled,
             static fn (NormalizedWebhookEvent $event): bool => $event->subscriptionType === $eventKey,
-        ));
+        );
 
         PHPUnitAssert::assertNotSame(
             [],
@@ -75,7 +80,7 @@ final class WebhookReceiptLog
     }
 
     /**
-     * @param  list<NormalizedWebhookEvent>  $receipts
+     * @param  array<int, NormalizedWebhookEvent>  $receipts
      * @param  array<string, mixed>  $expected
      */
     private static function someReceiptCarriesAll(array $receipts, array $expected): bool
@@ -115,7 +120,7 @@ final class WebhookReceiptLog
     }
 
     /**
-     * @param  list<NormalizedWebhookEvent>  $receipts
+     * @param  array<int, NormalizedWebhookEvent>  $receipts
      */
     private static function describeAll(array $receipts): string
     {
@@ -126,10 +131,14 @@ final class WebhookReceiptLog
     }
 
     /**
+     * Wrapped in `sprintf` rather than cast, mirroring `RequestLog::describeRecord()`'s own reason:
+     * `json_encode` is typed `string|false`, and a `(string)` cast here would be a mutant nothing
+     * could kill.
+     *
      * @param  array<string, mixed>  $expected
      */
     private static function describeExpected(array $expected): string
     {
-        return (string) json_encode($expected);
+        return sprintf('%s', json_encode($expected));
     }
 }

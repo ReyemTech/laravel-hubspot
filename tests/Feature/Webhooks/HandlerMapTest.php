@@ -132,6 +132,25 @@ final class HandlerMapTest extends TestCase
         self::assertSame(0, DB::table(DatabaseWebhookEventStore::TABLE)->count());
     }
 
+    /**
+     * A key's own value that is neither a bare string nor a list -- a bare scalar such as an int --
+     * must still be validated, not silently normalized to an empty handler list.
+     */
+    public function test_a_bare_non_string_scalar_value_for_one_key_fails_before_any_event_or_claim(): void
+    {
+        Event::fake([HubspotWebhookReceived::class]);
+
+        config()->set('hubspot.webhooks.handlers', [
+            self::EVENT_KEY => 12345,
+        ]);
+
+        $response = $this->deliverRaw([self::rawEventItem('evt-bare-scalar-handler')]);
+
+        $response->assertStatus(500);
+        Event::assertNotDispatched(HubspotWebhookReceived::class);
+        self::assertSame(0, DB::table(DatabaseWebhookEventStore::TABLE)->count());
+    }
+
     public function test_a_handler_naming_a_class_that_does_not_exist_fails_before_any_event_or_claim(): void
     {
         Event::fake([HubspotWebhookReceived::class]);

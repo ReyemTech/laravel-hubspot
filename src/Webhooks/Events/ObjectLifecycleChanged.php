@@ -31,7 +31,10 @@ final readonly class ObjectLifecycleChanged
      * The portion of a subscription type after its final `.` -- `"company.creation"` yields
      * `"creation"`. Safe to call `WebhookLifecycleTransition::from()` on unchecked, because this class
      * is only ever constructed by `TypedEventMap::resolve()` having already matched a `*.creation` or
-     * `*.deletion` family row for this exact subscription type.
+     * `*.deletion` family row for this exact subscription type -- which is a subscription type that
+     * always contains a `.`. The dotless fallback branch is therefore never reached through this
+     * class's own real construction path; `pest --mutate` reports it as a survivor for exactly that
+     * reason, and it is left as a defensive fallback rather than removed.
      */
     private static function suffixOf(string $subscriptionType): string
     {

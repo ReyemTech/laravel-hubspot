@@ -70,6 +70,12 @@ final class HandlerMap
     /**
      * A bare string and a list are both accepted for one key.
      *
+     * The early `is_string()` return and the `array_values()` call are both equivalent mutants
+     * `pest --mutate` will report as survivors: a string falls through to the same `[$entry]` either
+     * way, and nothing downstream reads a key, only a value, so reindexing an associative entry
+     * changes no observable behaviour. Left in for the reason PHPStan's `list<mixed>` return type
+     * states honestly, not as a line waiting for a test that could never kill its own mutant.
+     *
      * @return list<mixed>
      */
     private static function normalize(mixed $entry): array
