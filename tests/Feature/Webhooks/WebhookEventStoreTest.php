@@ -162,6 +162,20 @@ final class WebhookEventStoreTest extends TestCase
             1,
             DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-acquire')->count(),
         );
+
+        $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-acquire')->first();
+        self::assertNotNull($row);
+        self::assertSame('evt-acquire', $row->event_id);
+        self::assertSame('contact.creation', $row->subscription_type);
+        self::assertSame(62515, $row->portal_id);
+        self::assertSame('obj-1', $row->object_id);
+        self::assertNotNull($row->occurred_at);
+        self::assertSame(1, $row->attempts);
+        self::assertNotNull($row->claimed_at);
+        self::assertNotNull($row->created_at);
+        self::assertNotNull($row->updated_at);
+        self::assertNull($row->handled_at);
+        self::assertNull($row->payload);
     }
 
     public function test_the_claim_lifecycle_moves_through_acquired_held_and_handled_without_duplicating_a_row(): void
@@ -198,9 +212,11 @@ final class WebhookEventStoreTest extends TestCase
 
         self::assertSame(WebhookEventClaim::Acquired, $store->claim(self::event('evt-lease')));
 
+        $staleClaimedAt = now()->subSeconds(901);
+
         DB::table(DatabaseWebhookEventStore::TABLE)
             ->where('event_id', 'evt-lease')
-            ->update(['claimed_at' => now()->subSeconds(901)]);
+            ->update(['claimed_at' => $staleClaimedAt, 'updated_at' => $staleClaimedAt]);
 
         $reclaimed = $store->claim(self::event('evt-lease'));
 
@@ -209,6 +225,8 @@ final class WebhookEventStoreTest extends TestCase
         $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-lease')->first();
         self::assertNotNull($row);
         self::assertSame(2, $row->attempts);
+        self::assertNotSame((string) $staleClaimedAt, $row->claimed_at);
+        self::assertNotSame((string) $staleClaimedAt, $row->updated_at);
         self::assertSame(
             1,
             DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-lease')->count(),
@@ -231,7 +249,16 @@ final class WebhookEventStoreTest extends TestCase
         config()->set('hubspot.webhooks.audit_payload', true);
         $this->migrate();
 
-        $this->store()->claim(self::event('evt-audit'));
+        $item = self::rawItem('evt-audit');
+        $item['changeSource'] = 'CRM';
+        $item['changeFlag'] = 'NEW';
+        $item['propertyName'] = 'email';
+        $item['propertyValue'] = 'a@example.com';
+        $item['associationType'] = 'contact_to_company';
+        $item['fromObjectId'] = 'obj-from';
+        $item['toObjectId'] = 'obj-to';
+
+        $this->store()->claim(NormalizedWebhookEvent::fromArray($item));
 
         $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-audit')->first();
         self::assertNotNull($row);
@@ -241,6 +268,18 @@ final class WebhookEventStoreTest extends TestCase
         $decoded = json_decode($row->payload, true, flags: JSON_THROW_ON_ERROR);
         self::assertSame('evt-audit', $decoded['eventId']);
         self::assertSame('contact.creation', $decoded['subscriptionType']);
+        self::assertSame(62515, $decoded['portalId']);
+        self::assertSame(54321, $decoded['appId']);
+        self::assertSame('obj-1', $decoded['objectId']);
+        self::assertSame('2019-07-26T04:00:00+00:00', $decoded['occurredAt']);
+        self::assertSame(0, $decoded['attemptNumber']);
+        self::assertSame('CRM', $decoded['changeSource']);
+        self::assertSame('NEW', $decoded['changeFlag']);
+        self::assertSame('email', $decoded['propertyName']);
+        self::assertSame('a@example.com', $decoded['propertyValue']);
+        self::assertSame('contact_to_company', $decoded['associationType']);
+        self::assertSame('obj-from', $decoded['fromObjectId']);
+        self::assertSame('obj-to', $decoded['toObjectId']);
     }
 
     public function test_complete_stamps_the_completion_time_and_never_writes_the_raw_request_body(): void
@@ -249,11 +288,17 @@ final class WebhookEventStoreTest extends TestCase
         $store = $this->store();
 
         $store->claim(self::event('evt-complete'));
+
+        DB::table(DatabaseWebhookEventStore::TABLE)
+            ->where('event_id', 'evt-complete')
+            ->update(['updated_at' => now()->subSeconds(60)]);
+
         $store->complete('evt-complete');
 
         $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-complete')->first();
         self::assertNotNull($row);
         self::assertNotNull($row->handled_at);
+        self::assertNotSame((string) now()->subSeconds(60), $row->updated_at);
     }
 
     /**
@@ -273,10 +318,17 @@ final class WebhookEventStoreTest extends TestCase
             ['evt-corrupt', 'contact.creation', 62515, 1, 12345, now(), now()],
         );
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('hubspot_webhook_events.claimed_at held a int,');
+        try {
+            $this->store()->claim(self::event('evt-corrupt'));
 
-        $this->store()->claim(self::event('evt-corrupt'));
+            self::fail('Expected a RuntimeException for the non-string claimed_at.');
+        } catch (RuntimeException $exception) {
+            self::assertSame(
+                'hubspot_webhook_events.claimed_at held a int, which no supported driver produces '
+                .'for a timestamp column read through the query builder.',
+                $exception->getMessage(),
+            );
+        }
     }
 
     /**
