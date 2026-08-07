@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 05
-current_phase_name: inbound-webhooks
-status: verifying
+current_phase: 6
+current_phase_name: Signals Core
+status: planning
 stopped_at: Completed 05-05-PLAN.md
-last_updated: "2026-08-07T02:48:09.945Z"
+last_updated: "2026-08-07T02:59:44.287Z"
 progress:
   total_phases: 5
   completed_phases: 5
@@ -31,15 +31,15 @@ request lifecycle.
 
 ## Current Position
 
-Phase: 05 (inbound-webhooks) — EXECUTING
+Phase: 6 — Signals Core
 with chunked identity-aware transport (one request for a homogeneous group of at most 100; larger and
 mixed input sum independently chunked linked updates and unlinked upserts), and 04-09 completed the
 doctor bound-model report. `DeleteRaceReconciler` runs only for links the batch job created, so a
 concurrent link is retained. REG-01 and REG-04 are now complete; SYNC-01b remains open for Phase 9's
 Generated mode and SHIP-01.
-Plan: 5 of 5
+Plan: Not started
 Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
-Status: Phase complete — ready for verification
+Status: Ready to plan
 from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
 Three DISTINCT events drive it — `trashed`, `forceDeleted`, and plain `deleted` gated on the
 ABSENCE of `SoftDeletes` — because `deleted` fires identically for a soft delete and a
@@ -107,7 +107,7 @@ Progress: [██████████] 100% of Phase 4
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 5
 - Average duration: —
 - Total execution time: —
 
@@ -115,7 +115,7 @@ Progress: [██████████] 100% of Phase 4
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 05 | 5 | - | - |
 
 **Recent Trend:**
 

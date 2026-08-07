@@ -41,7 +41,7 @@ Standard GSD numbering otherwise applies: integer phases are planned milestone w
 - [x] **Phase 2: Gateway Layer** - One generic core over every CRM object type, directional associations, typed errors, and a real test double
 - [x] **Phase 3: Registry & Stores** - Directional `(from, to, label) → typeId` resolution, cache and database stores, zero-migration install, diagnostics
 - [x] **Phase 4: Model Sync** - One trait on any model syncs it — mapped, queued, batched, delete-safe, suppressible
-- [ ] **Phase 5: Inbound Webhooks** - Verified, deduped, batched, typed inbound events behind one route macro
+- [x] **Phase 5: Inbound Webhooks** - Verified, deduped, batched, typed inbound events behind one route macro (completed 2026-08-06)
 - [ ] **Phase 6: Signals Core** - Behavioural signals buffered against an anonymous visitor, bound to a person on identify, flushed as one batched property write
 - [ ] **Phase 7: Signal Stores & Attribution** - The event trail lands wherever the portal allows, attribution survives the sales cycle, and the buffer cannot grow without bound
 - [ ] **Phase 8: Frontend & Meetings Embed** - One Blade tag renders the meetings embed, and its booking signal cannot be forged by another page
@@ -400,7 +400,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Gateway Layer | 6/6 | Complete | 2026-07-27 |
 | 3. Registry & Stores | 3/3 | Complete | 2026-07-29 |
 | 4. Model Sync | 9/9 | Complete | 2026-08-03 |
-| 5. Inbound Webhooks | 5/5 | In Progress|  |
+| 5. Inbound Webhooks | 5/5 | Complete    | 2026-08-06 |
 | 6. Signals Core | 0/TBD | Not started | - |
 | 7. Signal Stores & Attribution | 0/TBD | Not started | - |
 | 8. Frontend & Meetings Embed | 0/TBD | Not started | - |
