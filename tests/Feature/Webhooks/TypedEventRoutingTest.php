@@ -193,6 +193,24 @@ final class TypedEventRoutingTest extends TestCase
         Event::assertNotDispatched(ObjectAssociationChanged::class);
     }
 
+    /**
+     * A subscription type with no `.` at all -- `familyOf()`'s edge case, distinct from a type that
+     * merely has no matching family row.
+     */
+    public function test_a_subscription_type_with_no_dot_at_all_dispatches_only_the_generic_event(): void
+    {
+        Event::fake(self::ALL_TYPED_EVENTS);
+
+        $item = self::rawEventItem('evt-no-dot', 'merge');
+        $this->deliver([$item]);
+
+        Event::assertDispatchedTimes(HubspotWebhookReceived::class, 1);
+        Event::assertNotDispatched(ContactPropertyChanged::class);
+        Event::assertNotDispatched(ObjectPropertyChanged::class);
+        Event::assertNotDispatched(ObjectLifecycleChanged::class);
+        Event::assertNotDispatched(ObjectAssociationChanged::class);
+    }
+
     public function test_the_typed_event_carries_the_identical_normalized_event_instance_as_the_generic_one(): void
     {
         Event::fake(self::ALL_TYPED_EVENTS);

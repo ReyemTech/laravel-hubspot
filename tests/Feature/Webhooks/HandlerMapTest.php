@@ -117,6 +117,21 @@ final class HandlerMapTest extends TestCase
         self::assertSame([RecordingWebhookHandlerA::class], array_column(WebhookHandlerCallLog::$calls, 'handler'));
     }
 
+    public function test_a_non_string_handler_entry_fails_before_any_event_or_claim(): void
+    {
+        Event::fake([HubspotWebhookReceived::class]);
+
+        config()->set('hubspot.webhooks.handlers', [
+            self::EVENT_KEY => [12345],
+        ]);
+
+        $response = $this->deliverRaw([self::rawEventItem('evt-non-string-handler')]);
+
+        $response->assertStatus(500);
+        Event::assertNotDispatched(HubspotWebhookReceived::class);
+        self::assertSame(0, DB::table(DatabaseWebhookEventStore::TABLE)->count());
+    }
+
     public function test_a_handler_naming_a_class_that_does_not_exist_fails_before_any_event_or_claim(): void
     {
         Event::fake([HubspotWebhookReceived::class]);

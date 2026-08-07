@@ -60,6 +60,22 @@ final class AssertWebhookHandledTest extends TestCase
         Hubspot::assertWebhookHandled('contact.propertyChange');
     }
 
+    public function test_it_passes_when_one_receipt_carries_every_expected_field(): void
+    {
+        Hubspot::fake();
+
+        $this->deliver([self::rawEventItem('evt-subset', 'contact.propertyChange', [
+            'propertyName' => 'email',
+            'propertyValue' => 'someone@example.test',
+        ])]);
+
+        Hubspot::assertWebhookHandled('contact.propertyChange', [
+            'eventId' => 'evt-subset',
+            'propertyName' => 'email',
+            'propertyValue' => 'someone@example.test',
+        ]);
+    }
+
     public function test_a_failing_assertion_names_the_event_keys_and_ids_that_were_actually_handled(): void
     {
         Hubspot::fake();
