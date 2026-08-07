@@ -480,7 +480,7 @@ REL-02.
 
 ### Webhooks
 
-- [ ] **HOOK-01**: Inbound webhooks — verification, batching, idempotency, typed events
+- [x] **HOOK-01**: Inbound webhooks — verification, batching, idempotency, typed events
   — `REQ-inbound-webhooks` (core spec §2 goal 3, §8, §13 Phase 4)
 
   - Acceptance: Signature verification delegates to `HubSpot\Utils\Signature::isValid()` and
@@ -491,7 +491,26 @@ REL-02.
     map. The secret is the app **client secret**, not the PAT. Surface is
     `Route::hubspotWebhook('hubspot/webhook')`.
 
-- [ ] **HOOK-02**: `php artisan hubspot:webhooks:sync` declares subscriptions from config
+  - **Complete 2026-08-07 (05-03), delivered across three plans.** Shipped by 05-01: the route macro,
+    raw-URI SDK-delegated verification (fail-closed, `HubSpot\Utils\Signature::isValid()` only, never
+    `$request->fullUrl()`), one-job-per-item batch handoff with the deterministic 401/400/500/204
+    mapping, the D-15 local-dev bypass, and `occurredAt` exposure on `NormalizedWebhookEvent`
+    (`05-01-SUMMARY.md`). Shipped by 05-02: durable dedupe on `eventId` via the lease-recovered
+    claim/complete store (`05-02-SUMMARY.md`) — note this supersedes the "cache driver by default"
+    wording in the Acceptance paragraph above, per `05-CONTEXT.md` D-01; the paragraph is left
+    unedited on purpose (historical acceptance text) and this annotation is the record of record.
+    Shipped by 05-03 (`05-03-SUMMARY.md`): the closed, most-specific-first typed-event recognition
+    table (`Webhooks\TypedEventMap`) resolving `ContactPropertyChanged`, the `*.propertyChange`
+    family fallback `ObjectPropertyChanged`, `ObjectLifecycleChanged` and `ObjectAssociationChanged`;
+    the configured handler map (`Webhooks\HandlerMap`) including `'*'`, validated whole before any
+    claim is taken, key-handlers-before-wildcard, deduplicated, container-resolved; and
+    `Hubspot::assertWebhookHandled()` against its own inbound receipt log, closing Phase 2's deferred
+    item (`.planning/phases/02-gateway-layer/deferred-items.md` §02-06). Both userland routes — the
+    Laravel events and the configured handler map — fire from the single dispatch
+    `ProcessWebhookEventJob::handle()` performs, in the fixed order D-08 specifies: generic event,
+    typed event, key handlers, `'*'` handlers, complete, receipt.
+
+- [x] **HOOK-02**: `php artisan hubspot:webhooks:sync` declares subscriptions from config
   — `REQ-webhook-subscription-sync` (core spec §8, §13 Phase 4)
 
   - Acceptance: **absent in source** — the spec states the capability and notes "nobody in this
@@ -499,7 +518,27 @@ REL-02.
     `/gsd-plan-phase`. Still absent after the 2026-07-26 spec review; do not invent criteria at
     roadmap level.
 
-- [ ] **HOOK-03**: Optional `hubspot_webhook_events` audit table
+  - **Complete 2026-08-06, delivered across two plans (05-04, 05-05).** `05-04-PLAN.md` derived
+    HOOK-02's acceptance criteria from D-10 through D-12 and D-16 and pinned each with a test
+    (`05-04-SUMMARY.md`). Shipped by 05-04: `Gateway\WebhookSubscriptionGatewayContract`
+    (list/create/update only, no delete — D-11), `Gateway\WebhookSubscriptionGateway`, a management
+    client authenticated with a Developer API key rather than the CRM token (D-16),
+    `Webhooks\AppModel` (the three D-16 app types, no default), `Webhooks\SubscriptionDeclarations`
+    (`hubspot.webhooks.subscriptions`, validated at read time, never at boot — D-12), and
+    `hubspot:webhooks:sync --dry-run` reconciling `legacy_public` apps only.
+
+  - Shipped by 05-05 (`05-05-SUMMARY.md`), closing D-16's remaining two app models: the
+    `legacy_private` branch renders validated, honest manual setup instructions
+    (`Webhooks\ManualSetupInstructions`) since HubSpot exposes no subscription-management API for
+    that app model, and the `project` branch renders the exportable webhook-component artefact
+    (`Webhooks\ProjectWebhookComponent`) HubSpot's developer-platform apps deploy with their
+    project, field names and shape verified against live HubSpot documentation on 2026-08-06 rather
+    than recalled. `--output=` writes the component to a file; `--dry-run` combined with `--output=`
+    writes nothing. Neither of the two new branches issues a single HubSpot request or resolves the
+    subscription gateway, and both state plainly that nothing was changed in HubSpot — a test proves
+    it for each. All three D-16 app models are now covered end to end.
+
+- [x] **HOOK-03**: Optional `hubspot_webhook_events` audit table
   — `REQ-webhook-audit-trail` (core spec §8)
 
   - Acceptance: Off by default, consistent with zero-migration install.
@@ -739,7 +778,15 @@ event trail goes.*
     method has a usage example, **including `signal()`, `identify()` and the Blade component**. The
     association direction table (279 vs 280, 19 vs 20, 201 vs 202) is documented prominently. Every
     `HUBSPOT_*` env var is listed with its default. `UPGRADE.md` exists. `CONTRIBUTING.md` states the
-    standards and that CI enforces them.
+    standards and that CI enforces them. The webhook documentation includes an app-model matrix:
+    receiving webhooks requires a HubSpot app and its client secret; legacy public apps may use
+    `hubspot:webhooks:sync` with a Developer API key and app id; legacy private-app subscriptions are
+    managed in HubSpot's UI; project-built private-app subscriptions are declared in `webhooks.json`.
+    It states plainly that HubSpot Service Keys do not enable webhooks or subscription management, and
+    distinguishes all credentials from the CRM token/PAT.
+
+  - Documentation decision, 2026-08-06: package users must be able to choose an app model before
+    enabling webhooks, rather than discovering the subscription-management limitation after setup.
 
   - Note: `CONTRIBUTING.md` is required by STANDARDS §13 and omitted by core spec §13 — ADR precedence.
 
@@ -856,9 +903,9 @@ Deferred. Tracked but not in the current roadmap.
 | SYNC-03c | Phase 4 | **Complete 2026-08-03 (04-08).** `syncManyToHubspot()` dispatches one job; linked and unlinked records are independently sent through chunked `updateMany()` and `upsertMany()` requests. |
 | SYNC-04 | Phase 4 | **Complete 2026-08-01 (04-06).** Three DISTINCT Eloquent events drive the policy table -- `trashed`, `forceDeleted`, and `deleted` gated on the ABSENCE of `SoftDeletes` -- because `deleted` fires identically for a soft delete and a `forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()` implementation archives twice. D-21: `hard_delete => 'warn'` SKIPS exactly as `guard` does and differs only in log level; only `allow` archives. `restored` flags the link row stale and never nulls `hubspot_id`; `on_restore => 'recreate'` is the opt-in that forks CRM history. A property-push job arriving with its model trashed returns without pushing |
 | SYNC-05 | Phase 4 | **Complete 2026-08-02 (04-07).** `withoutSyncing()`, `HUBSPOT_DISABLED`, testing defaults and Octane state reset are all covered. |
-| HOOK-01 | Phase 5 | Pending |
-| HOOK-02 | Phase 5 | Pending — acceptance absent in source |
-| HOOK-03 | Phase 5 | Pending |
+| HOOK-01 | Phase 5 | Complete |
+| HOOK-02 | Phase 5 | **Complete 2026-08-06 (05-04, 05-05).** All three D-16 app models covered: legacy-public reconciliation, legacy-private manual instructions, project component export |
+| HOOK-03 | Phase 5 | Complete |
 | SIG-01 | Phase 6 | Pending |
 | SIG-02 | Phase 6 | Pending |
 | SIG-03 | Phase 6 | Pending |

@@ -28,4 +28,18 @@
             <directory>src</directory>
         </include>
     </source>
+    <php>
+        <!--
+            The suite carries its own memory requirement so a bare `vendor/bin/pest` works on a
+            fresh clone (FOUND-01 acceptance criterion 4). Phase 5 pushed peak usage past PHP's
+            128M default: measured on a clean clone, `cd9c4d7` passed bare while the Phase 5 head
+            exited 2 with "Allowed memory size of 134217728 bytes exhausted" inside R9's
+            strict_types arch scan, which walks every file in src/ and tests/.
+
+            The measured floor is between 128M and 160M. 512M is deliberate headroom, not a guess:
+            four more phases add to this same whole-tree scan, and rediscovering this as a false
+            test failure costs far more than the ceiling of a short-lived test process.
+        -->
+        <ini name="memory_limit" value="512M"/>
+    </php>
 </phpunit>

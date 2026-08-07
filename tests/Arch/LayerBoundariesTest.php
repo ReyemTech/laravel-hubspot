@@ -74,8 +74,9 @@ arch('R1: Gateway is the only layer that may reference HubSpot\* SDK classes')->
  * exactly where it is: it is merged, tested and harmless, and rewriting it to match the widened rule
  * would be churn.
  *
- * R4 and R5 have not needed `Illuminate` yet — `Webhooks` and `Signals` have not needed it, and
- * that is now the whole of what this sentence says. (R3 gained it 2026-07-30, below.)
+ * R5 has not needed `Illuminate` yet — `Signals` has not needed it, and that is now the whole of
+ * what this sentence says. R4 gained it 2026-08-06 — see the note directly above its `arch()` call
+ * below. (R3 gained it 2026-07-30, below.)
  */
 
 // @phpstan-ignore method.notFound, method.nonObject
@@ -142,8 +143,38 @@ arch('R2: Registry may depend only on Gateway, the package exceptions and the fr
 // @phpstan-ignore method.notFound, method.nonObject
 arch('R3: Sync may depend only on Registry, Gateway, the package exceptions and the framework')->expect('ReyemTech\Hubspot\Sync')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions', 'Illuminate', 'data_get', 'class_uses_recursive']);
 
+/*
+ * R4 additionally allows `Illuminate`, added 2026-08-06 (05-01, HOOK-01).
+ *
+ * **R4 is a rule about this package's INTERNAL layering, never about keeping the framework out.**
+ * `Webhooks` must not reach into `Sync`, `Signals` or `Gateway` internals, because those
+ * dependencies are what turn six layers into one — exactly the argument R2's 2026-07-29 and R3's
+ * 2026-07-30 amendments already made, applied here for the same reason and mirrored in the same
+ * shape: one array-append, one rule-description rename, no allow-list to maintain per layer.
+ *
+ * The concrete cost of NOT widening it: `Illuminate\Http\Request` in the controller,
+ * `Illuminate\Support\Facades\Route` in the route registrar, `Illuminate\Bus\Queueable` and
+ * `Illuminate\Contracts\Queue\ShouldQueue` in the queued job, and, from 05-02 on,
+ * `Illuminate\Database\Connection` and `Illuminate\Console\Command` — a package-owned port over
+ * routing, the queue and the console, invented solely to satisfy a lint rule, in a package whose
+ * entire purpose is Laravel integration. `illuminate/support`, `illuminate/bus`,
+ * `illuminate/queue`, `illuminate/contracts`, `illuminate/console` and `illuminate/database` are
+ * already declared production `require`s, and `illuminate/http` is declared by this same task —
+ * so naming any of them here installs nothing and admits nothing that was not already shipped.
+ *
+ * This widens no LAYER boundary. R4's own committed violation fixture,
+ * `tests/Arch/Fixtures/R4/WebhooksDependsOnSync.php`, is reused unchanged and still makes the
+ * rule go red under `scripts/ci/verify-arch-rules-fire.sh`, because the boundary it violates —
+ * `Webhooks` reaching into `Sync` — is the boundary R4 is actually for, and is untouched.
+ *
+ * The widening's other half — that R4 still rejects `HubSpot\*` from `Webhooks`, so this is
+ * narrower than "allow anything outside the package" — is proven separately by
+ * `SeamFixtures/Webhooks/WebhooksUsingTheSdkDirectly.php` and its guard test in
+ * `tests/Arch/ResolverSeamTest.php`.
+ */
+
 // @phpstan-ignore method.notFound, method.nonObject
-arch('R4: Webhooks may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Webhooks')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
+arch('R4: Webhooks may depend only on Registry, Gateway, the package exceptions and the framework')->expect('ReyemTech\Hubspot\Webhooks')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions', 'Illuminate']);
 
 // @phpstan-ignore method.notFound, method.nonObject
 arch('R5: Signals may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Signals')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);

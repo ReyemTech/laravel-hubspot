@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Exceptions;
 
 use LogicException;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 
 /**
  * A caller mistake detectable before any I/O -- a missing or malformed package configuration
@@ -215,5 +216,228 @@ final class ConfigurationException extends LogicException implements HubspotExce
             $given,
             implode(', ', $validValues),
         ));
+    }
+
+    /**
+     * `hubspot.webhooks.secret` (env `HUBSPOT_CLIENT_SECRET`) is missing or empty while
+     * `Gateway\WebhookGateway::verify()` is being asked to check a signature (HOOK-01, T-05-01).
+     * Thrown before `HubSpot\Utils\Signature::isValid()` is ever called: handing that SDK call a
+     * null or empty secret would silently coerce it into an HMAC key of nothing, which is the
+     * opposite of the fail-closed default D-20 requires.
+     */
+    public static function missingWebhookSecret(): self
+    {
+        return new self(
+            'HUBSPOT_CLIENT_SECRET is not set. Set it to the client secret of the HubSpot app '
+            .'that sends this webhook -- verification fails closed until it is.',
+        );
+    }
+
+    /**
+     * `HUBSPOT_WEBHOOKS=true` is set but the `hubspot_webhook_events` table this package owns has
+     * never been created. Raised by `Webhooks\Stores\DatabaseWebhookEventStore` in place of the
+     * driver's own `SQLSTATE[42S02]`, mirroring `missingRegistryTable()`'s shape exactly: name the
+     * table, name `php artisan migrate`, and pre-empt the publish question, because every other
+     * Laravel package that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingWebhookEventsTable(bool $featureEnabled = true): self
+    {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis. This used to assert "HUBSPOT_WEBHOOKS is true" unconditionally -- which on
+        // a default install was simply false, and sent the reader to verify a setting that was
+        // already correct while the actual cause (the flag being OFF) went unmentioned.
+        if (! $featureEnabled) {
+            return new self(
+                'Receiving webhooks requires HUBSPOT_WEBHOOKS=true, and it is currently false. The '
+                .'"hubspot_webhook_events" table is how a redelivered eventId is handled exactly '
+                .'once, so receipt cannot run without it. Set HUBSPOT_WEBHOOKS=true and run `php '
+                .'artisan migrate` (+ `php artisan config:cache` if you cache config). Nothing '
+                .'needs publishing first: this package loads its own migrations whenever '
+                .'HUBSPOT_WEBHOOKS=true.',
+            );
+        }
+
+        return new self(
+            'HUBSPOT_WEBHOOKS is true but the "hubspot_webhook_events" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_WEBHOOKS=true.',
+        );
+    }
+
+    /**
+     * `hubspot.webhooks.app_id` is set but is not a canonical positive integer. Raised by
+     * `Gateway\HubspotClientFactory::forWebhookManagement()` -- named as a PATH, not as a
+     * `{@see}`, because pint's fully_qualified_strict_types rule rewrites a docblock class
+     * reference into a real `use` statement and this layer must not import Gateway (the same
+     * reason `Sync\SyncGate` records for its own docblock) -- before any
+     * client exists, because the value is later cast with `(int)` to address the subscriptions
+     * endpoint and that cast is lossy: `"123abc"` becomes `123`, an app that exists and is not
+     * yours. Reconciliation is app-level, so the blast radius is every account with that app
+     * installed (T-05-17).
+     */
+    public static function malformedWebhookAppId(string $appId): self
+    {
+        return new self(sprintf(
+            'HUBSPOT_WEBHOOK_APP_ID must be a HubSpot app id -- digits only, no leading zero -- '
+            .'but is "%s". It is not guessed at or coerced: a value like "123abc" would otherwise '
+            .'become app 123 and reconcile THAT app\'s subscriptions, for every account it is '
+            .'installed on. Find the numeric id on the app\'s "Auth" tab in your HubSpot developer '
+            .'account.',
+            $appId,
+        ));
+    }
+
+    /**
+     * A `hubspot.webhooks.handlers` entry is not a class-string naming a class that exists and
+     * implements {@see WebhookHandler} (D-07). Thrown by `Webhooks\HandlerMap::validate()`, called
+     * from `ProcessWebhookEventJob::handle()` before the durable claim from 05-02 is taken -- a
+     * configuration typo must not burn a claim, and must not emit half an item's events before
+     * failing.
+     *
+     * Three distinct causes share this one factory, and the message names whichever one actually
+     * happened rather than a single generic sentence: a non-string value, a class name that does not
+     * exist, and a class that exists but does not implement the interface are three different fixes.
+     */
+    public static function invalidWebhookHandler(mixed $value, string $eventKey): self
+    {
+        if (! is_string($value)) {
+            return new self(sprintf(
+                'hubspot.webhooks.handlers["%s"] contains a %s, which is not a class name string. '
+                .'Each entry must be a string naming a class, or a list of such strings, that '
+                .'implements %s.',
+                $eventKey,
+                get_debug_type($value),
+                WebhookHandler::class,
+            ));
+        }
+
+        if (! class_exists($value)) {
+            return new self(sprintf(
+                'hubspot.webhooks.handlers["%s"] names "%s", which is not a class that exists. '
+                .'Correct the class name in config/hubspot.php, or remove the entry.',
+                $eventKey,
+                $value,
+            ));
+        }
+
+        return new self(sprintf(
+            'hubspot.webhooks.handlers["%s"] names "%s", which does not implement %s. Add '
+            .'"implements %s" to the class, or remove it from config/hubspot.php.',
+            $eventKey,
+            $value,
+            WebhookHandler::class,
+            WebhookHandler::class,
+        ));
+    }
+
+    /**
+     * `hubspot.webhooks.app_id` or `hubspot.webhooks.developer_api_key` is missing or empty while
+     * `Gateway\HubspotClientFactory::forWebhookManagement()` is building the management client
+     * `hubspot:webhooks:sync` needs (D-16, HOOK-02, T-05-17). Thrown before any client is
+     * constructed, for the same reason `missingToken()` is: a missing credential must never surface
+     * as an unauthenticated request that looks like a permissions problem.
+     *
+     * Named as a THIRD, distinct credential class throughout, because this package already has two:
+     * `hubspot.token` (the CRM access token) and `hubspot.webhooks.secret` (the inbound signature
+     * secret). A Developer API key authenticates neither of those calls, and neither of those
+     * credentials authenticates this one.
+     */
+    public static function missingWebhookManagementCredentials(): self
+    {
+        return new self(
+            'HUBSPOT_WEBHOOK_APP_ID and HUBSPOT_DEVELOPER_API_KEY must both be set to run '
+            .'hubspot:webhooks:sync. Find the app ID on the app\'s "Auth" tab in your HubSpot '
+            .'developer account, and create a Developer API key from your HubSpot account '
+            .'(Settings -> Integrations -> Private Apps is NOT it -- look for "Get HubSpot API '
+            .'key" / the legacy Developer API key page for your developer account). This is a '
+            .'THIRD credential, distinct from HUBSPOT_TOKEN (the CRM access token) and '
+            .'HUBSPOT_CLIENT_SECRET (the webhook signature secret) -- a HubSpot Service Key is '
+            .'never accepted here, only a Developer API key.',
+        );
+    }
+
+    /**
+     * `hubspot.webhooks.app_model` is unset or holds a value `Webhooks\AppModel` does not
+     * recognise (D-16). Thrown by `Webhooks\AppModel::resolve()`, reached from
+     * `Webhooks\Console\SyncWebhookSubscriptionsCommand::handle()` -- never while the application
+     * boots, since a consumer who never runs the sync command should never pay for this key.
+     *
+     * Deliberately no default: guessing one would either issue remote writes for a consumer who
+     * wanted a legacy-private or project-based component export, or silently refuse to reconcile
+     * for one who wanted the legacy-public API path -- the same reasoning `unknownStore()` already
+     * applies to `hubspot.store`.
+     *
+     * @param  list<string>  $validValues
+     */
+    public static function unknownWebhookAppModel(string $given, array $validValues): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.app_model is set to "%s", which is not a supported app model. '
+            .'Supported values are: %s. There is no default -- set it explicitly to the HubSpot '
+            .'app type this application actually is.',
+            $given,
+            implode(', ', $validValues),
+        ));
+    }
+
+    /**
+     * An entry in `hubspot.webhooks.subscriptions` is not an array, names no `event_type`, or names
+     * a `property_name` that is not a string (D-10, D-12). Thrown by
+     * `Webhooks\SubscriptionDeclarations::all()`, reached only when the command reads declarations
+     * -- never while the application boots, so a consumer who never runs `hubspot:webhooks:sync`
+     * never pays for a malformed entry they have not touched yet.
+     */
+    public static function invalidWebhookSubscription(mixed $entry): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.subscriptions contains an invalid entry: %s. Each entry must be an '
+            .'array naming "event_type" (a string, for example "contact.propertyChange") and, '
+            .'only for a *.propertyChange event type, "property_name" (the internal HubSpot '
+            .'property name to filter on). Given: %s.',
+            get_debug_type($entry),
+            var_export($entry, true),
+        ));
+    }
+
+    /**
+     * Two entries in `hubspot.webhooks.subscriptions` share the same identity -- the same event
+     * type and, when present, the same property name (D-10). Thrown by
+     * `Webhooks\SubscriptionDeclarations::all()`. Two declarations that would resolve to the same
+     * portal subscription make the command's own matching ambiguous: which one is the desired
+     * state, and which one is the duplicate the operator meant to delete?
+     */
+    public static function duplicateWebhookSubscription(string $eventType, ?string $propertyName): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.subscriptions declares "%s"%s more than once. Remove the duplicate '
+            .'entry -- two declarations that resolve to the same portal subscription make the '
+            .'sync command\'s own matching ambiguous.',
+            $eventType,
+            $propertyName === null ? '' : sprintf(' with property "%s"', $propertyName),
+        ));
+    }
+
+    /**
+     * `hubspot.webhooks.target_url` (env `HUBSPOT_WEBHOOK_TARGET_URL`) is missing or empty while
+     * either non-API app-model path is about to render an artefact that embeds it (D-16, HOOK-02).
+     * Thrown by `Webhooks\Console\SyncWebhookSubscriptionsCommand` before rendering either
+     * `Webhooks\ManualSetupInstructions` or `Webhooks\ProjectWebhookComponent` -- never while the
+     * application boots, since a consumer who never runs `hubspot:webhooks:sync` never pays for it.
+     *
+     * The message says why a WRONG value is dangerous, not merely that a missing one is broken:
+     * HubSpot signs the URI it actually calls, so a target URL that does not match where
+     * `Route::hubspotWebhook()` is mounted produces rejected deliveries that look exactly like a
+     * credential problem rather than a configuration one -- the same failure mode
+     * `missingWebhookSecret()` exists to name before it is mistaken for something else.
+     */
+    public static function missingWebhookTargetUrl(): self
+    {
+        return new self(
+            'HUBSPOT_WEBHOOK_TARGET_URL is not set. Set it to the absolute URL where '
+            .'Route::hubspotWebhook() is mounted -- the exact URL HubSpot will call. A wrong '
+            .'value here is dangerous, not merely broken: HubSpot signs the URI it calls, so a '
+            .'mismatch produces rejected deliveries that look like a credential problem rather '
+            .'than a configuration one.',
+        );
     }
 }

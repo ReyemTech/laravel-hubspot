@@ -363,12 +363,122 @@ return [
     | - tolerance: the signature timestamp window, in seconds. Too large
     |   widens the replay-attack window; too small rejects valid requests
     |   under normal clock drift.
+    | - enabled: the false-by-default feature flag (D-02, HOOK-03). This is
+    |   what activates the `hubspot_webhook_events` migration — leaving it
+    |   false preserves zero-migration install exactly the way HUBSPOT_STORE
+    |   and hubspot.models already do for their own migration groups. Setting
+    |   it true is what makes a redelivered eventId a no-op after successful
+    |   handling (D-01): the receipt route and queued job both work with it
+    |   false, but with no persisted claim a HubSpot redelivery reprocesses
+    |   the event every time.
+    | - retention_days: how long a HANDLED row survives before
+    |   `hubspot:webhooks:prune` deletes it (D-04). A claimed-but-unhandled
+    |   row is never pruned regardless of age — it is still awaiting its
+    |   lease, not its retention window.
+    | - audit_payload: false by default because the persisted item carries
+    |   the consumer's OWN customers' personal data (T-05-07, threat
+    |   register) — a package that defaulted this true would be an opt-out
+    |   data retention decision made on somebody else's behalf. Set true only
+    |   when the operator wants the normalized item inspectable alongside the
+    |   claim row it dedupes.
+    | - claim_lease: seconds a claim holds before it is considered
+    |   abandoned and becomes re-claimable (D-01, D-03). A worker that dies
+    |   after claiming and before completing costs a delay of at most this
+    |   many seconds, never a permanently stranded event
+    |   (05-RESEARCH.md Pitfall 3). Plain scalars only, here and everywhere
+    |   in this file — `php artisan config:cache` serialises with
+    |   var_export(), which throws on a closure.
+    | - handlers: routes an accepted item to your OWN application classes,
+    |   in addition to the Laravel events above (D-07) — a handler runs
+    |   AFTER HubspotWebhookReceived and any typed event, never instead of
+    |   them. Each key is a HubSpot subscription type (for example
+    |   'contact.propertyChange'); a bare class-string and a list of them
+    |   are both accepted for one key:
+    |
+    |       'handlers' => [
+    |           'contact.propertyChange' => App\Webhooks\SyncContactEmail::class,
+    |           'deal.propertyChange' => [
+    |               App\Webhooks\RecalculatePipeline::class,
+    |               App\Webhooks\NotifySales::class,
+    |           ],
+    |           '*' => App\Webhooks\AuditEveryWebhook::class,
+    |       ],
+    |
+    |   '*' is a valid key on its own terms: its handlers run for EVERY
+    |   accepted item, key-specific handlers first, and a class named under
+    |   both a key and '*' runs only once. Every entry must be a class
+    |   implementing ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler —
+    |   an entry that is not a class-string, does not exist, or does not
+    |   implement that interface throws a ConfigurationException naming the
+    |   class and this key, before any event is dispatched and before the
+    |   durable claim above is even taken. Handlers MUST be idempotent: a
+    |   handler that throws fails the queued item and Laravel retries it,
+    |   which re-runs every handler configured for that item, including one
+    |   that already succeeded. Plain arrays and strings only — this key is
+    |   subject to the same config:cache/var_export() constraint as every
+    |   other key in this file.
+    |
+    | Subscription reconciliation (D-16, HOOK-02) — `php artisan
+    | hubspot:webhooks:sync` compares the desired state below against your
+    | HubSpot app and creates or updates what it can, without ever deleting
+    | anything (D-11). What "reconciling" means depends on which HubSpot app
+    | this actually is, and there is no default — an unset or unrecognised
+    | `app_model` fails the command rather than guessing:
+    |
+    | - app_model: exactly 'legacy_public', 'legacy_private' or 'project'.
+    |   Only 'legacy_public' runs the API reconciliation this release ships;
+    |   the other two fail with a directed message until a later plan adds
+    |   them. Receipt (verifying and handling an inbound webhook) works for
+    |   EVERY app model regardless of this key — only the SYNC command reads
+    |   it.
+    | - app_id: the numeric HubSpot app id, from the app's "Auth" tab in
+    |   your developer account. Only used for reconciliation.
+    | - developer_api_key: a Developer API key from your HubSpot developer
+    |   account — a THIRD credential class, distinct from both 'token' above
+    |   (the CRM access token) and 'secret' above (the inbound signature
+    |   secret). A HubSpot Service Key is never accepted here. Redacted from
+    |   every exception message this package builds, on the same terms as
+    |   'token' and 'secret' (see tests/Arch/SecretLoggingTest.php).
+    | - target_url: the URL HubSpot delivers webhook POSTs to. Reconciliation
+    |   never WRITES this — HubSpot's app-settings target-URL endpoint is
+    |   deliberately not called, since rewriting a live app's delivery
+    |   target redirects production traffic for every installed account.
+    |   Recorded here for a later plan's rendered setup instructions.
+    | - subscriptions: the desired-state list itself. Each entry names an
+    |   'event_type' and, only for a *.propertyChange type, a
+    |   'property_name' to filter on:
+    |
+    |       'subscriptions' => [
+    |           ['event_type' => 'deal.creation'],
+    |           ['event_type' => 'contact.propertyChange', 'property_name' => 'email'],
+    |       ],
+    |
+    |   Never inferred from 'handlers' above (D-10) — a handler can be wired
+    |   with no matching subscription declared, and a subscription can be
+    |   declared with no handler wired; the two have different lifecycles.
+    |   An invalid entry, or two entries declaring the same event type and
+    |   property, fails the sync command with a directed message naming the
+    |   offending entry — never while the application boots.
     |
     */
     'webhooks' => [
         'enforce' => (bool) env('HUBSPOT_WEBHOOK_ENFORCE', true),
         'secret' => env('HUBSPOT_CLIENT_SECRET'),
         'tolerance' => 300,
+        'enabled' => (bool) env('HUBSPOT_WEBHOOKS', false),
+        'retention_days' => (int) env('HUBSPOT_WEBHOOK_RETENTION_DAYS', 30),
+        'audit_payload' => (bool) env('HUBSPOT_WEBHOOK_AUDIT_PAYLOAD', false),
+        'claim_lease' => 900,
+        'handlers' => [
+            //
+        ],
+        'app_model' => env('HUBSPOT_WEBHOOK_APP_MODEL'),
+        'app_id' => env('HUBSPOT_WEBHOOK_APP_ID'),
+        'developer_api_key' => env('HUBSPOT_DEVELOPER_API_KEY'),
+        'target_url' => env('HUBSPOT_WEBHOOK_TARGET_URL'),
+        'subscriptions' => [
+            //
+        ],
     ],
 
 ];

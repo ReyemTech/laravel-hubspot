@@ -15,9 +15,13 @@ use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationTypeResolver;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Gateway\Contracts\WebhookGatewayContract;
+use ReyemTech\Hubspot\Gateway\Contracts\WebhookSubscriptionGatewayContract;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Gateway\HubspotClientFactory;
 use ReyemTech\Hubspot\Gateway\ObjectGateway;
+use ReyemTech\Hubspot\Gateway\WebhookGateway;
+use ReyemTech\Hubspot\Gateway\WebhookSubscriptionGateway;
 use ReyemTech\Hubspot\Registry\AssociationTypeRegistry;
 use ReyemTech\Hubspot\Registry\Console\AssociationsDoctorCommand;
 use ReyemTech\Hubspot\Registry\Console\DoctorCommand;
@@ -32,6 +36,13 @@ use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
+use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
+use ReyemTech\Hubspot\Webhooks\Console\SyncWebhookSubscriptionsCommand;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
+use ReyemTech\Hubspot\Webhooks\HandlerMap;
+use ReyemTech\Hubspot\Webhooks\RouteRegistrar;
+use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
 
 /**
  * Hand-rolled per STANDARDS §2 (spatie/laravel-package-tools is explicitly excluded).
@@ -86,9 +97,15 @@ final class ServiceProvider extends BaseServiceProvider
                 $token = config('hubspot.token');
                 /** @var mixed $clientSecret */
                 $clientSecret = config('hubspot.webhooks.secret');
+                /** @var mixed $developerApiKey */
+                $developerApiKey = config('hubspot.webhooks.developer_api_key');
 
                 return array_values(array_filter(
-                    [is_string($token) ? $token : null, is_string($clientSecret) ? $clientSecret : null],
+                    [
+                        is_string($token) ? $token : null,
+                        is_string($clientSecret) ? $clientSecret : null,
+                        is_string($developerApiKey) ? $developerApiKey : null,
+                    ],
                     static fn (?string $secret): bool => $secret !== null && $secret !== '',
                 ));
             });
@@ -149,6 +166,10 @@ final class ServiceProvider extends BaseServiceProvider
         // implements it, and this line is the only place the two meet. See `Sync\SyncStateContract`.
         $this->app->bind(SyncStateContract::class, HubspotManager::class);
 
+        // The SECOND instance of that same inversion, for R4's identical reason: `Webhooks` declares
+        // the port, `HubspotManager` implements it. See `Webhooks\Contracts\WebhookReceiptRecorder`.
+        $this->app->bind(WebhookReceiptRecorder::class, HubspotManager::class);
+
         // Read fresh from config by every collaborator that resolves it (HubspotObserver,
         // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport
         // Hubspot::fake() would ever need to invalidate, unlike the gateways below.
@@ -163,6 +184,74 @@ final class ServiceProvider extends BaseServiceProvider
         $this->app->bind(ObjectGatewayContract::class, ObjectGateway::class);
         $this->app->bind(AssociationGatewayContract::class, AssociationGateway::class);
         $this->app->bind(AssociationDefinitionsGatewayContract::class, AssociationDefinitionsGateway::class);
+
+        // Reads hubspot.webhooks.secret at RESOLUTION time, not registration time -- the same
+        // on-demand credential boundary ExceptionTranslator's closure keeps above. Non-shared for
+        // the same reason every gateway above is: a config change (or a test's Hubspot::fake())
+        // must be observed by the next resolution, not answered from a construction-time capture.
+        $this->app->bind(WebhookGatewayContract::class, function (Application $app): WebhookGateway {
+            /** @var string|null $secret */
+            $secret = $app->make('config')->get('hubspot.webhooks.secret');
+
+            return new WebhookGateway($secret);
+        });
+
+        // Non-shared, on the same terms as WebhookGatewayContract above: reads its two config keys
+        // at RESOLUTION time, not registration time, so Hubspot::fake()-style container rebinding
+        // in a test is observed by the next resolution rather than answered from a construction-
+        // time capture. HubspotClientFactory::forWebhookManagement() -- built fresh here, never
+        // shared with the singleton CRM-token factory above -- throws ConfigurationException before
+        // any client exists when either credential is missing (D-16, T-05-17).
+        $this->app->bind(WebhookSubscriptionGatewayContract::class, function (Application $app): WebhookSubscriptionGateway {
+            $config = $app->make('config');
+
+            /** @var string|null $appId */
+            $appId = $config->get('hubspot.webhooks.app_id');
+            /** @var string|null $developerApiKey */
+            $developerApiKey = $config->get('hubspot.webhooks.developer_api_key');
+
+            $clientFactory = HubspotClientFactory::forWebhookManagement($appId, $developerApiKey);
+
+            return new WebhookSubscriptionGateway(
+                $clientFactory,
+                $app->make(ExceptionTranslator::class),
+                (int) $appId,
+            );
+        });
+
+        // Shared, like AssociationTypeStore above: this store holds no transport Hubspot::fake()
+        // would ever need to invalidate, only a database connection. `hubspot.webhooks.audit_payload`
+        // and `hubspot.webhooks.claim_lease` are read once, at resolution -- both are plain scalars
+        // (config:cache-safe), not credentials, so there is no on-demand-secret reason to defer this
+        // the way WebhookGatewayContract above does.
+        $this->app->singleton(WebhookEventStore::class, function (Application $app): DatabaseWebhookEventStore {
+            $config = $app->make('config');
+
+            /** @var bool $auditPayload */
+            $auditPayload = $config->get('hubspot.webhooks.audit_payload');
+            /** @var int $claimLease */
+            $claimLease = $config->get('hubspot.webhooks.claim_lease');
+
+            /** @var bool $featureEnabled */
+            $featureEnabled = $config->get('hubspot.webhooks.enabled');
+
+            return new DatabaseWebhookEventStore(
+                $app->make(DatabaseManager::class)->connection(),
+                $auditPayload,
+                $claimLease,
+                $featureEnabled,
+            );
+        });
+
+        // Non-shared, like WebhookGatewayContract above: config('hubspot.webhooks.handlers') is read
+        // fresh on every resolution, not captured once at boot, so a test's config()->set() between
+        // requests is observed the same way HubspotFake's transport swap is.
+        $this->app->bind(HandlerMap::class, function (Application $app): HandlerMap {
+            /** @var array<array-key, mixed> $handlers */
+            $handlers = $app->make('config')->get('hubspot.webhooks.handlers', []);
+
+            return new HandlerMap($handlers);
+        });
     }
 
     /**
@@ -188,6 +277,11 @@ final class ServiceProvider extends BaseServiceProvider
             // request for no benefit.
             $this->commands(self::consoleCommands());
         }
+
+        // Route::hubspotWebhook(string $uri) (HOOK-01). No package routes file exists or is
+        // loaded -- registering the macro IS the whole of the integration, and a consuming
+        // application adds exactly one line to its own routes file.
+        RouteRegistrar::register();
 
         $this->publishes([
             __DIR__.'/../config/hubspot.php' => $this->app->configPath('hubspot.php'),
@@ -250,6 +344,8 @@ final class ServiceProvider extends BaseServiceProvider
             SyncAssociationsCommand::class,
             DoctorCommand::class,
             AssociationsDoctorCommand::class,
+            PruneWebhookEventsCommand::class,
+            SyncWebhookSubscriptionsCommand::class,
         ];
     }
 
@@ -272,6 +368,11 @@ final class ServiceProvider extends BaseServiceProvider
      * plan early: gated on `hubspot.models` being non-empty rather than rewriting the entry above,
      * so an install with no bound models still registers no migration path at all (REG-03).
      *
+     * `database/migrations/webhooks` (D-02, Phase 5) is the THIRD, gated on `hubspot.webhooks.enabled`
+     * -- a distinct flag from both of the above, so an install that syncs models or reconciles the
+     * registry through the database store still registers no webhook migration path until it opts
+     * into that separately.
+     *
      * @return array<string, bool> absolute directory => whether to load it
      */
     private function migrationGroups(): array
@@ -279,6 +380,7 @@ final class ServiceProvider extends BaseServiceProvider
         return [
             __DIR__.'/../database/migrations' => $this->app->make('config')->get('hubspot.store') === 'database',
             __DIR__.'/../database/migrations/sync' => $this->app->make('config')->get('hubspot.models') !== [],
+            __DIR__.'/../database/migrations/webhooks' => $this->app->make('config')->get('hubspot.webhooks.enabled') === true,
         ];
     }
 
