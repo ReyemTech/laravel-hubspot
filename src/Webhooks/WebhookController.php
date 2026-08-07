@@ -107,12 +107,29 @@ final class WebhookController
         /** @var string $requestUri */
         $requestUri = $request->server->get('REQUEST_URI', '');
 
+        $signatureVersion = (string) $request->headers->get('X-HubSpot-Signature-Version', 'v3');
+
+        // The digest lives in a DIFFERENT header per version, verified against HubSpot's live
+        // documentation on 2026-08-07 rather than recall:
+        // https://developers.hubspot.com/docs/guides/apps/authentication/validating-requests
+        //
+        //   v3      -> X-HubSpot-Signature-v3
+        //   v1, v2  -> X-HubSpot-Signature
+        //
+        // Reading the legacy header while defaulting the version to v3 meant a genuine delivery
+        // presented an empty signature and was rejected 401 -- every request, in production only.
+        // The suite could not see it: its own fixtures signed into the header the controller read,
+        // so implementation and tests agreed with each other and with nothing else.
+        $signature = $signatureVersion === 'v3'
+            ? (string) $request->headers->get('X-HubSpot-Signature-v3', '')
+            : (string) $request->headers->get('X-HubSpot-Signature', '');
+
         return $this->gateway->verify(
             method: $request->getMethod(),
             uri: $request->getSchemeAndHttpHost().$requestUri,
             rawBody: $request->getContent(),
-            signatureVersion: (string) $request->headers->get('X-HubSpot-Signature-Version', 'v3'),
-            signature: (string) $request->headers->get('X-HubSpot-Signature', ''),
+            signatureVersion: $signatureVersion,
+            signature: $signature,
             timestamp: $request->headers->get('X-HubSpot-Request-Timestamp'),
         );
     }

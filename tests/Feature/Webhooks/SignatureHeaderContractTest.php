@@ -39,6 +39,10 @@ final class SignatureHeaderContractTest extends TestCase
 
     protected function defineRoutes($router): void
     {
+        // Macro registered by ServiceProvider::boot(); PHPStan resolves Route macros only from a
+        // bootstrapped application, which a package repository has none of. Suppressed per line
+        // with a reason rather than via a baseline (D-04), matching InboundWebhookTracerTest.
+        // @phpstan-ignore staticMethod.notFound
         Route::hubspotWebhook(self::PATH);
     }
 

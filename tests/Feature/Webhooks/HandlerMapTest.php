@@ -280,7 +280,7 @@ final class HandlerMapTest extends TestCase
         ));
 
         return [
-            'HTTP_X_HUBSPOT_SIGNATURE' => $signature,
+            'HTTP_X_HUBSPOT_SIGNATURE_V3' => $signature,
             'HTTP_X_HUBSPOT_SIGNATURE_VERSION' => 'v3',
             'HTTP_X_HUBSPOT_REQUEST_TIMESTAMP' => (string) $timestamp,
             'CONTENT_TYPE' => 'application/json',

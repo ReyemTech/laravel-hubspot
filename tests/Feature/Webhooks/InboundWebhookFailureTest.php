@@ -75,7 +75,7 @@ final class InboundWebhookFailureTest extends TestCase
 
         $body = self::batchPayload([self::rawEventItem()]);
         $headers = self::signedHeaders('POST', 'http://localhost'.self::URI, $body);
-        $headers['HTTP_X_HUBSPOT_SIGNATURE'] = base64_encode('not-the-right-signature');
+        $headers['HTTP_X_HUBSPOT_SIGNATURE_V3'] = base64_encode('not-the-right-signature');
 
         $response = $this->call('POST', self::URI, [], [], [], $headers, $body);
 
@@ -345,7 +345,7 @@ final class InboundWebhookFailureTest extends TestCase
         ));
 
         return [
-            'HTTP_X_HUBSPOT_SIGNATURE' => $signature,
+            'HTTP_X_HUBSPOT_SIGNATURE_V3' => $signature,
             'HTTP_X_HUBSPOT_SIGNATURE_VERSION' => 'v3',
             'HTTP_X_HUBSPOT_REQUEST_TIMESTAMP' => (string) $timestamp,
             'CONTENT_TYPE' => 'application/json',
