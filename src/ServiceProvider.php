@@ -94,9 +94,15 @@ final class ServiceProvider extends BaseServiceProvider
                 $token = config('hubspot.token');
                 /** @var mixed $clientSecret */
                 $clientSecret = config('hubspot.webhooks.secret');
+                /** @var mixed $developerApiKey */
+                $developerApiKey = config('hubspot.webhooks.developer_api_key');
 
                 return array_values(array_filter(
-                    [is_string($token) ? $token : null, is_string($clientSecret) ? $clientSecret : null],
+                    [
+                        is_string($token) ? $token : null,
+                        is_string($clientSecret) ? $clientSecret : null,
+                        is_string($developerApiKey) ? $developerApiKey : null,
+                    ],
                     static fn (?string $secret): bool => $secret !== null && $secret !== '',
                 ));
             });

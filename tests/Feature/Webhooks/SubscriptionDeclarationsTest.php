@@ -135,11 +135,10 @@ final class SubscriptionDeclarationsTest extends TestCase
      */
     public function test_a_malformed_entry_does_not_throw_until_declarations_are_read(): void
     {
+        // Booting under `defineEnvironment()`/`setUp()` with this malformed config in place --
+        // reaching this test body at all is half the assertion. The second half is that reading
+        // declarations, not booting, is what throws.
         config(['hubspot.webhooks.subscriptions' => ['not-an-array']]);
-
-        // Reaching this line without an exception is the assertion: the application has already
-        // booted with the malformed config in place.
-        self::assertTrue(true);
 
         $this->expectException(ConfigurationException::class);
         self::declarations()->all();
@@ -214,5 +213,4 @@ final class SubscriptionDeclarationsTest extends TestCase
             self::assertStringContainsString('[redacted]', $exception->getMessage());
         }
     }
-
 }
