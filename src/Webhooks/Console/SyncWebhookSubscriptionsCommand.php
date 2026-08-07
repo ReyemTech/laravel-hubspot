@@ -202,6 +202,17 @@ final class SyncWebhookSubscriptionsCommand extends Command
             /** @var array<string, true> $matchedIdentities */
             $matchedIdentities = [];
 
+            // T-05-17. Subscriptions are app-level, so a wrong HUBSPOT_WEBHOOK_APP_ID reconciles
+            // every account the app is installed on. Announce which app AFTER the gateway resolves
+            // -- a missing credential should still fail through forWebhookManagement()'s own
+            // message -- but BEFORE the first create/update, which is the only point at which
+            // seeing it still helps. $gateway->list() above is a read, so nothing has been written
+            // yet. The ordering, not the presence, is the mitigation; a test pins the position.
+            /** @var string|null $appId */
+            $appId = $this->laravel->make('config')->get('hubspot.webhooks.app_id');
+
+            $this->line(sprintf('%sReconciling app %s.', $dryRun ? '[dry run] ' : '', $appId));
+
             foreach ($declared as $subscription) {
                 $matchedIdentities[$subscription->identity()] = true;
 
