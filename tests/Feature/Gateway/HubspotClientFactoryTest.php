@@ -206,6 +206,63 @@ final class HubspotClientFactoryTest extends TestCase
         }
     }
 
+    /**
+     * `forWebhookManagement()` (05-04, D-16, HOOK-02): the THIRD credential class, distinct from
+     * `fromConfig()`'s access token and `forTransport()`'s fake seam. Guarded before any client is
+     * built, exactly as `fromConfig()` guards a missing token (T-05-17).
+     */
+    public function test_for_webhook_management_throws_when_the_app_id_is_missing(): void
+    {
+        try {
+            HubspotClientFactory::forWebhookManagement(null, 'a-developer-key');
+            self::fail('Expected a missing app id to throw ConfigurationException.');
+        } catch (ConfigurationException $exception) {
+            self::assertStringContainsString('HUBSPOT_WEBHOOK_APP_ID', $exception->getMessage());
+            self::assertStringContainsString('HUBSPOT_DEVELOPER_API_KEY', $exception->getMessage());
+        }
+    }
+
+    public function test_for_webhook_management_throws_when_the_app_id_is_empty(): void
+    {
+        try {
+            HubspotClientFactory::forWebhookManagement('', 'a-developer-key');
+            self::fail('Expected an empty app id to throw ConfigurationException.');
+        } catch (ConfigurationException $exception) {
+            self::assertStringContainsString('HUBSPOT_WEBHOOK_APP_ID', $exception->getMessage());
+        }
+    }
+
+    public function test_for_webhook_management_throws_when_the_developer_api_key_is_missing(): void
+    {
+        try {
+            HubspotClientFactory::forWebhookManagement('998877', null);
+            self::fail('Expected a missing developer API key to throw ConfigurationException.');
+        } catch (ConfigurationException $exception) {
+            self::assertStringContainsString('HUBSPOT_DEVELOPER_API_KEY', $exception->getMessage());
+        }
+    }
+
+    public function test_for_webhook_management_throws_when_the_developer_api_key_is_empty(): void
+    {
+        try {
+            HubspotClientFactory::forWebhookManagement('998877', '');
+            self::fail('Expected an empty developer API key to throw ConfigurationException.');
+        } catch (ConfigurationException $exception) {
+            self::assertStringContainsString('HUBSPOT_DEVELOPER_API_KEY', $exception->getMessage());
+        }
+    }
+
+    public function test_for_webhook_management_builds_a_client_with_neither_credential_missing(): void
+    {
+        $factory = HubspotClientFactory::forWebhookManagement('998877', 'a-developer-key');
+
+        // Reaching a real Discovery instance -- with no exception -- is the whole of what this
+        // factory promises: it does not attach the retry middleware or an explicit timeout the way
+        // fromConfig() does, since a hand-run admin command is not the queued-worker transport those
+        // exist to protect.
+        self::assertNotNull($factory->discovery());
+    }
+
     public function test_guzzle_middleware_returns_the_wrapped_middlewares_result_when_it_is_callable(): void
     {
         $method = new ReflectionMethod(HubspotClientFactory::class, 'guzzleMiddleware');
