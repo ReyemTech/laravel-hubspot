@@ -26,10 +26,11 @@ use Throwable;
  *
  * `handle()` opens by claiming the event's id ({@see WebhookEventStore::claim()}). A `Handled` claim
  * means this exact eventId already completed successfully -- HOOK-01's durable redelivery guarantee
- * -- so `handle()` returns having done nothing. A `Held` claim means another worker's claim on this
- * event is still inside its lease window, doing the work right now; `handle()` returns without
- * emitting anything and, critically, WITHOUT failing the job -- failing here would retry a race the
- * other worker is already winning. Only an `Acquired` claim reaches the dispatch this plan's
+ * -- so `handle()` returns having done nothing. A `Held` claim means another claim on this event is
+ * still inside its lease window, so `handle()` RELEASES the job back to the queue, delayed past that
+ * lease, emitting nothing and -- critically -- without failing it. Failing would retry a race a live
+ * worker may be winning; returning would be worse, because Laravel reads that as success and deletes
+ * a job that is the event's last remaining chance when the holder has died. Only an `Acquired` claim reaches the dispatch this plan's
  * predecessor (05-01) established, and `complete()` is called only AFTER that dispatch returns. This
  * is what makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a
  * second, concurrent run of the same handlers.
@@ -39,9 +40,13 @@ use Throwable;
  * exactly as it always did. That release is not housekeeping: without it the retry arrives inside the
  * lease, is answered `Held` — indistinguishable from a concurrent worker — and returns successfully,
  * so Laravel deletes the job and the row stays claimed-but-unhandled forever while HubSpot, having
- * had its 204, never re-sends. `catch`, never `finally`: a completed claim must stay completed. The
- * lease still covers the worker that dies without unwinding, which is the one case nothing
- * in-process can clean up after.
+ * had its 204, never re-sends. `catch`, never `finally`: a completed claim must stay completed.
+ *
+ * The worker that DIES runs no `catch`, so `abandon()` cannot cover it — and the lease alone does
+ * not either. A lease makes the row reclaimable; it does not make anything come back to reclaim it,
+ * and the queue's own retry lands after `retry_after` (90 seconds by default), inside the lease.
+ * That is what the `Held` release above is for. The two together are what make D-03's "leaves it
+ * retryable" true for both a handler that throws and a worker that is killed.
  *
  * ## Typed events (05-03, D-06, D-08, D-09)
  *
@@ -113,6 +118,31 @@ final class ProcessWebhookEventJob implements ShouldQueue
         $handlers->validate();
 
         $claim = $store->claim($this->event);
+
+        // `Held` and `Handled` are NOT the same answer, and treating them alike destroyed events.
+        //
+        // `Held` means somebody else's claim is still inside its lease. That somebody may be a
+        // live worker -- or a worker that DIED holding the claim, which runs no `catch` and so
+        // never reaches the `abandon()` below. The queue makes the dead worker's job visible again
+        // after `retry_after` (90 seconds by default, far inside the 900-second lease), and if
+        // this returned normally there, Laravel would take it for success and delete the last job
+        // that would ever have touched the event. The row does become reclaimable once the lease
+        // expires; nothing survives to reclaim it, and receipt already answered 204.
+        //
+        // So the job goes BACK on the queue, delayed past the lease. The live-worker case pays one
+        // delayed no-op that then reads `Handled`; the dead-worker case reclaims and runs. Neither
+        // fails the job, which is what the three-state claim was always for.
+        if ($claim === WebhookEventClaim::Held) {
+            /** @var int $claimLease */
+            $claimLease = Config::get('hubspot.webhooks.claim_lease');
+
+            // The WHOLE lease, not the remainder: the store does not expose how much of it has
+            // elapsed, and over-waiting costs a delay while under-waiting costs another `Held` and
+            // one more attempt off `tries`.
+            $this->release($claimLease);
+
+            return;
+        }
 
         if ($claim !== WebhookEventClaim::Acquired) {
             return;

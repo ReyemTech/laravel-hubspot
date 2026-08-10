@@ -49,10 +49,14 @@ interface WebhookEventStore
      * through a guard that turns `SQLSTATE[42S02]` into a directed "run the migration" error; this
      * one exists to answer that question, so it returns `false` and lets the caller decide.
      *
-     * An implementation may cache a `true` answer for the life of the instance — the table does not
-     * disappear during normal operation, and a per-delivery schema query on the receipt path is not
-     * free. It must NOT cache `false`: a store bound as a singleton would then keep refusing after
-     * `migrate` fixed the install, until the workers or the Octane server were restarted.
+     * **An implementation must not cache the answer.** The obvious optimisation — latch `true` and
+     * skip the schema lookup thereafter — is forbidden here, and the shipped store tried it before
+     * this sentence existed. `ServiceProvider` binds the store as a `singleton`, so a latch is
+     * mutable state on a container singleton, which STANDARDS §1 permits only when it also resets
+     * at Octane's entry-point boundaries. It would also be wrong on its own terms: a
+     * `migrate:rollback` against a live Octane worker leaves it answering ready for a table that no
+     * longer exists. And it buys nothing on PHP-FPM, where the process handles one request and dies
+     * — one request calls this once.
      *
      * This settles what is DETECTABLE at dispatch and nothing more. No check here can promise the
      * database will still answer when the worker runs; `claim()`'s own missing-table error remains

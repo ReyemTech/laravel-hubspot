@@ -65,7 +65,7 @@ final class RecordingQueueJob implements Job
         return $this->attempts;
     }
 
-    public function uuid(): ?string
+    public function uuid(): string
     {
         return 'recording-queue-job';
     }
@@ -75,6 +75,9 @@ final class RecordingQueueJob implements Job
         return 'recording-queue-job';
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function payload(): array
     {
         return [];

@@ -131,6 +131,7 @@ final class RetryAfterHandlerFailureTest extends TestCase
      */
     public function test_a_retry_that_meets_a_handled_claim_is_dropped_rather_than_requeued(): void
     {
+        /** @var WebhookEventStore $store */
         $store = $this->app?->make(WebhookEventStore::class);
         $store->claim($this->event());
         $store->complete($this->event()->eventId);

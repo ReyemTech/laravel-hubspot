@@ -312,20 +312,20 @@ final class WebhookEventStoreTest extends TestCase
     }
 
     /**
-     * **Readiness is memoized in the affirmative direction ONLY, and that asymmetry is the design.**
+     * **Readiness is never cached, and this is the test that keeps it that way.**
      *
-     * The store is a container singleton, so a cached answer outlives the request — and under
-     * Octane, the process. Caching "ready" is free and safe: the table does not disappear during
-     * normal operation, and one schema query per process beats one per delivery on a hot receipt
-     * path. Caching "not ready" would be the dangerous half: it would keep refusing deliveries
-     * after `php artisan migrate` fixed the install, until somebody restarted the workers or the
-     * Octane server. So it is never cached, and a broken install re-checks — those requests are
-     * being refused anyway.
+     * Latching a `true` answer is the obvious optimisation, and the shipped store did it until
+     * Codex raised it against `214b3db`. `ServiceProvider` binds this store as a `singleton`, so a
+     * latch is mutable state on a container singleton that resets at no Octane boundary — which
+     * STANDARDS §1 forbids outright: *"no container singleton this package binds may hold mutable
+     * state unless it also resets that state at Octane's entry-point boundaries."*
      *
-     * Dropping the table after a positive answer is not a scenario this store defends against; it
-     * is simply how the memo is made observable.
+     * It is also wrong on its own terms. A `migrate:rollback` against a live Octane worker would
+     * leave a latched store answering ready for a table that no longer exists, so the controller
+     * would go on acknowledging deliveries it cannot process — the exact failure `isReady()` was
+     * added to prevent. Dropping the table below is that rollback.
      */
-    public function test_a_positive_readiness_answer_is_memoized_and_a_negative_one_is_not(): void
+    public function test_readiness_is_re_read_rather_than_cached_from_an_earlier_answer(): void
     {
         $this->migrate();
         $store = $this->store();
@@ -334,15 +334,10 @@ final class WebhookEventStoreTest extends TestCase
 
         Schema::drop(DatabaseWebhookEventStore::TABLE);
 
-        // Memoized: the same instance does not pay for a second schema query.
-        self::assertTrue($store->isReady());
-
-        // A store that never saw the table sees the truth, so the negative is not cached anywhere.
-        self::assertFalse((new DatabaseWebhookEventStore(
-            DB::connection(),
-            auditPayload: false,
-            claimLeaseSeconds: 900,
-        ))->isReady());
+        self::assertFalse(
+            $store->isReady(),
+            'The SAME instance must see the table go away: a latched answer is mutable singleton state STANDARDS 1 forbids.',
+        );
     }
 
     /**
