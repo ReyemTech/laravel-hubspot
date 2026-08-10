@@ -76,9 +76,11 @@ final class RouteRegistrar
      * `PreventRequestForgery`, leaving `ValidateCsrfToken` behind as a deprecated subclass. A
      * consuming application's own subclass — `App\Http\Middleware\VerifyCsrfToken` and anything
      * like it — is matched by `Router::resolveMiddleware()`'s `isSubclassOf()` arm without being
-     * named. Whichever of the two is not the base on a given matrix leg is inert there, so
-     * `pest --mutate`'s RemoveArrayItem reports one survivor per leg; the entry it removes is the
-     * one the OTHER leg needs, and `WebhookRouteCsrfTest` covers each on the leg where it binds.
+     * named. Whichever of the two is not the base on a given matrix leg is simply inert there:
+     * `resolveMiddleware()` guards its subclass check with `class_exists()`, and the exact-name
+     * arm cannot match a class the group never carried. `WebhookRouteCsrfTest` resolves the
+     * framework's CSRF middleware by the same first-name-that-exists rule, so each leg tests the
+     * entry that actually binds on it.
      *
      * A method rather than a constant, matching `ServiceProvider::supportedStores()`: a constant
      * declaration has no executed line for `pest --mutate` to attribute a covering test to.
