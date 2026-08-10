@@ -36,6 +36,31 @@ use ReyemTech\Hubspot\Webhooks\WebhookEventClaim;
 interface WebhookEventStore
 {
     /**
+     * Whether this store can accept a claim right now — asked BEFORE a delivery is acknowledged,
+     * never as part of doing the work.
+     *
+     * `HUBSPOT_WEBHOOKS=true` without `php artisan migrate` is a real deployment window: the flag
+     * is what a deploy sets and the migration is a separate step, so the endpoint can be live
+     * before its table exists. Answering 204 in that window and discovering the problem on the
+     * worker ends HubSpot's retries for an event nothing ever handled — the same destruction the
+     * receipt flag and the kill switch already refuse, reached by a third route.
+     *
+     * **The one method here that must not raise for a missing table.** Every other operation runs
+     * through a guard that turns `SQLSTATE[42S02]` into a directed "run the migration" error; this
+     * one exists to answer that question, so it returns `false` and lets the caller decide.
+     *
+     * An implementation may cache a `true` answer for the life of the instance — the table does not
+     * disappear during normal operation, and a per-delivery schema query on the receipt path is not
+     * free. It must NOT cache `false`: a store bound as a singleton would then keep refusing after
+     * `migrate` fixed the install, until the workers or the Octane server were restarted.
+     *
+     * This settles what is DETECTABLE at dispatch and nothing more. No check here can promise the
+     * database will still answer when the worker runs; `claim()`'s own missing-table error remains
+     * the backstop for that, and for items queued before the table went away.
+     */
+    public function isReady(): bool;
+
+    /**
      * Attempts to claim the given event's `eventId`. Atomic against a concurrent claim attempt for
      * the same id -- an implementation must never read the row, decide, and then write, since two
      * workers racing through that sequence could both observe "no row" and both proceed.

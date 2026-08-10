@@ -40,6 +40,17 @@ final class SignatureHeaderContractTest extends TestCase
         $app['config']->set('hubspot.webhooks.enabled', true);
     }
 
+    /**
+     * The flag alone stopped being enough once the endpoint began checking that the store is
+     * actually migrated before acknowledging: `HUBSPOT_WEBHOOKS=true` with no table is a broken
+     * install, not a scenario the signature contract should be specified against. `Bus::fake()`
+     * still keeps the job from ever running.
+     */
+    protected function defineDatabaseMigrations(): void
+    {
+        $this->loadMigrationsFrom(__DIR__.'/../../../database/migrations/webhooks');
+    }
+
     protected function defineRoutes($router): void
     {
         // Macro registered by ServiceProvider::boot(); PHPStan resolves Route macros only from a

@@ -51,6 +51,18 @@ final class InboundWebhookFailureTest extends TestCase
         $app['config']->set('hubspot.webhooks.enabled', true);
     }
 
+    /**
+     * The flag alone stopped being enough once the endpoint began checking that the store is
+     * actually migrated before acknowledging: `HUBSPOT_WEBHOOKS=true` with no table is a broken
+     * install, not a scenario receipt behaviour should be specified against. These cases exercise
+     * receipt itself, so they put the application in the state a correct install is in.
+     * `Bus::fake()` still keeps the job from ever running.
+     */
+    protected function defineDatabaseMigrations(): void
+    {
+        $this->loadMigrationsFrom(__DIR__.'/../../../database/migrations/webhooks');
+    }
+
     public function test_enforcement_is_true_by_default(): void
     {
         self::assertTrue(

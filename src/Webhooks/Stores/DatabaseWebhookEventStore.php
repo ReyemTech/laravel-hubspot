@@ -61,6 +61,36 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         private readonly bool $featureEnabled = true,
     ) {}
 
+    /**
+     * Latched, never unlatched -- and deliberately not a `readonly` promoted property, because it
+     * is the one piece of state this store accumulates rather than receives.
+     */
+    private bool $readinessConfirmed = false;
+
+    /**
+     * **Memoized in the affirmative direction only.** This store is a container singleton, so an
+     * answer cached here outlives the request and, under Octane, the process.
+     *
+     * Caching `true` is free and safe: the table does not vanish during normal operation, and one
+     * schema query per process is the honest price of not paying one per delivery on the receipt
+     * path. Caching `false` is the half that would hurt -- the store would keep refusing
+     * deliveries after `php artisan migrate` fixed the install, until somebody restarted the
+     * workers or the Octane server, turning a two-minute fix into an outage nobody could explain.
+     * So a negative answer is never kept, and a broken install re-checks on each delivery. Those
+     * requests are being refused anyway, and the repair takes effect on the very next one.
+     *
+     * There is nothing here for `HubspotManager::flushState()` to clear, precisely because the only
+     * cached value is one that cannot go stale.
+     */
+    public function isReady(): bool
+    {
+        if ($this->readinessConfirmed) {
+            return true;
+        }
+
+        return $this->readinessConfirmed = $this->connection->getSchemaBuilder()->hasTable(self::TABLE);
+    }
+
     public function claim(NormalizedWebhookEvent $event): WebhookEventClaim
     {
         return $this->guarded(function () use ($event): WebhookEventClaim {

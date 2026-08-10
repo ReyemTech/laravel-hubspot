@@ -6,12 +6,14 @@ namespace ReyemTech\Hubspot\Webhooks;
 
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use JsonException;
 use ReyemTech\Hubspot\Gateway\Contracts\WebhookGatewayContract;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use Throwable;
 
 /**
@@ -46,6 +48,7 @@ final class WebhookController
         private readonly WebhookGatewayContract $gateway,
         private readonly Dispatcher $bus,
         private readonly ConfigRepository $config,
+        private readonly Container $container,
     ) {}
 
     public function __invoke(Request $request): Response
@@ -94,6 +97,27 @@ final class WebhookController
                 'error_code' => 'webhooks_disabled',
                 'route' => $request->path(),
                 'fix' => 'Set HUBSPOT_WEBHOOKS=true and run `php artisan migrate`.',
+            ]);
+
+            return new Response('', 500);
+        }
+
+        // The flag being true is not the same as the store being usable. `HUBSPOT_WEBHOOKS=true`
+        // without `php artisan migrate` is a real deployment window -- the flag is what a deploy
+        // sets, the migration is a separate step -- and in it the endpoint is live without its
+        // table. Acknowledging here and failing on the worker ends HubSpot's retries for an event
+        // nothing ever handled, which is the same destruction the two guards above refuse, reached
+        // by a third route.
+        //
+        // Resolved lazily rather than constructor-injected, the same shape
+        // `Registry\Console\SyncAssociationsCommand` uses for its gateway: the guards above must be
+        // answerable by an application whose database is not configured at all, and a constructor
+        // dependency would resolve one before either of them ran.
+        if (! $this->container->make(WebhookEventStore::class)->isReady()) {
+            Log::error('A HubSpot webhook was refused because its event store is not migrated.', [
+                'error_code' => 'webhooks_not_migrated',
+                'route' => $request->path(),
+                'fix' => 'Run `php artisan migrate` to create the hubspot_webhook_events table.',
             ]);
 
             return new Response('', 500);
