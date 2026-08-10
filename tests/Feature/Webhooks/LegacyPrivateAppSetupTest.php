@@ -146,6 +146,37 @@ final class LegacyPrivateAppSetupTest extends TestCase
         self::assertStringContainsString('more than once', $joined);
     }
 
+    /**
+     * An empty declaration list is a failure for EVERY app model, not only `legacy_public`.
+     * Rendering setup instructions that ask an operator to add nothing is worse than useless: it
+     * reads as "this app needs no subscriptions" when what actually happened is that the config
+     * key was never filled in.
+     */
+    public function test_an_empty_declaration_list_fails_before_any_instructions_are_rendered(): void
+    {
+        self::legacyPrivate();
+        config(['hubspot.webhooks.subscriptions' => []]);
+
+        $gateway = new FakeWebhookSubscriptionGateway;
+        $this->bindGateway($gateway);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync');
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertSame(0, $gateway->listCalls);
+
+        // The same whole-line message the legacy_public path produces -- one rule, one wording.
+        self::assertContains(
+            'hubspot.webhooks.subscriptions is empty. Add at least one declaration, for example '
+            .'["event_type" => "contact.propertyChange", "property_name" => "email"], then run this '
+            .'command again.',
+            $lines,
+        );
+
+        self::assertNotContains('Add these subscriptions, one per line, under "Subscriptions":', $lines);
+    }
+
     public function test_the_command_exits_zero_on_this_path(): void
     {
         self::legacyPrivate();

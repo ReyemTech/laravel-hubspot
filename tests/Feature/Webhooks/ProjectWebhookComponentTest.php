@@ -234,6 +234,73 @@ final class ProjectWebhookComponentTest extends TestCase
         self::assertStringContainsString('HUBSPOT_WEBHOOK_TARGET_URL', $joined);
     }
 
+    /**
+     * An empty declaration list is a failure for EVERY app model, not only `legacy_public`. This
+     * branch is the sharpest case: a component with no subscriptions renders happily, exits zero,
+     * and is a file an operator then COMMITS and deploys — a HubSpot app that has silently
+     * subscribed to nothing. The `--output` path is asserted absent, so the proof is that no such
+     * artefact reached disk, not merely that the exit code was right.
+     */
+    public function test_an_empty_declaration_list_fails_before_any_component_is_written(): void
+    {
+        config([
+            'hubspot.webhooks.app_model' => 'project',
+            'hubspot.webhooks.target_url' => 'https://app.example.com/hubspot/webhook',
+            'hubspot.webhooks.subscriptions' => [],
+        ]);
+
+        $gateway = new FakeWebhookSubscriptionGateway;
+        $this->bindGateway($gateway);
+
+        $path = sys_get_temp_dir().'/hubspot-webhook-component-'.uniqid('', true).'.json';
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync', ['--output' => $path]);
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertSame(0, $gateway->listCalls);
+        self::assertFileDoesNotExist($path);
+
+        // The same whole-line message the legacy_public path produces -- one rule, one wording.
+        self::assertContains(
+            'hubspot.webhooks.subscriptions is empty. Add at least one declaration, for example '
+            .'["event_type" => "contact.propertyChange", "property_name" => "email"], then run this '
+            .'command again.',
+            $lines,
+        );
+    }
+
+    /**
+     * `file_put_contents()` answers `false` for a missing directory, an unwritable one, a full
+     * disk and every other filesystem failure. Reporting "Wrote ..." and exiting zero on any of
+     * them tells automation the component exists when it does not — the one outcome that gets
+     * believed rather than retried.
+     */
+    public function test_a_component_that_cannot_be_written_fails_instead_of_reporting_success(): void
+    {
+        self::project();
+        $this->bindGateway(new FakeWebhookSubscriptionGateway);
+
+        $missingDirectory = sys_get_temp_dir().'/hubspot-absent-'.uniqid('', true);
+        $path = $missingDirectory.'/component.json';
+        self::assertDirectoryDoesNotExist($missingDirectory);
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync', ['--output' => $path]);
+        $lines = CommandOutput::linesOf(Artisan::output());
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertFileDoesNotExist($path);
+        self::assertNotContains(sprintf('Wrote %s.', $path), $lines);
+        self::assertContains(
+            sprintf(
+                'Could not write the project webhook component to %s. Check that the directory '
+                .'exists and is writable, then run this command again.',
+                $path,
+            ),
+            $lines,
+        );
+    }
+
     public function test_the_component_class_records_the_documentation_url_and_date_checked(): void
     {
         $source = (string) file_get_contents(dirname(__DIR__, 3).'/src/Webhooks/ProjectWebhookComponent.php');
