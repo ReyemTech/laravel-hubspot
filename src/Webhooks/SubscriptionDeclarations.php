@@ -83,6 +83,16 @@ final class SubscriptionDeclarations
             throw ConfigurationException::invalidWebhookSubscription($entry);
         }
 
+        // A property filter only means anything on a *.propertyChange type, which is exactly what
+        // invalidWebhookSubscription()'s message has always said -- it was the one clause of that
+        // message nothing enforced. Unchecked, `deal.creation` carrying a `property_name` becomes
+        // desired state: sent to HubSpot by the legacy_public reconciliation, or written into a
+        // project component that then deploys. Rejected HERE so the failure is local, directed and
+        // free, rather than a remote subscription nobody asked for.
+        if ($propertyName !== null && ! str_ends_with($eventType, '.propertyChange')) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
         return new WebhookSubscription(
             eventType: $eventType,
             propertyName: $propertyName,
