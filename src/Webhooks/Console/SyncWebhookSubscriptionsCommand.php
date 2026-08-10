@@ -63,16 +63,35 @@ final class SyncWebhookSubscriptionsCommand extends Command
 
         try {
             $appModel = AppModel::resolve($rawAppModel);
+
+            // Validated ONCE, before the match, because an empty or invalid declaration list is
+            // wrong for every app model and not only the one that talks to HubSpot. Held inside
+            // the legacy_public branch, this guard let legacy_private render setup instructions
+            // asking an operator to add nothing, and let project render, write and exit zero on a
+            // component subscribed to nothing -- an artefact that then gets committed and
+            // deployed. Branching on app model decides what a declaration list is USED for; it
+            // has never decided what makes one valid.
+            $declared = $declarations->all();
         } catch (HubspotException $exception) {
             $this->error($exception->getMessage());
 
             return self::FAILURE;
         }
 
+        if ($declared === []) {
+            $this->error(
+                'hubspot.webhooks.subscriptions is empty. Add at least one declaration, for '
+                .'example ["event_type" => "contact.propertyChange", "property_name" => "email"], '
+                .'then run this command again.',
+            );
+
+            return self::FAILURE;
+        }
+
         return match ($appModel) {
-            AppModel::LegacyPublic => $this->syncLegacyPublic($declarations, (bool) $this->option('dry-run')),
-            AppModel::LegacyPrivate => $this->legacyPrivate($declarations),
-            AppModel::Project => $this->project($declarations),
+            AppModel::LegacyPublic => $this->syncLegacyPublic($declared, (bool) $this->option('dry-run')),
+            AppModel::LegacyPrivate => $this->legacyPrivate($declared),
+            AppModel::Project => $this->project($declared),
         };
     }
 
@@ -80,11 +99,12 @@ final class SyncWebhookSubscriptionsCommand extends Command
      * The `legacy_private` branch: validated, rendered manual setup guidance, never a HubSpot
      * request. See {@see ManualSetupInstructions} for why -- HubSpot exposes no
      * subscription-management API for this app model at all.
+     *
+     * @param  non-empty-list<WebhookSubscription>  $declared
      */
-    private function legacyPrivate(SubscriptionDeclarations $declarations): int
+    private function legacyPrivate(array $declared): int
     {
         try {
-            $declared = $declarations->all();
             $targetUrl = $this->targetUrl();
         } catch (HubspotException $exception) {
             $this->error($exception->getMessage());
@@ -120,11 +140,12 @@ final class SyncWebhookSubscriptionsCommand extends Command
      * The `project` branch: an exportable webhook component, never a HubSpot request. See
      * {@see ProjectWebhookComponent} for why -- a project-based app declares its subscriptions in
      * a config artefact deployed WITH the project rather than through a runtime API.
+     *
+     * @param  non-empty-list<WebhookSubscription>  $declared
      */
-    private function project(SubscriptionDeclarations $declarations): int
+    private function project(array $declared): int
     {
         try {
-            $declared = $declarations->all();
             $targetUrl = $this->targetUrl();
         } catch (HubspotException $exception) {
             $this->error($exception->getMessage());
@@ -154,7 +175,21 @@ final class SyncWebhookSubscriptionsCommand extends Command
             // there is no other type on the wire the cast could be narrowing.
             $this->line(sprintf('[dry run] Nothing written -- %s was not created.', $outputPath));
         } else {
-            file_put_contents($outputPath, $json);
+            // Error-suppressed and then CHECKED, rather than left to warn. `file_put_contents()`
+            // answers false for a missing directory, an unwritable one, a full disk and every
+            // other filesystem failure; the warning it also emits carries nothing this directed
+            // message does not, and phpunit.xml.dist's failOnWarning would turn the very failure
+            // path being tested into a suite error rather than an assertable outcome.
+            if (@file_put_contents($outputPath, $json) === false) {
+                $this->error(sprintf(
+                    'Could not write the project webhook component to %s. Check that the '
+                    .'directory exists and is writable, then run this command again.',
+                    $outputPath,
+                ));
+
+                return self::FAILURE;
+            }
+
             $this->line(sprintf('Wrote %s.', $outputPath));
         }
 
@@ -167,26 +202,11 @@ final class SyncWebhookSubscriptionsCommand extends Command
         return self::SUCCESS;
     }
 
-    private function syncLegacyPublic(SubscriptionDeclarations $declarations, bool $dryRun): int
+    /**
+     * @param  non-empty-list<WebhookSubscription>  $declared
+     */
+    private function syncLegacyPublic(array $declared, bool $dryRun): int
     {
-        try {
-            $declared = $declarations->all();
-        } catch (HubspotException $exception) {
-            $this->error($exception->getMessage());
-
-            return self::FAILURE;
-        }
-
-        if ($declared === []) {
-            $this->error(
-                'hubspot.webhooks.subscriptions is empty. Add at least one declaration, for '
-                .'example ["event_type" => "contact.propertyChange", "property_name" => "email"], '
-                .'then run this command again.',
-            );
-
-            return self::FAILURE;
-        }
-
         try {
             $gateway = $this->laravel->make(WebhookSubscriptionGatewayContract::class);
 
