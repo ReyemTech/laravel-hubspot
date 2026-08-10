@@ -243,6 +243,60 @@ final class WebhookEventStoreTest extends TestCase
     }
 
     /**
+     * `isReady()` answers the question the controller has to ask BEFORE acknowledging a delivery:
+     * can this store accept a claim at all? It is the one method on the contract that must not
+     * raise for a missing table — that is precisely the answer it exists to give, which is why it
+     * is absent from `operationProvider()` above.
+     */
+    public function test_readiness_is_false_before_the_migration_and_true_after(): void
+    {
+        self::assertFalse(
+            Schema::hasTable(DatabaseWebhookEventStore::TABLE),
+            'This test is only meaningful before migrating.',
+        );
+
+        self::assertFalse($this->store()->isReady());
+
+        $this->migrate();
+
+        self::assertTrue($this->store()->isReady());
+    }
+
+    /**
+     * **Readiness is memoized in the affirmative direction ONLY, and that asymmetry is the design.**
+     *
+     * The store is a container singleton, so a cached answer outlives the request — and under
+     * Octane, the process. Caching "ready" is free and safe: the table does not disappear during
+     * normal operation, and one schema query per process beats one per delivery on a hot receipt
+     * path. Caching "not ready" would be the dangerous half: it would keep refusing deliveries
+     * after `php artisan migrate` fixed the install, until somebody restarted the workers or the
+     * Octane server. So it is never cached, and a broken install re-checks — those requests are
+     * being refused anyway.
+     *
+     * Dropping the table after a positive answer is not a scenario this store defends against; it
+     * is simply how the memo is made observable.
+     */
+    public function test_a_positive_readiness_answer_is_memoized_and_a_negative_one_is_not(): void
+    {
+        $this->migrate();
+        $store = $this->store();
+
+        self::assertTrue($store->isReady());
+
+        Schema::drop(DatabaseWebhookEventStore::TABLE);
+
+        // Memoized: the same instance does not pay for a second schema query.
+        self::assertTrue($store->isReady());
+
+        // A store that never saw the table sees the truth, so the negative is not cached anywhere.
+        self::assertFalse((new DatabaseWebhookEventStore(
+            DB::connection(),
+            auditPayload: false,
+            claimLeaseSeconds: 900,
+        ))->isReady());
+    }
+
+    /**
      * `abandon()` makes a claim reclaimable AT ONCE, without waiting out the lease — that is the
      * whole point of it, since the queue retries a failed job immediately and would otherwise be
      * answered `Held` by its own dead attempt.
