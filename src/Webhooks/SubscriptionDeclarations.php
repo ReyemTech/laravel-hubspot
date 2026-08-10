@@ -42,10 +42,21 @@ final class SubscriptionDeclarations
         /** @var mixed $raw */
         $raw = $this->config->get('hubspot.webhooks.subscriptions', []);
 
+        // A scalar here is a malformed setting, not an empty one. Coercing it to `[]` reported
+        // "hubspot.webhooks.subscriptions is empty" -- which names a mistake the operator did not
+        // make and sends them to add declarations that are already written.
+        //
+        // `null` stays lenient on purpose: Config::get() returns a present-null key as null rather
+        // than falling back to the default above, so an operator who commented the value out must
+        // reach the same "absent" path as one who never added the key at all.
+        if ($raw !== null && ! is_array($raw)) {
+            throw ConfigurationException::invalidWebhookSubscription($raw);
+        }
+
         $declarations = [];
         $seenIdentities = [];
 
-        foreach (is_array($raw) ? $raw : [] as $entry) {
+        foreach ($raw ?? [] as $entry) {
             $declaration = $this->toSubscription($entry);
             $identity = $declaration->identity();
 
