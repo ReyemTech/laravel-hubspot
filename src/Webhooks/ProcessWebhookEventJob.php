@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Webhooks;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -27,10 +28,10 @@ use Throwable;
  * `handle()` opens by claiming the event's id ({@see WebhookEventStore::claim()}). A `Handled` claim
  * means this exact eventId already completed successfully -- HOOK-01's durable redelivery guarantee
  * -- so `handle()` returns having done nothing. A `Held` claim means another claim on this event is
- * still inside its lease window, so `handle()` RELEASES the job back to the queue, delayed past that
- * lease, emitting nothing and -- critically -- without failing it. Failing would retry a race a live
- * worker may be winning; returning would be worse, because Laravel reads that as success and deletes
- * a job that is the event's last remaining chance when the holder has died. Only an `Acquired` claim reaches the dispatch this plan's
+ * still inside its lease window, so `handle()` queues a FRESH copy of itself delayed past that
+ * lease, emitting nothing and without failing. Failing would retry a race a live worker may be
+ * winning; returning silently would be worse, because Laravel reads that as success and deletes a
+ * job that is the event's last remaining chance when the holder has died. Only an `Acquired` claim reaches the dispatch this plan's
  * predecessor (05-01) established, and `complete()` is called only AFTER that dispatch returns. This
  * is what makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a
  * second, concurrent run of the same handlers.
@@ -45,8 +46,8 @@ use Throwable;
  * The worker that DIES runs no `catch`, so `abandon()` cannot cover it — and the lease alone does
  * not either. A lease makes the row reclaimable; it does not make anything come back to reclaim it,
  * and the queue's own retry lands after `retry_after` (90 seconds by default), inside the lease.
- * That is what the `Held` release above is for. The two together are what make D-03's "leaves it
- * retryable" true for both a handler that throws and a worker that is killed.
+ * That is what the `Held` re-dispatch above is for. The two together are what make D-03's "leaves
+ * it retryable" true for both a handler that throws and a worker that is killed.
  *
  * ## Typed events (05-03, D-06, D-08, D-09)
  *
@@ -100,6 +101,7 @@ final class ProcessWebhookEventJob implements ShouldQueue
         HandlerMap $handlers,
         Container $container,
         WebhookReceiptRecorder $receipts,
+        BusDispatcher $bus,
     ): void {
         // The inbound half of `hubspot.disabled`, which config/hubspot.php writes as governing BOTH
         // directions. Checked HERE, on the worker, and not only at dispatch: that is what stops
@@ -136,10 +138,24 @@ final class ProcessWebhookEventJob implements ShouldQueue
             /** @var int $claimLease */
             $claimLease = Config::get('hubspot.webhooks.claim_lease');
 
-            // The WHOLE lease, not the remainder: the store does not expose how much of it has
-            // elapsed, and over-waiting costs a delay while under-waiting costs another `Held` and
-            // one more attempt off `tries`.
-            $this->release($claimLease);
+            // A FRESH job, not `$this->release()`. A held claim is not a failed attempt of this
+            // job -- it is "not yet" -- and charging it as one is fatal on a default deployment:
+            // `queue:work` ships with `--tries=1`, so a released job returns on attempt 2 and
+            // `Worker::markJobAsFailedIfAlreadyExceedsMaxAttempts()` fails it BEFORE it runs. The
+            // delayed reclaim this branch exists to arrange would never execute.
+            //
+            // Declaring `$tries` or `retryUntil()` here would buy the budget at a worse price:
+            // both also govern HANDLER failures, so the package would be overriding the retry
+            // policy the application chose -- and `retryUntil()` suppresses attempt-limiting
+            // outright, letting a permanently-throwing handler run unbounded inside its window.
+            // Re-dispatching keeps the two concerns apart: attempts stay the consumer's to budget,
+            // and the replacement starts with a full one.
+            //
+            // The WHOLE lease, not the remainder: the store does not expose how much has elapsed,
+            // and over-waiting costs a delay while under-waiting costs another round. Rounds
+            // terminate -- a lease always expires, after which the next claim is `Acquired`, or
+            // the holder finished and it reads `Handled`.
+            $bus->dispatch((new self($this->event))->delay($claimLease));
 
             return;
         }

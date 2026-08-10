@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 
 use DateTimeImmutable;
+use Illuminate\Support\Facades\Bus;
 use ReyemTech\Hubspot\Tests\Support\Webhooks\RecordingQueueJob;
 use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
@@ -110,15 +111,25 @@ final class RetryAfterHandlerFailureTest extends TestCase
         $job = new ProcessWebhookEventJob($this->event());
         $job->setJob($queueJob);
 
+        Bus::fake();
+
         $this->app?->call([$job, 'handle']);
 
-        self::assertTrue(
-            $queueJob->released,
-            'A held claim must be put back on the queue, or Laravel deletes the only job left for this event.',
+        // A FRESH job, delayed past the lease -- so the event is revisited with a full attempt
+        // budget of its own.
+        Bus::assertDispatched(
+            ProcessWebhookEventJob::class,
+            static fn (ProcessWebhookEventJob $queued): bool => $queued->delay >= 900,
         );
 
-        // Delayed past the lease, or the retry just meets Held again and burns an attempt.
-        self::assertGreaterThanOrEqual(900, $queueJob->releaseDelay);
+        // And NOT release(), which would spend this job's attempt budget. `queue:work` defaults to
+        // `--tries=1`, so a released job comes back on attempt 2 and is failed before it runs --
+        // the delayed reclaim would never execute at all. A held claim is not a failed attempt of
+        // this job; it is "not yet", and it must not be charged as one.
+        self::assertFalse(
+            $queueJob->released,
+            'Held must not consume this job\'s attempt budget -- with --tries=1 the reclaim would never run.',
+        );
 
         // Nothing ran: the claim belongs to the other attempt until its lease expires.
         self::assertSame(0, CountingThrowingHandler::$calls);
@@ -140,8 +151,11 @@ final class RetryAfterHandlerFailureTest extends TestCase
         $job = new ProcessWebhookEventJob($this->event());
         $job->setJob($queueJob);
 
+        Bus::fake();
+
         $this->app?->call([$job, 'handle']);
 
+        Bus::assertNotDispatched(ProcessWebhookEventJob::class);
         self::assertFalse($queueJob->released, 'A completed event must not be requeued.');
     }
 
