@@ -265,6 +265,58 @@ final class ConfigurationException extends LogicException implements HubspotExce
     }
 
     /**
+     * `hubspot.webhooks.retention_days` resolved to zero or less. Raised by
+     * `Webhooks\Console\PruneWebhookEventsCommand::handle()` BEFORE the cutoff is computed, because
+     * the cutoff is what does the damage: at zero days it is the present moment and at a negative
+     * value it is in the future, so a prune deletes every handled row rather than the ones past
+     * retention.
+     *
+     * Those rows are the dedupe history, not merely an audit trail — HOOK-01's promise that a
+     * redelivered `eventId` is a no-op is exactly what they carry, so wiping them turns the next
+     * HubSpot redelivery of any previously-handled event into a second run of every handler.
+     *
+     * The message names the `(int)` cast explicitly. `config/hubspot.php` writes
+     * `(int) env('HUBSPOT_WEBHOOK_RETENTION_DAYS', 30)`, and `(int) ''` is `0`, so the likeliest
+     * way to arrive here is a key copied into `.env` and left blank — which looks nothing like a
+     * number the operator chose.
+     */
+    public static function invalidWebhookRetentionDays(int $retentionDays): self
+    {
+        return new self(sprintf(
+            'HUBSPOT_WEBHOOK_RETENTION_DAYS must be a whole number of days of at least 1, but '
+            .'resolved to %d. Nothing was pruned: a retention of zero or less puts the cutoff at '
+            .'or after the present moment, so this command would delete every handled record '
+            .'rather than the ones past retention -- and those records are what make a HubSpot '
+            .'redelivery a no-op. Note that a blank or non-numeric value becomes 0.',
+            $retentionDays,
+        ));
+    }
+
+    /**
+     * `hubspot.webhooks.claim_lease` resolved to zero or less. Raised by
+     * `Webhooks\Stores\DatabaseWebhookEventStore`'s constructor, so a store that cannot honour
+     * exactly-once never hands out a claim at all.
+     *
+     * The lease deadline is `now() - claim_lease`. At zero that deadline is the present moment,
+     * and the comparison is not even a tie: persisted timestamps carry second precision while
+     * `Carbon::now()` carries microseconds, so a claim taken moments ago already reads as expired
+     * and a concurrent worker or a HubSpot redelivery reclaims an event still in flight. A negative
+     * value puts the deadline in the future and makes every claim reclaimable outright.
+     *
+     * Same `(int)` cast caveat as {@see self::invalidWebhookRetentionDays()}.
+     */
+    public static function invalidWebhookClaimLease(int $claimLeaseSeconds): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.claim_lease must be a whole number of seconds of at least 1, but is '
+            .'%d. A lease of zero or less makes a claim taken moments ago read as already expired, '
+            .'so a redelivery or a second worker would reclaim an event still being handled and '
+            .'run every handler for it twice. Note that a blank or non-numeric value becomes 0.',
+            $claimLeaseSeconds,
+        ));
+    }
+
+    /**
      * `hubspot.webhooks.app_id` is set but is not a canonical positive integer. Raised by
      * `Gateway\HubspotClientFactory::forWebhookManagement()` -- named as a PATH, not as a
      * `{@see}`, because pint's fully_qualified_strict_types rule rewrites a docblock class

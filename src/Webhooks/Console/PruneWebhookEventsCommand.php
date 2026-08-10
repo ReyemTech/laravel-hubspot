@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Webhooks\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 
@@ -33,6 +34,15 @@ final class PruneWebhookEventsCommand extends Command
         $retentionDays = $this->laravel->make('config')->get('hubspot.webhooks.retention_days');
 
         try {
+            // Checked BEFORE the cutoff is computed, because the cutoff is what does the damage:
+            // zero days puts it at the present moment and a negative value puts it in the future,
+            // either of which deletes every handled row rather than the ones past retention. A
+            // blank HUBSPOT_WEBHOOK_RETENTION_DAYS in a copied .env is enough to get here --
+            // config/hubspot.php casts with (int), and (int) '' is 0.
+            if ($retentionDays < 1) {
+                throw ConfigurationException::invalidWebhookRetentionDays($retentionDays);
+            }
+
             $store = $this->laravel->make(WebhookEventStore::class);
 
             $deleted = $store->prune(Carbon::now()->subDays($retentionDays)->toDateTimeImmutable());

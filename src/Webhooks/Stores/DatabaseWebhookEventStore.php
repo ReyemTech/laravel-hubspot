@@ -60,6 +60,16 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         // reachable at all; by the time a query runs, the answer here only shapes the diagnosis.
         private readonly bool $featureEnabled = true,
     ) {
+        // Refused here rather than at the comparison in resolveExistingClaim(): a store that
+        // cannot honour exactly-once should never hand out a claim, and this is the one place that
+        // sees the value before any event depends on it. A lease of zero puts the deadline at the
+        // present moment -- and not as a tie, since persisted timestamps carry second precision
+        // while Carbon::now() carries microseconds, so a claim taken moments ago already reads as
+        // expired and a redelivery reclaims an event still in flight.
+        if ($claimLeaseSeconds < 1) {
+            throw ConfigurationException::invalidWebhookClaimLease($claimLeaseSeconds);
+        }
+
         // Initialised in the constructor BODY rather than as a property default, for the same
         // reason `Sync\SyncHubspotObjectJob::$deleteWhenMissingModels` is: a property default has
         // no executed line for `pest --mutate` to attribute a covering test to, so its FalseToTrue
