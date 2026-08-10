@@ -130,6 +130,55 @@ final class SubscriptionDeclarationsTest extends TestCase
     }
 
     /**
+     * A property filter only means anything on a `*.propertyChange` type — which is what
+     * `ConfigurationException::invalidWebhookSubscription()`'s own message has always told the
+     * operator ("only for a *.propertyChange event type"), while nothing enforced it. Left
+     * unchecked, `['event_type' => 'deal.creation', 'property_name' => 'email']` is sent to
+     * HubSpot or emitted into the project component as desired state HubSpot cannot honour.
+     */
+    public function test_a_property_filter_on_a_non_property_change_event_type_throws(): void
+    {
+        config(['hubspot.webhooks.subscriptions' => [
+            ['event_type' => 'deal.creation', 'property_name' => 'email'],
+        ]]);
+
+        $this->expectException(ConfigurationException::class);
+
+        self::declarations()->all();
+    }
+
+    /**
+     * The guard is the COMBINATION, not the property name. A `*.propertyChange` type carrying a
+     * filter stays valid, and this is what fails a fix that rejected `property_name` outright.
+     */
+    public function test_a_property_filter_on_a_property_change_event_type_is_still_accepted(): void
+    {
+        config(['hubspot.webhooks.subscriptions' => [
+            ['event_type' => 'company.propertyChange', 'property_name' => 'name'],
+        ]]);
+
+        $declarations = self::declarations()->all();
+
+        self::assertCount(1, $declarations);
+        self::assertSame('company.propertyChange', $declarations[0]->eventType);
+        self::assertSame('name', $declarations[0]->propertyName);
+    }
+
+    /**
+     * A non-propertyChange type with NO filter is the ordinary case and must stay untouched --
+     * the guard keys on the filter's presence, never on the event type alone.
+     */
+    public function test_a_non_property_change_event_type_without_a_filter_is_accepted(): void
+    {
+        config(['hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']]]);
+
+        $declarations = self::declarations()->all();
+
+        self::assertCount(1, $declarations);
+        self::assertNull($declarations[0]->propertyName);
+    }
+
+    /**
      * Nothing above throws while the application boots -- every failure surfaces only when
      * declarations are actually read (D-12), which happens inside the reconciliation command.
      */
