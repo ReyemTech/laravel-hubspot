@@ -38,6 +38,34 @@ final class SubscriptionDeclarationsTest extends TestCase
         self::assertSame([], self::declarations()->all());
     }
 
+    /**
+     * A scalar where the list belongs is a malformed setting, and it used to be silently coerced
+     * to `[]` — so the operator was told "hubspot.webhooks.subscriptions is empty", which names a
+     * different mistake than the one they made and sends them to add entries that are already
+     * there. The key must name its own fault.
+     */
+    public function test_a_non_array_subscriptions_value_throws_rather_than_reading_as_empty(): void
+    {
+        config(['hubspot.webhooks.subscriptions' => 'contact.propertyChange']);
+
+        $this->expectException(ConfigurationException::class);
+
+        self::declarations()->all();
+    }
+
+    /**
+     * `null` stays lenient and reads as absent. Laravel's `Config::get()` returns a present-null
+     * key as `null` rather than falling back to the default, so an operator who commented out the
+     * value must land on the same "absent" path as one who never added the key — not on the
+     * malformed-config error above.
+     */
+    public function test_a_null_subscriptions_value_reads_as_absent(): void
+    {
+        config(['hubspot.webhooks.subscriptions' => null]);
+
+        self::assertSame([], self::declarations()->all());
+    }
+
     public function test_valid_declarations_are_returned_as_package_values_in_configured_order(): void
     {
         config(['hubspot.webhooks.subscriptions' => [
