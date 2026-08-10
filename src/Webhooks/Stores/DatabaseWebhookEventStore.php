@@ -59,13 +59,19 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         // in. The store does not gate on it -- ServiceProvider decides whether this store is
         // reachable at all; by the time a query runs, the answer here only shapes the diagnosis.
         private readonly bool $featureEnabled = true,
-    ) {}
+    ) {
+        // Initialised in the constructor BODY rather than as a property default, for the same
+        // reason `Sync\SyncHubspotObjectJob::$deleteWhenMissingModels` is: a property default has
+        // no executed line for `pest --mutate` to attribute a covering test to, so its FalseToTrue
+        // mutant is reported UNCOVERED however thoroughly the behaviour is tested.
+        $this->readinessConfirmed = false;
+    }
 
     /**
      * Latched, never unlatched -- and deliberately not a `readonly` promoted property, because it
      * is the one piece of state this store accumulates rather than receives.
      */
-    private bool $readinessConfirmed = false;
+    private bool $readinessConfirmed;
 
     /**
      * **Memoized in the affirmative direction only.** This store is a container singleton, so an

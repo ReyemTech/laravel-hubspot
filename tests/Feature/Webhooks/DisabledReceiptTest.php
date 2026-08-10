@@ -8,6 +8,9 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Route;
 use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Webhooks\ProcessWebhookEventJob;
+use ReyemTech\Hubspot\Webhooks\WebhookController;
+
+mutates(WebhookController::class);
 
 /**
  * Receipt requires persistence, and the endpoint must say so BEFORE acknowledging.

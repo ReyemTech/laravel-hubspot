@@ -15,6 +15,9 @@ use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
 use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
 use ReyemTech\Hubspot\Webhooks\ProcessWebhookEventJob;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
+use ReyemTech\Hubspot\Webhooks\WebhookController;
+
+mutates(WebhookController::class);
 
 /**
  * `HUBSPOT_DISABLED` is a hard kill switch, and `config/hubspot.php` writes its contract as covering
