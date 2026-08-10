@@ -264,10 +264,14 @@ return [
     |
     | See Sync\SyncGate, which states the limit rather than implying it away.
     |
-    | The inbound half is not implemented yet. No webhook path exists before
-    | Phase 5; this key is written to govern both from the start rather than
-    | being widened later, so treat the sentence above as the contract and not
-    | as a description of what ships today.
+    | The inbound half ships as of Phase 5 and honours both checks. A signed
+    | delivery arriving while this is true is refused with a 500 and nothing is
+    | queued; anything already on the queue stops as workers drain it. The 500
+    | matches what `webhooks.enabled` below does, for the same reason: HubSpot
+    | treats any 2xx as delivered and never re-sends, so acknowledging during
+    | an outage would destroy the very events this switch was thrown to
+    | protect, while a 5xx is retried and you receive the backlog on the way
+    | back up.
     |
     | A plain bool from env(), and it must stay one. A closure default here
     | works under `artisan serve` and THROWS under `php artisan config:cache`,

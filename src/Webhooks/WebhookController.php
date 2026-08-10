@@ -54,6 +54,29 @@ final class WebhookController
             return new Response('', 401);
         }
 
+        // The DISPATCH half of `hubspot.disabled`, which config/hubspot.php writes as "checked at
+        // DISPATCH and again on the WORKER" for both directions. `ProcessWebhookEventJob` holds the
+        // worker half, which is what stops items already queued when the switch was thrown; it
+        // cannot stop new ones arriving, so without this a disabled deployment kept decoding and
+        // enqueuing every delivery for the length of an incident.
+        //
+        // 500 for the same reason the receipt flag below returns one, and the two are deliberately
+        // the same shape: a 204 tells HubSpot the event is handled and it is never re-sent, so
+        // acknowledging during an outage destroys exactly the events the switch was thrown to
+        // protect. Refuse what this deployment cannot process; never acknowledge it.
+        //
+        // AFTER verification, like every other guard here, so switch state stays invisible to an
+        // unauthenticated caller.
+        if ($this->config->get('hubspot.disabled') === true) {
+            Log::warning('A HubSpot webhook was refused because the package kill switch is on.', [
+                'error_code' => 'package_disabled',
+                'route' => $request->path(),
+                'fix' => 'Set HUBSPOT_DISABLED=false to resume receiving webhooks.',
+            ]);
+
+            return new Response('', 500);
+        }
+
         // Receipt needs the durable store: D-01 makes dedupe durable and HOOK-01 requires a
         // redelivered eventId to be handled exactly once, which nothing can provide without it.
         // So refuse HERE rather than accepting and failing in the worker.
