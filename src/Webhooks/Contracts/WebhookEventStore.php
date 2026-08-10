@@ -6,6 +6,7 @@ namespace ReyemTech\Hubspot\Webhooks\Contracts;
 
 use DateTimeImmutable;
 use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
+use ReyemTech\Hubspot\Webhooks\ProcessWebhookEventJob;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\WebhookEventClaim;
 
@@ -47,6 +48,29 @@ interface WebhookEventStore
      * dispatch it guards.
      */
     public function complete(string $eventId): void;
+
+    /**
+     * Releases a claim this worker acquired but could not complete, so the queue's own retry can
+     * reclaim it immediately instead of waiting out the lease.
+     *
+     * **Why this exists at all.** The lease answers "the worker died"; it cannot answer "the
+     * handler threw", because the two look identical from the outside and only one of them can
+     * clean up after itself. Without this, a retry arriving inside the lease window is answered
+     * `Held` — indistinguishable from a concurrent worker winning the race — so
+     * {@see ProcessWebhookEventJob} returns without failing, Laravel
+     * reads that as success and deletes the job, and the row is left claimed-but-unhandled
+     * forever. `prune()` only removes HANDLED rows, and the delivery was acknowledged 204 at
+     * receipt, so the event is not merely delayed, it is gone. D-03 promises the opposite.
+     *
+     * Called from the failure path only, and never from a `finally`: a completed claim must stay
+     * completed. The lease remains the safety net for a worker that dies without unwinding.
+     *
+     * An implementation must leave the row's attempt history intact and must not mark it handled;
+     * it makes the row reclaimable, nothing more. Releasing an id that has no row, or one already
+     * handled, is a no-op rather than an error — a retry racing a concurrent completion must not
+     * turn into a second failure.
+     */
+    public function abandon(string $eventId): void;
 
     /**
      * Deletes every handled record completed before the given moment, and returns how many rows were

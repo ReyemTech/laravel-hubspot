@@ -14,6 +14,7 @@ use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
 use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
+use Throwable;
 
 /**
  * The one queued unit of work per validated batch item (HOOK-01). `Webhooks\WebhookController`
@@ -29,11 +30,18 @@ use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
  * event is still inside its lease window, doing the work right now; `handle()` returns without
  * emitting anything and, critically, WITHOUT failing the job -- failing here would retry a race the
  * other worker is already winning. Only an `Acquired` claim reaches the dispatch this plan's
- * predecessor (05-01) established, and `complete()` is called only AFTER that dispatch returns, with
- * no `try`/`catch` around it: a handler exception must escape `handle()` so Laravel retries the
- * queued job, and the row this claim wrote is left claimed rather than marked handled. This is what
- * makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a second,
- * concurrent run of the same handlers.
+ * predecessor (05-01) established, and `complete()` is called only AFTER that dispatch returns. This
+ * is what makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a
+ * second, concurrent run of the same handlers.
+ *
+ * A failure between the claim and `complete()` releases the claim through
+ * {@see WebhookEventStore::abandon()} and rethrows untouched, so Laravel fails and retries the job
+ * exactly as it always did. That release is not housekeeping: without it the retry arrives inside the
+ * lease, is answered `Held` — indistinguishable from a concurrent worker — and returns successfully,
+ * so Laravel deletes the job and the row stays claimed-but-unhandled forever while HubSpot, having
+ * had its 204, never re-sends. `catch`, never `finally`: a completed claim must stay completed. The
+ * lease still covers the worker that dies without unwinding, which is the one case nothing
+ * in-process can clean up after.
  *
  * ## Typed events (05-03, D-06, D-08, D-09)
  *
@@ -50,9 +58,10 @@ use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
  * and must not emit half an item's events before failing. After the typed-event dispatch, every
  * handler class `HandlerMap::resolve()` returns for this item's subscription type is resolved from
  * the container AT EXECUTION TIME -- the same reason
- * `Registry\Console\SyncAssociationsCommand` resolves its gateway inside `handle()` -- and invoked
- * with no `try`/`catch` around it: a handler's own throw must reach Laravel so the job fails and
- * D-03's retry holds, and `complete()` below is never reached for that item.
+ * `Registry\Console\SyncAssociationsCommand` resolves its gateway inside `handle()`. A handler's own
+ * throw still reaches Laravel unchanged so the job fails and D-03's retry holds, and `complete()`
+ * below is never reached for that item -- the only thing the surrounding `catch` does before
+ * rethrowing is hand the claim back so that retry can actually take it.
  *
  * ## The inbound receipt (05-03, T-05-16)
  *
@@ -109,23 +118,43 @@ final class ProcessWebhookEventJob implements ShouldQueue
             return;
         }
 
-        $events->dispatch(new HubspotWebhookReceived($this->event));
+        // The claim this job now holds must be released if the work below throws, or the queue's
+        // own retry cannot get it back: the retry arrives inside the 900-second lease, claim()
+        // answers `Held` (indistinguishable from a concurrent worker), this method returns without
+        // failing, and Laravel deletes the job as successful. The row then sits claimed and
+        // unhandled forever -- prune() only deletes HANDLED rows -- and the delivery was
+        // acknowledged 204 at receipt, so HubSpot never re-sends it. D-03 promises a handler
+        // failure "leaves it retryable"; without this it left it destroyed.
+        //
+        // `catch`, deliberately not `finally`: the release must happen on the failure path only.
+        // The exception is rethrown untouched, so Laravel still fails and retries the job exactly
+        // as before -- this adds cleanup, it does not swallow anything.
+        //
+        // The lease is unchanged and still needed: it covers the worker that dies without ever
+        // reaching this handler, which is the one case nothing in-process can clean up after.
+        try {
+            $events->dispatch(new HubspotWebhookReceived($this->event));
 
-        $typedEventClass = $typedEvents->resolve($this->event->subscriptionType);
+            $typedEventClass = $typedEvents->resolve($this->event->subscriptionType);
 
-        if ($typedEventClass !== null) {
-            $events->dispatch(new $typedEventClass($this->event));
-        }
+            if ($typedEventClass !== null) {
+                $events->dispatch(new $typedEventClass($this->event));
+            }
 
-        foreach ($handlers->resolve($this->event->subscriptionType) as $handlerClass) {
-            // HandlerMap::validate() already proved every configured entry implements
-            // Contracts\WebhookHandler, before this line ever runs -- Larastan's container-make
-            // return-type extension only narrows a LITERAL `Foo::class` argument, not a runtime
-            // class-string variable, so this cast is the honest, already-proven type.
-            /** @var WebhookHandler $handler */
-            $handler = $container->make($handlerClass);
+            foreach ($handlers->resolve($this->event->subscriptionType) as $handlerClass) {
+                // HandlerMap::validate() already proved every configured entry implements
+                // Contracts\WebhookHandler, before this line ever runs -- Larastan's container-make
+                // return-type extension only narrows a LITERAL `Foo::class` argument, not a runtime
+                // class-string variable, so this cast is the honest, already-proven type.
+                /** @var WebhookHandler $handler */
+                $handler = $container->make($handlerClass);
 
-            $handler->handle($this->event);
+                $handler->handle($this->event);
+            }
+        } catch (Throwable $exception) {
+            $store->abandon($this->event->eventId);
+
+            throw $exception;
         }
 
         $store->complete($this->event->eventId);

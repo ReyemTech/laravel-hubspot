@@ -127,6 +127,11 @@ final class WebhookEventStoreTest extends TestCase
                     $store->complete('evt-absent');
                 },
             ],
+            'abandon' => [
+                static function (WebhookEventStore $store): void {
+                    $store->abandon('evt-absent');
+                },
+            ],
             'prune' => [
                 static function (WebhookEventStore $store): void {
                     $store->prune(new DateTimeImmutable('@1000000000'));
@@ -235,6 +240,63 @@ final class WebhookEventStoreTest extends TestCase
             1,
             DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-lease')->count(),
         );
+    }
+
+    /**
+     * `abandon()` makes a claim reclaimable AT ONCE, without waiting out the lease — that is the
+     * whole point of it, since the queue retries a failed job immediately and would otherwise be
+     * answered `Held` by its own dead attempt.
+     */
+    public function test_an_abandoned_claim_is_immediately_reclaimable_with_its_history_intact(): void
+    {
+        $this->migrate();
+        $store = $this->store();
+
+        self::assertSame(WebhookEventClaim::Acquired, $store->claim(self::event('evt-abandon')));
+
+        // Without the abandon, this second claim is Held: the lease has barely started.
+        $store->abandon('evt-abandon');
+
+        self::assertSame(WebhookEventClaim::Acquired, $store->claim(self::event('evt-abandon')));
+
+        $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-abandon')->first();
+        self::assertNotNull($row);
+
+        // The attempt history is what shows an operator this event has failed before.
+        self::assertSame(2, $row->attempts);
+        self::assertNull($row->handled_at);
+        self::assertSame(
+            1,
+            DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-abandon')->count(),
+        );
+    }
+
+    /**
+     * A handler that throws AFTER `complete()` returned must not reopen a finished event, or a
+     * redelivery would run every handler for it a second time — the exact thing HOOK-01 exists to
+     * prevent.
+     */
+    public function test_abandoning_an_already_handled_claim_does_nothing(): void
+    {
+        $this->migrate();
+        $store = $this->store();
+
+        $store->claim(self::event('evt-done'));
+        $store->complete('evt-done');
+
+        $store->abandon('evt-done');
+
+        self::assertSame(WebhookEventClaim::Handled, $store->claim(self::event('evt-done')));
+    }
+
+    /** Releasing an id that has no row is a no-op, never an error. */
+    public function test_abandoning_an_unknown_event_id_is_a_no_op(): void
+    {
+        $this->migrate();
+
+        $this->store()->abandon('evt-never-seen');
+
+        self::assertSame(0, DB::table(DatabaseWebhookEventStore::TABLE)->count());
     }
 
     public function test_audit_payload_defaults_to_a_null_column(): void

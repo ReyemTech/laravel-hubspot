@@ -101,6 +101,36 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         });
     }
 
+    /**
+     * Backdates `claimed_at` past any possible lease rather than nulling it or deleting the row.
+     *
+     * The epoch is deliberate: the reclaim path in {@see resolveExistingClaim()} compares
+     * `claimed_at` against `now() - claim_lease`, and `claim_lease` is operator-configurable at
+     * runtime. A backdate computed FROM the current lease would stop being expired the moment
+     * somebody raised that value, which is exactly the kind of quietly-conditional correctness
+     * this store avoids elsewhere. A fixed floor is expired under every lease that can be
+     * configured.
+     *
+     * Nulling the column was rejected because the migration declares it NOT NULL and
+     * `parseTimestamp()` treats a non-string as a schema fault; deleting the row was rejected
+     * because it discards the `attempts` history T-05-09 relies on to show a worker died mid-flight.
+     *
+     * `whereNull('handled_at')` is what makes releasing an already-completed claim a no-op: a
+     * handler that threw AFTER `complete()` returned must not reopen a finished event.
+     */
+    public function abandon(string $eventId): void
+    {
+        $this->guarded(function () use ($eventId): void {
+            $this->rows()
+                ->where('event_id', $eventId)
+                ->whereNull('handled_at')
+                ->update([
+                    'claimed_at' => Carbon::createFromTimestamp(0),
+                    'updated_at' => Carbon::now(),
+                ]);
+        });
+    }
+
     public function prune(DateTimeImmutable $before): int
     {
         return $this->guarded(fn (): int => $this->rows()
