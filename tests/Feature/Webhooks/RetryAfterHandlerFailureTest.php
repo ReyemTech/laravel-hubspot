@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 
 use DateTimeImmutable;
+use ReyemTech\Hubspot\Tests\Support\Webhooks\RecordingQueueJob;
 use ReyemTech\Hubspot\Tests\TestCase;
+use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
 use ReyemTech\Hubspot\Webhooks\ProcessWebhookEventJob;
@@ -79,6 +81,67 @@ final class RetryAfterHandlerFailureTest extends TestCase
         // The queue retries the same event. It must not be quietly acknowledged as done.
         self::assertTrue($this->runJob(), 'The retry must fail too, so the queue keeps the job.');
         self::assertSame(2, CountingThrowingHandler::$calls);
+    }
+
+    /**
+     * **The worker that DIES cannot unwind, and the lease alone does not save the event.**
+     *
+     * `abandon()` covers the handler that throws. A worker killed by OOM, SIGKILL or a queue
+     * timeout runs no `catch`, so its claim stays held for the full lease. The queue then makes the
+     * job visible again after `retry_after` — 90 seconds by default, far inside the 900-second
+     * lease — and that retry meets `Held`.
+     *
+     * Returning normally there tells Laravel the retry succeeded, so it deletes the last job that
+     * would ever have touched this event. The row does become reclaimable when the lease expires,
+     * but nothing survives to reclaim it, and the delivery was acknowledged 204 at receipt. The
+     * event is gone.
+     *
+     * So `Held` must put the job BACK, delayed past the lease, rather than answer "done". This is
+     * the crash half of the defect `abandon()` fixed for the exception half.
+     */
+    public function test_a_retry_that_meets_a_held_claim_is_requeued_rather_than_reported_done(): void
+    {
+        CountingThrowingHandler::$calls = 0;
+
+        // The worker that died: it took the claim and never came back to complete or release it.
+        $this->app?->make(WebhookEventStore::class)->claim($this->event());
+
+        $queueJob = new RecordingQueueJob;
+        $job = new ProcessWebhookEventJob($this->event());
+        $job->setJob($queueJob);
+
+        $this->app?->call([$job, 'handle']);
+
+        self::assertTrue(
+            $queueJob->released,
+            'A held claim must be put back on the queue, or Laravel deletes the only job left for this event.',
+        );
+
+        // Delayed past the lease, or the retry just meets Held again and burns an attempt.
+        self::assertGreaterThanOrEqual(900, $queueJob->releaseDelay);
+
+        // Nothing ran: the claim belongs to the other attempt until its lease expires.
+        self::assertSame(0, CountingThrowingHandler::$calls);
+    }
+
+    /**
+     * `Handled` is NOT `Held`, and the difference is the whole point of the three-state claim. An
+     * event that already completed must be acknowledged and dropped, never requeued -- requeuing it
+     * would put every deduplicated redelivery into an endless delayed loop.
+     */
+    public function test_a_retry_that_meets_a_handled_claim_is_dropped_rather_than_requeued(): void
+    {
+        $store = $this->app?->make(WebhookEventStore::class);
+        $store->claim($this->event());
+        $store->complete($this->event()->eventId);
+
+        $queueJob = new RecordingQueueJob;
+        $job = new ProcessWebhookEventJob($this->event());
+        $job->setJob($queueJob);
+
+        $this->app?->call([$job, 'handle']);
+
+        self::assertFalse($queueJob->released, 'A completed event must not be requeued.');
     }
 
     public function test_a_failed_item_is_never_left_claimed_but_unhandled_with_the_queue_empty(): void
