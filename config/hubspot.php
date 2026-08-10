@@ -360,17 +360,29 @@ return [
     | - secret: the HubSpot app's CLIENT SECRET, not the access token above —
     |   using the wrong credential here means signature verification always
     |   fails. Never appears in a log call (STANDARDS §10, R10).
-    | - tolerance: the signature timestamp window, in seconds. Too large
-    |   widens the replay-attack window; too small rejects valid requests
-    |   under normal clock drift.
     | - enabled: the false-by-default feature flag (D-02, HOOK-03). This is
     |   what activates the `hubspot_webhook_events` migration — leaving it
     |   false preserves zero-migration install exactly the way HUBSPOT_STORE
-    |   and hubspot.models already do for their own migration groups. Setting
-    |   it true is what makes a redelivered eventId a no-op after successful
-    |   handling (D-01): the receipt route and queued job both work with it
-    |   false, but with no persisted claim a HubSpot redelivery reprocesses
-    |   the event every time.
+    |   and hubspot.models already do for their own migration groups.
+    |
+    |   Receipt REQUIRES it. A correctly signed delivery arriving while this
+    |   is false is refused with a 500 and a directed log line, because
+    |   exactly-once handling of a redelivered eventId (D-01, HOOK-01) is
+    |   impossible without the persisted claim the migration creates. The
+    |   500 is the point: HubSpot treats any 2xx as delivered and never
+    |   re-sends, so acknowledging work this deployment cannot perform would
+    |   DESTROY the event, while a 5xx is retried and an operator who then
+    |   enables the feature receives the backlog. Adding
+    |   `Route::hubspotWebhook()` to your routes file and leaving this false
+    |   is a misconfiguration the package reports rather than absorbs.
+    |
+    | There is no signature-tolerance key. The timestamp window is a fixed
+    | 300 seconds enforced inside HubSpot's own SDK
+    | (`HubSpot\Utils\Signature::MAX_ALLOWED_TIMESTAMP`), which accepts no
+    | tolerance argument — only an on/off switch this package never turns
+    | off. A `tolerance` key shipped here through v0.6.0 and was read by
+    | nothing; it was removed rather than left looking adjustable. A stale
+    | copy in an already-published config file is inert.
     | - retention_days: how long a HANDLED row survives before
     |   `hubspot:webhooks:prune` deletes it (D-04). A claimed-but-unhandled
     |   row is never pruned regardless of age — it is still awaiting its
@@ -464,7 +476,6 @@ return [
     'webhooks' => [
         'enforce' => (bool) env('HUBSPOT_WEBHOOK_ENFORCE', true),
         'secret' => env('HUBSPOT_CLIENT_SECRET'),
-        'tolerance' => 300,
         'enabled' => (bool) env('HUBSPOT_WEBHOOKS', false),
         'retention_days' => (int) env('HUBSPOT_WEBHOOK_RETENTION_DAYS', 30),
         'audit_payload' => (bool) env('HUBSPOT_WEBHOOK_AUDIT_PAYLOAD', false),

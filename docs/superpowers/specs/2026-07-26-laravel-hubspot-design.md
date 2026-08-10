@@ -353,7 +353,6 @@ Route::hubspotWebhook('hubspot/webhook');
 'webhooks' => [
     'enforce'   => env('HUBSPOT_WEBHOOK_ENFORCE', true),   // fail CLOSED
     'secret'    => env('HUBSPOT_CLIENT_SECRET'),           // app client secret, NOT the PAT
-    'tolerance' => 300,
     'handlers'  => [
         'contact.propertyChange' => SyncContactFromHubspot::class,
         'deal.creation'          => ImportDeal::class,
@@ -368,10 +367,26 @@ Route::hubspotWebhook('hubspot/webhook');
 | **The `fullUrl()` trap** | Reconstruct the raw request URI. Symfony's `getQueryString()` sorts query params; HubSpot signs the URI byte-for-byte. This is the bug class that makes people abandon HubSpot webhooks in Laravel |
 | Fail open / closed | **Closed** by default. `enforce => false` exists for transitions and logs loudly on every request |
 | Batching | One delivery = N events. Respond `204` immediately, one queued job per event |
-| Idempotency | Dedupe on `eventId`; cache driver by default, table opt-in — same contract as §6.3 |
+| Idempotency | Dedupe on `eventId`, in a package-owned table activated by `HUBSPOT_WEBHOOKS=true` — **amended 2026-08-09, see below** |
 | Ordering | Not guaranteed by HubSpot. `occurredAt` is exposed so handlers can drop stale changes |
 | Audit trail | Optional `hubspot_webhook_events` table, **off** by default |
 | Subscriptions | `php artisan hubspot:webhooks:sync` declares subscriptions from config via the SDK's Webhooks API — nobody in this ecosystem does this |
+
+**Two rows above are amended (2026-08-09, during PR #71's review).** Both were raised as defects
+against the shipped code, and in both cases it is this document that is out of date:
+
+- **Idempotency is table-only; there is no cache-driver default.** Phase 5's `05-CONTEXT.md` D-01
+  requires a dedupe record that survives cache loss, process restarts and redelivery, which a cache
+  driver cannot promise. `HUBSPOT_WEBHOOKS=false` therefore does not mean "receipt without dedupe" —
+  it means receipt is off, and a correctly signed delivery arriving while it is false is refused
+  with a **500**, never a 204. HubSpot treats any 2xx as delivered and never re-sends, so
+  acknowledging work the deployment cannot perform would destroy the event; a 5xx is retried.
+  Zero-migration install is unchanged for anyone not using webhooks, which is what D-02 protects.
+- **There is no `tolerance` key.** It appeared in the config sketch above, shipped through v0.6.0,
+  and was read by nothing: `Signature::isValid()` hardcodes a 300-second window
+  (`MAX_ALLOWED_TIMESTAMP`) and accepts no tolerance argument, so the value could neither tighten
+  nor widen anything. Removed rather than left looking adjustable. The 300-second window in the
+  "Signature crypto" row above is correct and is a property of the delegation, not a setting.
 
 **Deliberately not depending on `spatie/laravel-webhook-client`** (which `concept7` builds on):
 it forces its `webhook_calls` migration on every consumer, contradicting zero-migration install.
