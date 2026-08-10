@@ -243,6 +243,55 @@ final class WebhookEventStoreTest extends TestCase
     }
 
     /**
+     * **A non-positive claim lease defeats the dedupe guarantee, so the store refuses to exist
+     * with one.**
+     *
+     * The lease deadline is `now() - claim_lease`. At zero that deadline IS now, and persisted
+     * timestamps carry second precision while `Carbon::now()` carries microseconds — so a claim
+     * taken moments ago already reads as expired, and a concurrent worker or a HubSpot redelivery
+     * reclaims it and runs every handler for an event that is still in flight. A negative value
+     * puts the deadline in the future and makes every claim reclaimable outright.
+     *
+     * Rejected at construction rather than at the comparison: a store that cannot honour
+     * exactly-once should not hand out claims at all, and the constructor is the one place that
+     * sees the value before any event depends on it.
+     */
+    #[DataProvider('nonPositiveClaimLeases')]
+    public function test_a_non_positive_claim_lease_is_refused_at_construction(int $claimLeaseSeconds): void
+    {
+        $this->expectException(ConfigurationException::class);
+
+        new DatabaseWebhookEventStore(
+            DB::connection(),
+            auditPayload: false,
+            claimLeaseSeconds: $claimLeaseSeconds,
+        );
+    }
+
+    /**
+     * @return array<string, array{int}>
+     */
+    public static function nonPositiveClaimLeases(): array
+    {
+        return [
+            'blank or non-numeric env, cast to zero' => [0],
+            'negative' => [-900],
+        ];
+    }
+
+    /** One second is degenerate but coherent — the guard rejects impossible, not merely unwise. */
+    public function test_a_positive_claim_lease_of_one_second_constructs(): void
+    {
+        $store = new DatabaseWebhookEventStore(
+            DB::connection(),
+            auditPayload: false,
+            claimLeaseSeconds: 1,
+        );
+
+        self::assertInstanceOf(DatabaseWebhookEventStore::class, $store);
+    }
+
+    /**
      * `isReady()` answers the question the controller has to ask BEFORE acknowledging a delivery:
      * can this store accept a claim at all? It is the one method on the contract that must not
      * raise for a missing table — that is precisely the answer it exists to give, which is why it

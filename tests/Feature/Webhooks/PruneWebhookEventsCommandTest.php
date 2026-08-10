@@ -8,6 +8,7 @@ use DateTimeInterface;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReyemTech\Hubspot\Tests\Support\CommandOutput;
 use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
@@ -86,6 +87,73 @@ final class PruneWebhookEventsCommandTest extends TestCase
         self::assertSame(Command::SUCCESS, $exitCode);
         self::assertContains('Pruned 0 handled webhook event records older than 30 days.', $lines);
         self::assertSame(1, DB::table(DatabaseWebhookEventStore::TABLE)->count());
+    }
+
+    /**
+     * **A retention that is not a positive number of days must stop the prune, not run it.**
+     *
+     * `config/hubspot.php` casts the env var with `(int)`, and `(int) ''` is `0` — so
+     * `HUBSPOT_WEBHOOK_RETENTION_DAYS=` left blank in a copied `.env`, or set to anything
+     * non-numeric, silently means zero days. The cutoff then lands on *now*, and the next
+     * scheduled run deletes every handled row in the table. Those rows are the dedupe history, so
+     * the damage is not a lost audit trail but a lost guarantee: HubSpot redelivering a
+     * previously-handled eventId would be processed a second time, which is precisely what
+     * HOOK-01 exists to prevent. A negative value is worse — the cutoff moves into the future.
+     *
+     * Zero is refused rather than read as "prune immediately". It is indistinguishable from the
+     * typo, and of the two readings only one is destructive, so it is not the one to guess.
+     */
+    #[DataProvider('destructiveRetentionValues')]
+    public function test_a_non_positive_retention_refuses_to_prune_anything(int $retentionDays): void
+    {
+        Artisan::call('migrate', ['--force' => true]);
+        config(['hubspot.webhooks.retention_days' => $retentionDays]);
+
+        $this->insertRow('evt-handled-yesterday', now()->subDay());
+
+        $exitCode = Artisan::call('hubspot:webhooks:prune');
+
+        self::assertSame(Command::FAILURE, $exitCode);
+
+        // The whole point: the row is still there.
+        self::assertSame(1, DB::table(DatabaseWebhookEventStore::TABLE)->count());
+
+        self::assertContains(
+            sprintf(
+                'HUBSPOT_WEBHOOK_RETENTION_DAYS must be a whole number of days of at least 1, but '
+                .'resolved to %d. Nothing was pruned: a retention of zero or less puts the cutoff '
+                .'at or after the present moment, so this command would delete every handled '
+                .'record rather than the ones past retention -- and those records are what make a '
+                .'HubSpot redelivery a no-op. Note that a blank or non-numeric value becomes 0.',
+                $retentionDays,
+            ),
+            CommandOutput::linesOf(Artisan::output()),
+        );
+    }
+
+    /**
+     * @return array<string, array{int}>
+     */
+    public static function destructiveRetentionValues(): array
+    {
+        return [
+            'blank or non-numeric env, cast to zero' => [0],
+            'negative' => [-1],
+        ];
+    }
+
+    /** One day is a legitimate, aggressive retention — the guard must not reject what works. */
+    public function test_a_retention_of_one_day_still_prunes(): void
+    {
+        Artisan::call('migrate', ['--force' => true]);
+        config(['hubspot.webhooks.retention_days' => 1]);
+
+        $this->insertRow('evt-handled-long-ago', now()->subDays(3));
+
+        $exitCode = Artisan::call('hubspot:webhooks:prune');
+
+        self::assertSame(Command::SUCCESS, $exitCode);
+        self::assertSame(0, DB::table(DatabaseWebhookEventStore::TABLE)->count());
     }
 
     public function test_with_the_table_absent_it_exits_non_zero_naming_the_missing_table(): void
