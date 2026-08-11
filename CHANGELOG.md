@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.7.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.6.0...reyemtech/laravel-hubspot-v0.7.0) (2026-08-11)
+
+
+### Features
+
+* **05-01:** admit Illuminate into R4 without admitting the SDK ([5bbf784](https://github.com/ReyemTech/laravel-hubspot/commit/5bbf784dbda3fb21d9f1c4201c5b157030abf436))
+* **05-01:** complete webhook batch, auth, and handoff failure behavior ([b755d39](https://github.com/ReyemTech/laravel-hubspot/commit/b755d398a7e2a6deea02e2425b5b13f3e96055c4))
+* **05-01:** trace one signed webhook to a queued generic event ([40d71fb](https://github.com/ReyemTech/laravel-hubspot/commit/40d71fb4464fc30ea955a3f1de93ff13a8e8ecb4))
+* **05-02:** ship the durable webhook event claim store (option-a) ([981aa00](https://github.com/ReyemTech/laravel-hubspot/commit/981aa00caf402fc8db81dadcf6cf606b6d438972))
+* **05-02:** wire claim-dispatch-complete into the job and ship prune ([dfae6fa](https://github.com/ReyemTech/laravel-hubspot/commit/dfae6fa243c091c5507245e15f246ea9cc431433))
+* **05-03:** dispatch configured webhook handlers after typed events ([c281c7e](https://github.com/ReyemTech/laravel-hubspot/commit/c281c7e6d8c2c828c48b177cc7379ea9a972a9e6))
+* **05-03:** route typed webhook events through a closed recognition table ([e763362](https://github.com/ReyemTech/laravel-hubspot/commit/e76336268ee5f6e71d192d5c781cd268ac3e2517))
+* **05-03:** ship assertWebhookHandled on its own inbound receipt log ([115868c](https://github.com/ReyemTech/laravel-hubspot/commit/115868c804b59de0ec1bde8713318fdab59ad1a2))
+* **05-04:** declare desired-state subscriptions and the app-model enum ([faf41e3](https://github.com/ReyemTech/laravel-hubspot/commit/faf41e3f6267d6ac1e757ccaa780e20c19608269))
+* **05-04:** ship hubspot:webhooks:sync for legacy public apps ([60370a0](https://github.com/ReyemTech/laravel-hubspot/commit/60370a08886a82e380d2b57a900af5e878150d43))
+* **05-04:** ship the Gateway subscription port and its SDK adapter ([ebefc1b](https://github.com/ReyemTech/laravel-hubspot/commit/ebefc1b625c0cd6b4efa6ed293aba8ff98bef64e))
+* **05-05:** legacy private apps get rendered manual setup guidance ([c986b61](https://github.com/ReyemTech/laravel-hubspot/commit/c986b6183d331d0b50fbad49c6d39c30a919575d))
+* **05-05:** project-based apps get an exportable webhook component ([18e5d87](https://github.com/ReyemTech/laravel-hubspot/commit/18e5d878d7fc732535bc52907b846941446b68cb))
+* **05:** name the app before reconciling its webhook subscriptions ([6cde668](https://github.com/ReyemTech/laravel-hubspot/commit/6cde668c8537aff66bd1447663a4ac0a08ca525a))
+* **webhooks:** receive, verify, dedupe and type inbound HubSpot webhooks ([1c37fd5](https://github.com/ReyemTech/laravel-hubspot/commit/1c37fd57d051bba780115bcbb5c8f4489525d773))
+
+
+### Bug Fixes
+
+* **05:** carry the suite memory requirement in phpunit.xml.dist ([75161c2](https://github.com/ReyemTech/laravel-hubspot/commit/75161c24f2ac1575154d47bc7f4b3f7984982e76))
+* **ci:** give PHPStan an explicit memory limit on every invocation ([72af4cb](https://github.com/ReyemTech/laravel-hubspot/commit/72af4cbefe9d26e41064b5083725dfd681277d3d))
+* **config:** drop the inert tolerance key and stop promising receipt while disabled ([70df04e](https://github.com/ReyemTech/laravel-hubspot/commit/70df04e8321a71e2cdbf097f24787721bd8c644a))
+* **testing:** keep HubspotFake's released constructor signature intact ([3ae7add](https://github.com/ReyemTech/laravel-hubspot/commit/3ae7add637dfc4cfe7c2143e466353f7b4c21c8e))
+* **webhooks:** bound every field the events table constrains, not only eventId ([4d849c7](https://github.com/ReyemTech/laravel-hubspot/commit/4d849c711eafd3458d1e8d384538ce16ec1f1100))
+* **webhooks:** close three P1 findings from the pre-push review ([9275ae9](https://github.com/ReyemTech/laravel-hubspot/commit/9275ae91313b6ec30db18308260d030caca7bc55))
+* **webhooks:** exempt the receipt route from CSRF so the documented one-liner works ([175bbca](https://github.com/ReyemTech/laravel-hubspot/commit/175bbca095479c0716958564f03c40933b1597d2))
+* **webhooks:** hand the claim back when handling fails, so the retry can take it ([0edbba4](https://github.com/ReyemTech/laravel-hubspot/commit/0edbba48728182164c454ace8fe30802bcd4501a))
+* **webhooks:** honour the kill switch at dispatch, refusing rather than acknowledging ([b507e9b](https://github.com/ReyemTech/laravel-hubspot/commit/b507e9ba7f44a13f86b51a0af6a3b57b0f481da1))
+* **webhooks:** key deduplication on a delivery identity, revising D-01 ([50d5022](https://github.com/ReyemTech/laravel-hubspot/commit/50d5022192a4b4f8158400955958470c1be8706a))
+* **webhooks:** make the held-claim branch driver-aware, measured against real queue drivers ([99fec01](https://github.com/ReyemTech/laravel-hubspot/commit/99fec01d52c7a7456c5af13d5eb3d71d7743b268))
+* **webhooks:** name a malformed subscriptions value instead of reporting it as empty ([1c666b2](https://github.com/ReyemTech/laravel-hubspot/commit/1c666b28506d5371297117cba359f9254e3909a2))
+* **webhooks:** read the v3 signature from the header HubSpot sends it in ([2ed6a20](https://github.com/ReyemTech/laravel-hubspot/commit/2ed6a20fbb0b351081aa8e95d413376f7d63c71b))
+* **webhooks:** refuse a delivery instead of acknowledging one we cannot process ([449cdeb](https://github.com/ReyemTech/laravel-hubspot/commit/449cdeb529282144eb7c3e21e26eaa97123fffc6))
+* **webhooks:** refuse a delivery when the event store is not migrated ([1632c97](https://github.com/ReyemTech/laravel-hubspot/commit/1632c9741d29ed344c44f4a6946651c87d291e73))
+* **webhooks:** refuse a destructive retention and an impossible claim lease ([214b3db](https://github.com/ReyemTech/laravel-hubspot/commit/214b3dbc4dcdff39dc6482c826910b731a769b12))
+* **webhooks:** refuse a NUL byte, making the delivery separator's claim true ([fefa0cd](https://github.com/ReyemTech/laravel-hubspot/commit/fefa0cda72d97c56512bd1abd8117cecaa44247a))
+* **webhooks:** refuse an app id the integer cast would change, and describe all three app models ([7ed7d3f](https://github.com/ReyemTech/laravel-hubspot/commit/7ed7d3fbaeec82295c5f086cd260d19c36656808))
+* **webhooks:** reject a property filter on a non-propertyChange subscription ([749bcad](https://github.com/ReyemTech/laravel-hubspot/commit/749bcad3fb977dc4144b68d2a2b9333633baf1b4))
+* **webhooks:** requeue a held claim as a fresh job, not as a spent attempt ([96d9208](https://github.com/ReyemTech/laravel-hubspot/commit/96d9208abb7f23841afe70f39bda563f5b253ff7))
+* **webhooks:** requeue a held claim, and stop caching store readiness ([d3b46dc](https://github.com/ReyemTech/laravel-hubspot/commit/d3b46dca6924c87ba3b07f76d96a7d065a42ce05))
+* **webhooks:** store occurred_at in a DATETIME, closing the 2038 acknowledge-and-lose ([3eabc4c](https://github.com/ReyemTech/laravel-hubspot/commit/3eabc4c037b5084b9d167f5268a895f5857587ed))
+* **webhooks:** validate declarations once, and fail when the component cannot be written ([275976b](https://github.com/ReyemTech/laravel-hubspot/commit/275976b1ed31faf765e9176742c5f1fa3863178a))
+* **webhooks:** validate the shape of every webhook config key, not one more instance ([7eb2506](https://github.com/ReyemTech/laravel-hubspot/commit/7eb25065b1c5260cf2bf8ad009c36b519aefc6ec))
+
 ## [0.6.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.5.0...reyemtech/laravel-hubspot-v0.6.0) (2026-08-05)
 
 
