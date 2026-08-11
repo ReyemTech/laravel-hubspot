@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use ReyemTech\Hubspot\Tests\TestCase;
 use ReyemTech\Hubspot\Webhooks\Events\HubspotWebhookReceived;
+use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
 use ReyemTech\Hubspot\Webhooks\ProcessWebhookEventJob;
 use ReyemTech\Hubspot\Webhooks\Stores\DatabaseWebhookEventStore;
 use RuntimeException;
@@ -188,12 +189,20 @@ final class WebhookDedupeTest extends TestCase
     {
         Event::fake([HubspotWebhookReceived::class]);
 
+        // Derived from the very item this test goes on to deliver, rather than hand-written: the
+        // claim is keyed on NormalizedWebhookEvent::deliveryIdentity(), so a fixture whose fields
+        // drifted from the delivery would be a different delivery and the reclaim under test would
+        // never happen.
+        $dead = NormalizedWebhookEvent::fromArray(self::rawEventItem('evt-stale'));
+
         DB::table(DatabaseWebhookEventStore::TABLE)->insert([
-            'event_id' => 'evt-stale',
-            'subscription_type' => 'contact.creation',
-            'portal_id' => 62515,
-            'object_id' => '123',
-            'occurred_at' => now(),
+            'delivery_hash' => $dead->deliveryIdentity(),
+            'event_id' => $dead->eventId,
+            'subscription_id' => $dead->subscriptionId,
+            'subscription_type' => $dead->subscriptionType,
+            'portal_id' => $dead->portalId,
+            'object_id' => $dead->objectId,
+            'occurred_at' => $dead->occurredAt,
             'attempts' => 1,
             'claimed_at' => now()->subSeconds(901),
             'handled_at' => null,

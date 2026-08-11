@@ -39,6 +39,10 @@ final class PruneWebhookEventsCommandTest extends TestCase
     private function insertRow(string $eventId, ?DateTimeInterface $handledAt): void
     {
         DB::table(DatabaseWebhookEventStore::TABLE)->insert([
+            // The unique index is on the delivery identity now, not on event_id -- see
+            // NormalizedWebhookEvent::deliveryIdentity(). Hashing the id alone is enough to keep
+            // fixture rows distinct from one another, which is all these fixtures need.
+            'delivery_hash' => hash('sha256', $eventId),
             'event_id' => $eventId,
             'subscription_type' => 'contact.creation',
             'portal_id' => 62515,

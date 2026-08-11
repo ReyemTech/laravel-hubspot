@@ -72,14 +72,19 @@ interface WebhookEventStore
     public function claim(NormalizedWebhookEvent $event): WebhookEventClaim;
 
     /**
-     * Marks the given `eventId` handled. Called only after every listener and handler for that event
+     * Marks the given delivery handled.
+     *
+     * Takes the EVENT, not an id: the row is keyed on
+     * {@see NormalizedWebhookEvent::deliveryIdentity()}, because HubSpot documents that `eventId`
+     * "is not guaranteed to be unique" and an id alone therefore addresses more than one delivery. Called only after every listener and handler for that event
      * has returned without throwing (D-03) -- never from inside a `finally`, and never before the
      * dispatch it guards.
      */
-    public function complete(string $eventId): void;
+    public function complete(NormalizedWebhookEvent $event): void;
 
     /**
-     * Releases a claim this worker acquired but could not complete, so the queue's own retry can
+     * Releases a claim this worker acquired but could not complete. Takes the EVENT for the same
+     * reason {@see self::complete()} does -- the row is keyed on the delivery identity, not the id, so the queue's own retry can
      * reclaim it immediately instead of waiting out the lease.
      *
      * **Why this exists at all.** The lease answers "the worker died"; it cannot answer "the
@@ -95,11 +100,11 @@ interface WebhookEventStore
      * completed. The lease remains the safety net for a worker that dies without unwinding.
      *
      * An implementation must leave the row's attempt history intact and must not mark it handled;
-     * it makes the row reclaimable, nothing more. Releasing an id that has no row, or one already
-     * handled, is a no-op rather than an error — a retry racing a concurrent completion must not
+     * it makes the row reclaimable, nothing more. Releasing a delivery that has no row, or one
+     * already handled, is a no-op rather than an error — a retry racing a concurrent completion must not
      * turn into a second failure.
      */
-    public function abandon(string $eventId): void;
+    public function abandon(NormalizedWebhookEvent $event): void;
 
     /**
      * Deletes every handled record completed before the given moment, and returns how many rows were

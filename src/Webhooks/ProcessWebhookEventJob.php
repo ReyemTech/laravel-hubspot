@@ -233,12 +233,12 @@ final class ProcessWebhookEventJob implements ShouldQueue
                 $handler->handle($this->event);
             }
         } catch (Throwable $exception) {
-            $store->abandon($this->event->eventId);
+            $store->abandon($this->event);
 
             throw $exception;
         }
 
-        $store->complete($this->event->eventId);
+        $store->complete($this->event);
 
         $receipts->recordWebhookHandled($this->event);
     }

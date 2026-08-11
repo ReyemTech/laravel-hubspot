@@ -36,9 +36,10 @@ mutates(DatabaseWebhookEventStore::class, NormalizedWebhookEvent::class);
  * front door.
  *
  * D-01 is revised accordingly: the claim is keyed on a delivery identity of
- * `(portalId, subscriptionId, eventId, objectId, occurredAt)`, hashed into one indexed column in
- * the shape `hubspot_object_links.lookup_hash` already established. A genuine redelivery repeats
- * all five and differs only in `attemptNumber`, so deduplication still holds; two distinct events
+ * `(portalId, subscriptionId, subscriptionType, eventId, objectId, occurredAt)`, hashed into one
+ * indexed column in the shape `hubspot_object_links.lookup_hash` already established.
+ * `subscriptionType` is in there because `subscriptionId` is optional and cannot be relied on
+ * alone. A genuine redelivery repeats all six and differs only in `attemptNumber`, so deduplication still holds; two distinct events
  * differ in at least one, so they no longer collide.
  */
 final class DeliveryIdentityTest extends TestCase
@@ -74,10 +75,11 @@ final class DeliveryIdentityTest extends TestCase
         int $portalId = 62515,
         string $objectId = 'obj-1',
         string $occurredAt = '2026-08-11T00:00:00+00:00',
+        string $subscriptionType = 'contact.propertyChange',
     ): NormalizedWebhookEvent {
         return new NormalizedWebhookEvent(
             eventId: $eventId,
-            subscriptionType: 'contact.propertyChange',
+            subscriptionType: $subscriptionType,
             portalId: $portalId,
             appId: 54321,
             objectId: $objectId,
@@ -226,5 +228,31 @@ final class DeliveryIdentityTest extends TestCase
             ->count();
 
         self::assertSame(2, $rows, 'Two distinct deliveries sharing an eventId must both persist.');
+    }
+
+    /**
+     * **The identity must not lean on `subscriptionId`, because it is optional.**
+     *
+     * `fromArray()` reads `subscriptionId` with `optionalInt()`, so an item may legitimately arrive
+     * without one -- and then the field meant to separate subscriptions contributes nothing. Two
+     * distinct subscriptions for the same portal and object at the same instant, sharing a
+     * non-unique `eventId`, would collapse into one delivery and the second would be discarded.
+     *
+     * `subscriptionType` is REQUIRED by `fromArray()`, so it is always available to separate them.
+     */
+    public function test_two_events_differing_only_in_subscription_type_are_distinct_deliveries(): void
+    {
+        $store = $this->store();
+
+        self::assertSame(
+            WebhookEventClaim::Acquired,
+            $store->claim(self::event(subscriptionId: null, subscriptionType: 'contact.propertyChange')),
+        );
+
+        self::assertSame(
+            WebhookEventClaim::Acquired,
+            $store->claim(self::event(subscriptionId: null, subscriptionType: 'contact.creation')),
+            'With no subscriptionId to separate them, subscriptionType must.',
+        );
     }
 }

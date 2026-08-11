@@ -24,7 +24,7 @@ use RuntimeException;
  *
  * `claim()` always attempts an INSERT before it ever reads a row. Reading first and then deciding
  * whether to insert is exactly the race two concurrent workers can both win: both observe "no row",
- * both proceed. A unique-constraint violation on `event_id` (SQLSTATE class `23`, the same class
+ * both proceed. A unique-constraint violation on `delivery_hash` (SQLSTATE class `23`, the same class
  * every driver in this package's support matrix -- SQLite, MySQL, PostgreSQL -- reports an integrity
  * constraint violation under) is the ONLY reason this insert can fail once the table genuinely
  * exists, so catching it and re-reading is what makes the claim atomic without a `SELECT ... FOR
@@ -61,6 +61,12 @@ use RuntimeException;
 final class DatabaseWebhookEventStore implements WebhookEventStore
 {
     public const TABLE = 'hubspot_webhook_events';
+
+    /**
+     * The `claimed_at` an abandoned claim is backdated to: one second past the Unix epoch, the
+     * earliest instant MySQL's `TIMESTAMP` accepts. See {@see self::abandon()}.
+     */
+    private const int RECLAIMABLE_AT = 1;
 
     public function __construct(
         private readonly Connection $connection,
@@ -115,7 +121,9 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         return $this->guarded(function () use ($event): WebhookEventClaim {
             try {
                 $this->rows()->insert([
+                    'delivery_hash' => $event->deliveryIdentity(),
                     'event_id' => $event->eventId,
+                    'subscription_id' => $event->subscriptionId,
                     'subscription_type' => $event->subscriptionType,
                     'portal_id' => $event->portalId,
                     'object_id' => $event->objectId,
@@ -141,11 +149,11 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         });
     }
 
-    public function complete(string $eventId): void
+    public function complete(NormalizedWebhookEvent $event): void
     {
-        $this->guarded(function () use ($eventId): void {
+        $this->guarded(function () use ($event): void {
             $this->rows()
-                ->where('event_id', $eventId)
+                ->where('delivery_hash', $event->deliveryIdentity())
                 ->update(['handled_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
         });
     }
@@ -153,7 +161,14 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
     /**
      * Backdates `claimed_at` past any possible lease rather than nulling it or deleting the row.
      *
-     * The epoch is deliberate: the reclaim path in {@see resolveExistingClaim()} compares
+     * One second PAST the epoch, not the epoch: MySQL's `TIMESTAMP` range begins at
+     * `1970-01-01 00:00:01` UTC, so `@0` is out of range and strict mode REJECTS it. That would
+     * make `abandon()` throw before the handler's own exception could propagate, and with
+     * `queue:work --tries=1` there would be no job left to reclaim the row -- turning the release
+     * that exists to preserve the event into the thing that loses it. SQLite, which the suite runs
+     * on, stores `@0` happily, which is exactly why this needed stating rather than discovering.
+     *
+     * The fixed floor is deliberate: the reclaim path in {@see resolveExistingClaim()} compares
      * `claimed_at` against `now() - claim_lease`, and `claim_lease` is operator-configurable at
      * runtime. A backdate computed FROM the current lease would stop being expired the moment
      * somebody raised that value, which is exactly the kind of quietly-conditional correctness
@@ -167,14 +182,14 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
      * `whereNull('handled_at')` is what makes releasing an already-completed claim a no-op: a
      * handler that threw AFTER `complete()` returned must not reopen a finished event.
      */
-    public function abandon(string $eventId): void
+    public function abandon(NormalizedWebhookEvent $event): void
     {
-        $this->guarded(function () use ($eventId): void {
+        $this->guarded(function () use ($event): void {
             $this->rows()
-                ->where('event_id', $eventId)
+                ->where('delivery_hash', $event->deliveryIdentity())
                 ->whereNull('handled_at')
                 ->update([
-                    'claimed_at' => Carbon::createFromTimestamp(0),
+                    'claimed_at' => Carbon::createFromTimestamp(self::RECLAIMABLE_AT),
                     'updated_at' => Carbon::now(),
                 ]);
         });
@@ -205,7 +220,7 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
      */
     private function resolveExistingClaim(NormalizedWebhookEvent $event): WebhookEventClaim
     {
-        $row = $this->rows()->where('event_id', $event->eventId)->first();
+        $row = $this->rows()->where('delivery_hash', $event->deliveryIdentity())->first();
 
         // A plain object with dynamic properties -- see DatabaseAssociationTypeStore::hydrate()'s
         // own docblock for why every store in this package decodes through an array cast rather
@@ -224,7 +239,7 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
         }
 
         $reclaimed = $this->rows()
-            ->where('event_id', $event->eventId)
+            ->where('delivery_hash', $event->deliveryIdentity())
             ->whereNull('handled_at')
             ->where('claimed_at', '<', $leaseDeadline)
             ->increment('attempts', 1, ['claimed_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
@@ -291,7 +306,7 @@ final class DatabaseWebhookEventStore implements WebhookEventStore
      * SQLSTATE class `23` is "Integrity Constraint Violation" on every driver this package's
      * support matrix covers -- SQLite and MySQL both report `23000`, PostgreSQL reports `23505` for
      * a unique violation specifically, and both fall under the same two-character class prefix. The
-     * only constraint this table declares is the unique index on `event_id`, so within `claim()`'s
+     * only constraint this table declares is the unique index on `delivery_hash`, so within `claim()`'s
      * insert this is unambiguous.
      */
     private static function isIntegrityConstraintViolation(QueryException $exception): bool

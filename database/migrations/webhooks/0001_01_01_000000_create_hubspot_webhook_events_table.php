@@ -76,7 +76,13 @@ return new class extends Migration
         Schema::create('hubspot_webhook_events', function (Blueprint $table): void {
             $table->id();
 
+            // The delivery identity the claim is keyed on -- see
+            // NormalizedWebhookEvent::deliveryIdentity(). A fixed 64 hex characters, so the unique
+            // index below has none of the width trouble that bounds `event_id` to 191.
+            $table->char('delivery_hash', 64);
+
             $table->string('event_id', 191);
+            $table->unsignedBigInteger('subscription_id')->nullable();
             $table->string('subscription_type', 191);
             $table->unsignedBigInteger('portal_id');
             $table->string('object_id')->nullable();
@@ -92,7 +98,13 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->unique('event_id');
+            // UNIQUE on the delivery identity, not on `event_id`. HubSpot documents that
+            // "This value is not guaranteed to be unique" (Webhooks v3 API guide, checked
+            // 2026-08-11), so a unique index on it alone collapsed two distinct events into one
+            // and discarded the second as a redelivery. `event_id` keeps a plain index: it is what
+            // an operator searches by, and what every log line and error message names.
+            $table->unique('delivery_hash');
+            $table->index('event_id');
             $table->index('handled_at');
             $table->index(['subscription_type', 'occurred_at']);
         });

@@ -20,8 +20,22 @@ third-party webhook package.
 ## Implementation Decisions
 
 ### Delivery Deduplication
-- **D-01:** A persistent package-owned event-id record makes each HubSpot `eventId` a no-op after
-  successful handling. It must survive cache loss, process restarts, and redelivery.
+- **D-01:** A persistent package-owned record makes each HubSpot DELIVERY a no-op after successful
+  handling. It must survive cache loss, process restarts, and redelivery.
+  — **REVISED 2026-08-11 (PR #71 review).** Originally keyed on `eventId` alone. HubSpot's Webhooks
+  v3 API guide states of `eventId`: *"This value is not guaranteed to be unique."* (checked
+  2026-08-11,
+  https://developers.hubspot.com/docs/api-reference/legacy/webhooks/guide). A unique index on it
+  therefore collapsed two legitimately distinct events into one and discarded the second as a
+  redelivery, after the route had already answered 204. `05-RESEARCH.md` carried the uniqueness
+  premise unverified. The key is now a **delivery identity** —
+  `(portalId, subscriptionId, subscriptionType, eventId, objectId, occurredAt)` — hashed into one
+  indexed column, in
+  the shape `hubspot_object_links.lookup_hash` already uses. `subscriptionType` is included because
+  `subscriptionId` is optional on an item, so an identity leaning on it alone loses its separator
+  exactly when it is needed. `attemptNumber` is excluded: it is the
+  one field a genuine redelivery changes, so including it would make every retry a new delivery and
+  leave this decision guaranteeing nothing.
 - **D-02:** Webhooks are an explicit, false-by-default feature. Enabling them activates the
   persistent event-store migration; unused packages retain zero-migration installation.
   — **Reversibility:** one-way — enabled consumers will have persisted event records and a migration.

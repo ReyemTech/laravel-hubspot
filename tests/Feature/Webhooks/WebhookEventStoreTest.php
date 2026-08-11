@@ -124,12 +124,12 @@ final class WebhookEventStoreTest extends TestCase
             ],
             'complete' => [
                 static function (WebhookEventStore $store): void {
-                    $store->complete('evt-absent');
+                    $store->complete(self::event('evt-absent'));
                 },
             ],
             'abandon' => [
                 static function (WebhookEventStore $store): void {
-                    $store->abandon('evt-absent');
+                    $store->abandon(self::event('evt-absent'));
                 },
             ],
             'prune' => [
@@ -195,7 +195,7 @@ final class WebhookEventStoreTest extends TestCase
         self::assertSame(WebhookEventClaim::Acquired, $store->claim(self::event('evt-lifecycle')));
         self::assertSame(WebhookEventClaim::Held, $store->claim(self::event('evt-lifecycle')));
 
-        $store->complete('evt-lifecycle');
+        $store->complete(self::event('evt-lifecycle'));
 
         self::assertSame(WebhookEventClaim::Handled, $store->claim(self::event('evt-lifecycle')));
 
@@ -353,7 +353,7 @@ final class WebhookEventStoreTest extends TestCase
         self::assertSame(WebhookEventClaim::Acquired, $store->claim(self::event('evt-abandon')));
 
         // Without the abandon, this second claim is Held: the lease has barely started.
-        $store->abandon('evt-abandon');
+        $store->abandon(self::event('evt-abandon'));
 
         self::assertSame(WebhookEventClaim::Acquired, $store->claim(self::event('evt-abandon')));
 
@@ -380,9 +380,9 @@ final class WebhookEventStoreTest extends TestCase
         $store = $this->store();
 
         $store->claim(self::event('evt-done'));
-        $store->complete('evt-done');
+        $store->complete(self::event('evt-done'));
 
-        $store->abandon('evt-done');
+        $store->abandon(self::event('evt-done'));
 
         self::assertSame(WebhookEventClaim::Handled, $store->claim(self::event('evt-done')));
     }
@@ -392,7 +392,7 @@ final class WebhookEventStoreTest extends TestCase
     {
         $this->migrate();
 
-        $this->store()->abandon('evt-never-seen');
+        $this->store()->abandon(self::event('evt-never-seen'));
 
         self::assertSame(0, DB::table(DatabaseWebhookEventStore::TABLE)->count());
     }
@@ -457,7 +457,7 @@ final class WebhookEventStoreTest extends TestCase
             ->where('event_id', 'evt-complete')
             ->update(['updated_at' => now()->subSeconds(60)]);
 
-        $store->complete('evt-complete');
+        $store->complete(self::event('evt-complete'));
 
         $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-complete')->first();
         self::assertNotNull($row);
@@ -475,11 +475,16 @@ final class WebhookEventStoreTest extends TestCase
     {
         $this->migrate();
 
+        // delivery_hash must match what claim() will look the row up by, or this row is simply a
+        // different delivery and the corrupt claimed_at below is never read.
         DB::statement(
             'INSERT INTO '.DatabaseWebhookEventStore::TABLE
-            .' (event_id, subscription_type, portal_id, attempts, claimed_at, created_at, updated_at) '
-            .'VALUES (?, ?, ?, ?, ?, ?, ?)',
-            ['evt-corrupt', 'contact.creation', 62515, 1, 12345, now(), now()],
+            .' (delivery_hash, event_id, subscription_type, portal_id, attempts, claimed_at, created_at, updated_at) '
+            .'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+                self::event('evt-corrupt')->deliveryIdentity(),
+                'evt-corrupt', 'contact.creation', 62515, 1, 12345, now(), now(),
+            ],
         );
 
         try {
@@ -524,7 +529,7 @@ final class WebhookEventStoreTest extends TestCase
             if (
                 str_contains($query->sql, 'select *')
                 && str_contains($query->sql, DatabaseWebhookEventStore::TABLE)
-                && str_contains($query->sql, 'event_id')
+                && str_contains($query->sql, 'delivery_hash')
             ) {
                 $armed = false;
 
@@ -539,5 +544,33 @@ final class WebhookEventStoreTest extends TestCase
         $claim = $store->claim(self::event('evt-race'));
 
         self::assertSame(WebhookEventClaim::Held, $claim);
+    }
+
+    /**
+     * `abandon()` backdates `claimed_at` to one second PAST the epoch, not to the epoch itself.
+     * MySQL's `TIMESTAMP` range starts at `1970-01-01 00:00:01` UTC and strict mode rejects
+     * anything earlier -- which would make the release throw and, at `--tries=1`, destroy the very
+     * delivery it exists to preserve. SQLite stores `@0` without complaint, so this suite cannot
+     * catch it by running; the value is asserted directly instead.
+     */
+    public function test_an_abandoned_claim_is_backdated_within_the_range_every_supported_driver_accepts(): void
+    {
+        $this->migrate();
+        $store = $this->store();
+
+        $store->claim(self::event('evt-range'));
+        $store->abandon(self::event('evt-range'));
+
+        $row = DB::table(DatabaseWebhookEventStore::TABLE)->where('event_id', 'evt-range')->first();
+        self::assertNotNull($row);
+
+        /** @var array{claimed_at: string} $columns */
+        $columns = (array) $row;
+
+        self::assertGreaterThanOrEqual(
+            1,
+            (new DateTimeImmutable($columns['claimed_at']))->getTimestamp(),
+            'MySQL TIMESTAMP rejects anything before 1970-01-01 00:00:01 UTC.',
+        );
     }
 }

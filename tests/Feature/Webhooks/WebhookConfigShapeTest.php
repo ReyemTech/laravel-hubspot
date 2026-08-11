@@ -60,7 +60,7 @@ final class WebhookConfigShapeTest extends TestCase
             'app_model' => 'Webhooks\AppModel::resolve() rejects anything outside the three cases.',
             'app_id' => 'Gateway\HubspotClientFactory rejects a non-canonical id via malformedWebhookAppId().',
             'developer_api_key' => 'Gateway\HubspotClientFactory rejects null/empty via missingWebhookManagementCredentials().',
-            'target_url' => 'SyncWebhookSubscriptionsCommand rejects absent, padded and non-absolute URLs.',
+            'target_url' => 'SyncWebhookSubscriptionsCommand rejects absent, padded, non-https and fragment-bearing URLs.',
             'subscriptions' => 'Webhooks\SubscriptionDeclarations rejects a non-array, and every malformed or padded entry.',
         ];
     }
@@ -164,18 +164,22 @@ final class WebhookConfigShapeTest extends TestCase
             'rooted path with no host' => ['/hubspot/webhook'],
             'a non-http scheme' => ['javascript:alert(1)'],
             'ftp' => ['ftp://example.com/hook'],
+            // http is refused, not merely discouraged: the POST body is the consumer's own
+            // customers' data and the signature header derives from the client secret.
+            'plain http' => ['http://app.example.com/hubspot/webhook'],
+            'carries a fragment' => ['https://app.example.com/hubspot/webhook#frag'],
             'padded with a trailing space' => ['https://app.example.com/hubspot/webhook '],
             'padded with a leading space' => [' https://app.example.com/hubspot/webhook'],
             'scheme only' => ['https://'],
         ];
     }
 
-    /** Both http and https absolute URLs still work -- the guard rejects malformed, not merely unusual. */
-    public function test_an_absolute_http_target_url_is_accepted(): void
+    /** An absolute https URL still works -- the guard rejects malformed, not merely unusual. */
+    public function test_an_absolute_https_target_url_is_accepted(): void
     {
         config([
             'hubspot.webhooks.app_model' => 'project',
-            'hubspot.webhooks.target_url' => 'http://localhost:8000/hubspot/webhook',
+            'hubspot.webhooks.target_url' => 'https://localhost:8000/hubspot/webhook',
             'hubspot.webhooks.subscriptions' => [['event_type' => 'deal.creation']],
         ]);
 

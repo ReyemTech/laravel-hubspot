@@ -57,6 +57,16 @@ final readonly class NormalizedWebhookEvent
         public ?string $associationType = null,
         public ?string $fromObjectId = null,
         public ?string $toObjectId = null,
+        /**
+         * HubSpot's own `subscriptionId` -- retained because it is part of the delivery identity
+         * {@see self::deliveryIdentity()} keys on, not for display.
+         *
+         * Nullable, and last, so adding it broke no existing construction: every call site names
+         * its arguments. Null is a real state rather than a placeholder -- an item that carries no
+         * subscriptionId hashes as a distinct identity from one that does, instead of colliding
+         * with it.
+         */
+        public ?int $subscriptionId = null,
     ) {}
 
     /**
@@ -85,7 +95,51 @@ final readonly class NormalizedWebhookEvent
             associationType: self::optionalString($item, 'associationType'),
             fromObjectId: self::optionalIdentifier($item, 'fromObjectId'),
             toObjectId: self::optionalIdentifier($item, 'toObjectId'),
+            subscriptionId: self::optionalInt($item, 'subscriptionId'),
         );
+    }
+
+    /**
+     * **The delivery this item is, as one indexable value.**
+     *
+     * HubSpot's Webhooks v3 API guide says of `eventId`: *"This value is not guaranteed to be
+     * unique."* (checked 2026-08-11). It also says HubSpot *"does not guarantee that you'll only
+     * get a single notification for an event"*. The second sentence is why D-01 needs an identity;
+     * the first is why that identity cannot be `eventId` -- two distinct events sharing one would
+     * collide, and the later one would be discarded as a redelivery of the earlier.
+     *
+     * Six fields, and each earns its place: `portalId` separates accounts, `subscriptionId`
+     * separates subscriptions within an account, and `objectId` and `occurredAt` separate events
+     * that share an id within one subscription.
+     *
+     * `subscriptionType` is here because `subscriptionId` is OPTIONAL -- `fromArray()` reads it
+     * with `optionalInt()`, so an item may arrive without one, and the field meant to separate
+     * subscriptions would then contribute nothing. `subscriptionType` is required on every item, so
+     * it separates them even when the id is absent. An identity is only as strong as its weakest
+     * input, and the weakest input here is the one that can be missing. `attemptNumber` is deliberately EXCLUDED -- it is the
+     * one field a genuine redelivery changes, so including it would make every retry a new
+     * delivery and leave HOOK-01 guaranteeing nothing.
+     *
+     * Hashed rather than stored as a composite index, following
+     * `hubspot_object_links.lookup_hash`: it yields a fixed-width value of `0-9a-f` that no
+     * collation on any driver can fold together, and it sidesteps the MySQL index-width limit that
+     * already forced `event_id` to 191 characters. SHA-256 for collision resistance, not secrecy --
+     * `DatabaseAssociationTypeStore::lookupHash()` records the same reasoning.
+     *
+     * `\0` separates the parts because it cannot occur in any of them, so no two different field
+     * combinations can concatenate into the same string -- `a|b` and `a` + `|b` would otherwise
+     * hash alike. `occurredAt` is rendered with millisecond precision, the precision HubSpot sends.
+     */
+    public function deliveryIdentity(): string
+    {
+        return hash('sha256', implode("\0", [
+            (string) $this->portalId,
+            $this->subscriptionId === null ? '' : (string) $this->subscriptionId,
+            $this->subscriptionType,
+            $this->eventId,
+            $this->objectId,
+            $this->occurredAt->format('U.v'),
+        ]));
     }
 
     /**

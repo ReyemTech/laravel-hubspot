@@ -152,7 +152,7 @@ final class RetryAfterHandlerFailureTest extends TestCase
         /** @var WebhookEventStore $store */
         $store = $this->app?->make(WebhookEventStore::class);
         $store->claim($this->event());
-        $store->complete($this->event()->eventId);
+        $store->complete($this->event());
 
         $queueJob = new RecordingQueueJob;
         $job = new ProcessWebhookEventJob($this->event());

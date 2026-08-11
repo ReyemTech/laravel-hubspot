@@ -140,7 +140,7 @@ final class SyncWebhookSubscriptionsCommand extends Command
         //
         // Padding is refused rather than trimmed away, matching malformedWebhookAppId(): a value
         // the package silently rewrites is no longer the value the config file states.
-        if ($raw !== trim($raw) || ! self::isAbsoluteHttpUrl($raw)) {
+        if ($raw !== trim($raw) || ! self::isAbsoluteHttpsUrl($raw)) {
             throw ConfigurationException::invalidWebhookTargetUrl($raw);
         }
 
@@ -148,7 +148,14 @@ final class SyncWebhookSubscriptionsCommand extends Command
     }
 
     /**
-     * Scheme and host both present, and the scheme one HubSpot actually delivers over.
+     * An absolute `https` URL with a host and no fragment -- what the error message, the config
+     * comment and HubSpot itself all require, and previously the one place that did not enforce it.
+     *
+     * `http` is refused rather than accepted-with-a-warning: the body HubSpot POSTs is the
+     * consumer's own customers' data, and the `X-HubSpot-Signature-v3` header is derived from the
+     * client secret, so an unencrypted target exposes both. A fragment is refused because HubSpot
+     * never sends one and it cannot affect delivery -- its presence means the value was copied from
+     * somewhere it did not belong.
      *
      * `parse_url()` rather than `filter_var(..., FILTER_VALIDATE_URL)`: the filter accepts
      * `javascript:alert(1)` and other non-HTTP schemes as valid URLs, which is precisely the shape
@@ -156,7 +163,7 @@ final class SyncWebhookSubscriptionsCommand extends Command
      * a component a well-formed string simply lacks -- `https://` parses with no host -- so both
      * are checked rather than assumed away.
      */
-    private static function isAbsoluteHttpUrl(string $url): bool
+    private static function isAbsoluteHttpsUrl(string $url): bool
     {
         $parts = parse_url($url);
 
@@ -167,7 +174,11 @@ final class SyncWebhookSubscriptionsCommand extends Command
         $scheme = $parts['scheme'] ?? null;
         $host = $parts['host'] ?? null;
 
-        return in_array($scheme, ['http', 'https'], true) && is_string($host) && $host !== '';
+        if (isset($parts['fragment'])) {
+            return false;
+        }
+
+        return $scheme === 'https' && is_string($host) && $host !== '';
     }
 
     /**
