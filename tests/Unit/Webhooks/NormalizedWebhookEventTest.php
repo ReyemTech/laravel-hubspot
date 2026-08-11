@@ -277,6 +277,21 @@ final class NormalizedWebhookEventTest extends TestCase
         NormalizedWebhookEvent::fromArray($item);
     }
 
+    /**
+     * 999ms rounds down to `1970-01-01 00:00:00`, the instant MySQL's `TIMESTAMP` excludes, so the
+     * boundary is 1000 and not 999. Asserted from BELOW as well as above because a bound checked
+     * only from one side is satisfied by an off-by-one on the other.
+     */
+    public function test_it_rejects_an_occurred_at_one_millisecond_below_the_earliest_storable_instant(): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = 999;
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
+
     public function test_it_accepts_an_occurred_at_at_exactly_the_earliest_storable_instant(): void
     {
         $item = self::rawItem();
@@ -285,5 +300,72 @@ final class NormalizedWebhookEventTest extends TestCase
         $event = NormalizedWebhookEvent::fromArray($item);
 
         self::assertSame('1970-01-01 00:00:01', $event->occurredAt->format('Y-m-d H:i:s'));
+    }
+
+    /**
+     * **Pinned to the migration's literal widths, deliberately not to the constants themselves.**
+     *
+     * Every boundary test above spends the constant, so it moves WITH the constant: raise
+     * `MAX_SUBSCRIPTION_TYPE_LENGTH` to 200 without touching
+     * `create_hubspot_webhook_events_table.php` and all of them still pass while every 192-byte
+     * value is acknowledged and then lost. This is the one assertion that fails on that drift, and
+     * it is why the numbers here are written out rather than referenced.
+     */
+    public function test_the_declared_bounds_match_the_column_widths_the_migration_creates(): void
+    {
+        self::assertSame(191, NormalizedWebhookEvent::MAX_EVENT_ID_LENGTH);
+        self::assertSame(191, NormalizedWebhookEvent::MAX_SUBSCRIPTION_TYPE_LENGTH);
+        self::assertSame(255, NormalizedWebhookEvent::MAX_OBJECT_ID_LENGTH);
+    }
+
+    /**
+     * The rejections above are answered to the sender as a `400` (D-13), so the message IS the
+     * diagnosis (STANDARDS Sec.9) rather than incidental prose. Each assertion below spans a
+     * boundary between the concatenated fragments, so a message silently losing one of them fails
+     * here instead of shipping a 400 that names no cause.
+     */
+    public function test_an_over_long_value_is_refused_with_a_message_naming_the_field_and_both_widths(): void
+    {
+        $item = self::rawItem();
+        $item['subscriptionType'] = str_repeat('a', 192);
+
+        try {
+            NormalizedWebhookEvent::fromArray($item);
+            self::fail('An over-long subscriptionType was accepted.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('"subscriptionType" is 192 bytes', $exception->getMessage());
+            self::assertStringContainsString('191-byte column width hubspot_webhook_events', $exception->getMessage());
+            self::assertStringContainsString('truncating it keeps a value', $exception->getMessage());
+        }
+    }
+
+    public function test_a_negative_unsigned_value_is_refused_with_a_message_naming_the_driver_split(): void
+    {
+        $item = self::rawItem();
+        $item['portalId'] = -7;
+
+        try {
+            NormalizedWebhookEvent::fromArray($item);
+            self::fail('A negative portalId was accepted.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('"portalId" is -7', $exception->getMessage());
+            self::assertStringContainsString('stores it in an unsigned column', $exception->getMessage());
+            self::assertStringContainsString('PostgreSQL and SQLite', $exception->getMessage());
+        }
+    }
+
+    public function test_a_pre_epoch_occurred_at_is_refused_with_a_message_naming_the_timestamp_range(): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = 0;
+
+        try {
+            NormalizedWebhookEvent::fromArray($item);
+            self::fail('A pre-epoch occurredAt was accepted.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('"occurredAt" is 0, which is at or before', $exception->getMessage());
+            self::assertStringContainsString('timestamp column whose range begins one', $exception->getMessage());
+            self::assertStringContainsString('second later', $exception->getMessage());
+        }
     }
 }
