@@ -248,58 +248,75 @@ final class NormalizedWebhookEventTest extends TestCase
     }
 
     /**
-     * MySQL's `TIMESTAMP` range begins at `1970-01-01 00:00:01` UTC, so an `occurredAt` at or
-     * before the epoch is out of range and strict mode rejects it --
-     * `DatabaseWebhookEventStore::RECLAIMABLE_AT` already pays for that boundary being known.
-     * Rejected here rather than at the insert for the same reason as every case above.
-     *
-     * Only the LOWER bound is enforced. A time past 2038 is a WELL-FORMED value this column
-     * happens not to reach; refusing it would itself be the defect, and the remedy is the column
-     * type every `timestamp()` in this package shares, not a normalization rule on this one field.
+     * **The case the column type exists to serve.** `occurred_at` was a MySQL `TIMESTAMP`, whose
+     * range ends at `2038-01-19`, while normalization accepted any future instant -- so a signed
+     * delivery dated past 2038 was answered `204` and then lost when the worker's INSERT failed.
+     * The column is a `DATETIME` for this test's sake; the assertion is that a well-formed future
+     * event is ACCEPTED, which is the half a normalization-only fix would have got backwards.
      */
-    public function test_it_rejects_an_occurred_at_at_or_before_the_earliest_storable_instant(): void
+    public function test_it_accepts_an_occurred_at_beyond_the_range_a_mysql_timestamp_could_hold(): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = 2177452800000;
+
+        $event = NormalizedWebhookEvent::fromArray($item);
+
+        self::assertSame('2039-01-01', $event->occurredAt->format('Y-m-d'));
+    }
+
+    /**
+     * The epoch itself, and instants before it, are ordinary storable values under `DATETIME` --
+     * they were refused only while the column was a `TIMESTAMP` that began in 1970. Kept as an
+     * explicit case so re-narrowing the column cannot pass silently.
+     */
+    public function test_it_accepts_the_epoch_and_instants_before_it(): void
     {
         $item = self::rawItem();
         $item['occurredAt'] = 0;
 
-        $this->expectException(InvalidArgumentException::class);
+        self::assertSame('1970-01-01 00:00:00', NormalizedWebhookEvent::fromArray($item)->occurredAt->format('Y-m-d H:i:s'));
 
-        NormalizedWebhookEvent::fromArray($item);
-    }
+        $item['occurredAt'] = -86400000;
 
-    public function test_it_rejects_a_negative_occurred_at(): void
-    {
-        $item = self::rawItem();
-        $item['occurredAt'] = -1000;
-
-        $this->expectException(InvalidArgumentException::class);
-
-        NormalizedWebhookEvent::fromArray($item);
+        self::assertSame('1969-12-31', NormalizedWebhookEvent::fromArray($item)->occurredAt->format('Y-m-d'));
     }
 
     /**
-     * 999ms rounds down to `1970-01-01 00:00:00`, the instant MySQL's `TIMESTAMP` excludes, so the
-     * boundary is 1000 and not 999. Asserted from BELOW as well as above because a bound checked
-     * only from one side is satisfied by an off-by-one on the other.
+     * Both ends are bounded at what `DATETIME` genuinely holds -- `1000-01-01 00:00:00` through
+     * `9999-12-31 23:59:59`. Nothing a real HubSpot event could carry lies outside that, so this
+     * refuses no well-formed value while still keeping an unstorable one from being acknowledged.
+     * Asserted at each boundary AND one millisecond past it, so an off-by-one fails a test.
      */
-    public function test_it_rejects_an_occurred_at_one_millisecond_below_the_earliest_storable_instant(): void
+    public function test_it_accepts_an_occurred_at_at_each_end_of_the_storable_range(): void
     {
         $item = self::rawItem();
-        $item['occurredAt'] = 999;
+        $item['occurredAt'] = -30610224000000;
+
+        self::assertSame('1000-01-01 00:00:00', NormalizedWebhookEvent::fromArray($item)->occurredAt->format('Y-m-d H:i:s'));
+
+        $item['occurredAt'] = 253402300799999;
+
+        self::assertSame('9999-12-31 23:59:59', NormalizedWebhookEvent::fromArray($item)->occurredAt->format('Y-m-d H:i:s'));
+    }
+
+    public function test_it_rejects_an_occurred_at_one_millisecond_below_the_storable_range(): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = -30610224000001;
 
         $this->expectException(InvalidArgumentException::class);
 
         NormalizedWebhookEvent::fromArray($item);
     }
 
-    public function test_it_accepts_an_occurred_at_at_exactly_the_earliest_storable_instant(): void
+    public function test_it_rejects_an_occurred_at_one_millisecond_above_the_storable_range(): void
     {
         $item = self::rawItem();
-        $item['occurredAt'] = 1000;
+        $item['occurredAt'] = 253402300800000;
 
-        $event = NormalizedWebhookEvent::fromArray($item);
+        $this->expectException(InvalidArgumentException::class);
 
-        self::assertSame('1970-01-01 00:00:01', $event->occurredAt->format('Y-m-d H:i:s'));
+        NormalizedWebhookEvent::fromArray($item);
     }
 
     /**
@@ -410,18 +427,18 @@ final class NormalizedWebhookEventTest extends TestCase
         }
     }
 
-    public function test_a_pre_epoch_occurred_at_is_refused_with_a_message_naming_the_timestamp_range(): void
+    public function test_an_unstorable_occurred_at_is_refused_with_a_message_naming_the_range(): void
     {
         $item = self::rawItem();
-        $item['occurredAt'] = 0;
+        $item['occurredAt'] = 253402300800000;
 
         try {
             NormalizedWebhookEvent::fromArray($item);
-            self::fail('A pre-epoch occurredAt was accepted.');
+            self::fail('An out-of-range occurredAt was accepted.');
         } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('"occurredAt" is 0, which is at or before', $exception->getMessage());
-            self::assertStringContainsString('timestamp column whose range begins one', $exception->getMessage());
-            self::assertStringContainsString('second later', $exception->getMessage());
+            self::assertStringContainsString('"occurredAt" is 253402300800000', $exception->getMessage());
+            self::assertStringContainsString('outside the range hubspot_webhook_events', $exception->getMessage());
+            self::assertStringContainsString('1000-01-01 through 9999-12-31', $exception->getMessage());
         }
     }
 }
