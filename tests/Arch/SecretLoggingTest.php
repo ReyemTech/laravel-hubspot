@@ -30,6 +30,12 @@ function reyemtech_hubspot_secret_config_keys(): array
     return [
         'hubspot.token',
         'hubspot.webhooks.secret',
+        // Added by plan 05-04 (D-16, HOOK-02): a third credential class, distinct from both keys
+        // above, that authenticates hubspot:webhooks:sync's management calls. R10 reconciliation
+        // fails without this entry the moment config/hubspot.php gains the key -- its name
+        // contains "api_key", which reyemtech_hubspot_secret_looking_config_key_pattern() matches
+        // on sight.
+        'hubspot.webhooks.developer_api_key',
     ];
 }
 

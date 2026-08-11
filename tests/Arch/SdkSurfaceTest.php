@@ -68,6 +68,12 @@ function reyemtech_hubspot_sdk_surface_boundary_shape_files(string $gatewayRoot)
         // `AssociationSpec` field, say -- implementing the resolver would force a layer violation.
         $gatewayRoot.'/AssociationType.php',
         $gatewayRoot.'/AssociationCategory.php',
+        // Crosses the boundary OUTBOUND into `Webhooks`, which may not name a `HubSpot\*` class
+        // (R4): `Webhooks\SubscriptionDeclarations` builds a list of these from config and
+        // `Webhooks\Console\SyncWebhookSubscriptionsCommand` reads them back from
+        // `WebhookSubscriptionGatewayContract` (05-04). If it grew an SDK reference -- a
+        // `Model\SubscriptionResponse` field, say -- both would violate R4 merely by consuming it.
+        $gatewayRoot.'/WebhookSubscription.php',
     ];
 }
 

@@ -65,9 +65,14 @@ Three consequences that catch agents out:
 - **Commit header and body lines cap at 100 CHARACTERS.** commitlint runs in CI only, so a violation
   is found after push — and rewriting history to fix it throws away the review attached to those
   commits. Count characters, not bytes; `awk` counts bytes and lets em dashes through.
-- Before finalising: `vendor/bin/pint`, `vendor/bin/phpstan analyse`, `vendor/bin/phpcs`,
-  `vendor/bin/pest --coverage --min=100`, and the architecture tests. All green, no exceptions, no
-  disabled gates.
+- Before finalising: `vendor/bin/pint`, `vendor/bin/phpstan analyse --memory-limit=512M`,
+  `vendor/bin/phpcs`, `vendor/bin/pest --coverage --min=100`, and the architecture tests. All green,
+  no exceptions, no disabled gates.
+- **PHPStan needs `--memory-limit=512M`; it has no config-file key for it.** Without the flag it dies
+  with `reached configured PHP memory limit: 128M` on any machine using PHP's default — an
+  infrastructure failure that reads like an analysis failure. CI only escapes it because
+  `shivammathur/setup-php` defaults to unlimited. `phpunit.xml.dist` carries the same ceiling for the
+  suite via `<ini name="memory_limit">`, which is why `vendor/bin/pest` needs no flag.
 - **Run mutation once per plan**, scoped, not per commit:
   `vendor/bin/pest --mutate --parallel --min=80 --class="$(bash scripts/ci/mutation-scope.sh origin/main)"`.
   Unscoped it takes ~15 minutes and effectively never fails. A scoped MSI is not comparable to a

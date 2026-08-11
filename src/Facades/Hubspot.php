@@ -13,6 +13,7 @@ use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
 use ReyemTech\Hubspot\Testing\HubspotFake;
+use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
 
 /**
  * The fixed FQCN `tests/Arch/LayerBoundariesTest.php`'s R6 already allowlists (see
@@ -63,6 +64,21 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * It is in-process only. `HUBSPOT_DISABLED` is the other half of that pair, and reaches a queue
  * worker where this cannot -- see {@see SyncGate}.
  *
+ * `assertWebhookHandled()` reads an INBOUND receipt log, never the outbound Guzzle history every
+ * other assertion above reads -- an outbound API write never satisfies it, and it never satisfies
+ * `assertRequestCount()`. It passes once `Webhooks\ProcessWebhookEventJob::handle()` completes an
+ * item whose `subscriptionType` matches `$eventKey`, and `$expected` -- when given -- must be carried
+ * by that ONE receipt, mirroring `assertSynced()`'s one-record rule:
+ *
+ * ```php
+ * Hubspot::assertWebhookHandled('contact.propertyChange', ['propertyName' => 'email']);
+ * Hubspot::assertWebhookHandled('deal.creation', $eventId);   // bare id = ['eventId' => ...]
+ * ```
+ *
+ * `recordWebhookHandled()` is `Webhooks\Contracts\WebhookReceiptRecorder`'s one method, advertised
+ * here for the same reason `syncingSuppressed()` is: it is public and callable through this facade,
+ * even though `ProcessWebhookEventJob` is its only intended caller.
+ *
  * `flushState()` is an INTEGRATION HOOK rather than everyday API: it returns the manager to the
  * state a freshly booted process would have. The package already calls it at every Octane request,
  * task and tick boundary, so an ordinary application never needs to. It is advertised because it is
@@ -79,6 +95,8 @@ use ReyemTech\Hubspot\Testing\HubspotFake;
  * @method static void assertSynced(string|\Illuminate\Database\Eloquent\Model $objectType, array<string, mixed> $properties = [])
  * @method static void assertNothingSynced()
  * @method static void assertAssociated(\ReyemTech\Hubspot\Gateway\AssociationPair $pair, ?string $label = null)
+ * @method static void recordWebhookHandled(NormalizedWebhookEvent $event)
+ * @method static void assertWebhookHandled(string $eventKey, array<string, mixed>|string $expected = [])
  * @method static void flushState()
  * @method static bool syncingSuppressed()
  * @method static bool isFaked()

@@ -88,6 +88,60 @@ final class HubspotClientFactory
         return new self(Factory::createWithAccessToken($accessToken, $client));
     }
 
+    /**
+     * Builds the management transport `Webhooks\Console\SyncWebhookSubscriptionsCommand` needs
+     * (D-16, HOOK-02) — authenticated with a Developer API key, a THIRD credential class distinct
+     * from `fromConfig()`'s access token and from `hubspot.webhooks.secret` (the inbound signature
+     * secret). Takes both credentials as plain nullable strings, exactly as `fromConfig()` takes
+     * its token, so nothing outside `Gateway` ever names an SDK type.
+     *
+     * `$appId` is validated for presence here rather than merely passed through: a call that ran
+     * with an app id but no key, or a key but no app id, would still fail — just later, and as an
+     * SDK-level 401/404 that names neither credential. Failing here names both, before any client
+     * is built (T-05-17, threat register). The app id itself is not consumed by this method — it
+     * is a path parameter on every `SubscriptionsApi` call, not part of the SDK's own auth config —
+     * so `Gateway\WebhookSubscriptionGateway` holds it separately, resolved from the same config
+     * keys at the same moment.
+     *
+     * `HubSpot\Factory::createWithDeveloperApiKey()` — confirmed against the pinned 14.1.0 — is the
+     * only entry point that authenticates a client with a Developer API key (a `hapikey` query
+     * parameter, the scheme `SubscriptionsApi`'s generated request builders read via
+     * `Configuration::getApiKeyWithPrefix('hapikey')`). Never a Service Key, which
+     * `hubspot.token`/`fromConfig()` carries and which this method never reads.
+     *
+     * Deliberately does NOT attach the retry middleware or an explicit request/connect timeout the
+     * way `fromConfig()` does: those exist to protect a queued worker's transport, and
+     * `hubspot:webhooks:sync` is a hand-run admin command, never queued work.
+     */
+    public static function forWebhookManagement(?string $appId, ?string $developerApiKey): self
+    {
+        if ($appId === null || $appId === '' || $developerApiKey === null || $developerApiKey === '') {
+            throw ConfigurationException::missingWebhookManagementCredentials();
+        }
+
+        // A canonical positive integer, checked as a STRING before anything casts it. The caller
+        // ends up doing `(int) $appId` to reach the subscriptions endpoint, and PHP's cast is
+        // lossy in exactly the way that matters here: `(int) "123abc"` is 123, a different app
+        // that really exists. Since `hubspot:webhooks:sync` reconciles APP-LEVEL subscriptions,
+        // that silently rewrites subscriptions for every account the wrong app is installed on --
+        // so a typo has to fail loudly rather than land somewhere plausible (T-05-17).
+        //
+        // `ctype_digit` alone would admit "0" and "0123"; neither is an app id HubSpot issues, and
+        // both indicate a mis-set variable rather than a value worth guessing at.
+        //
+        // The round-trip is the rule the other two clauses are only spellings of: the string must
+        // survive `(int)` unchanged. Digits alone are not enough, because the cast SATURATES past
+        // PHP_INT_MAX rather than wrapping or failing -- "9223372036854775808" is all digits with
+        // no leading zero, and reaches the subscriptions endpoint as 9223372036854775807. That is
+        // the identical "lands somewhere plausible" failure as "123abc" reaching app 123, arrived
+        // at by arithmetic instead of by parsing, and it deserves the same loud refusal (T-05-17).
+        if (! ctype_digit($appId) || $appId[0] === '0' || (string) (int) $appId !== $appId) {
+            throw ConfigurationException::malformedWebhookAppId($appId);
+        }
+
+        return new self(Factory::createWithDeveloperApiKey($developerApiKey));
+    }
+
     public function discovery(): Discovery
     {
         return $this->discovery;

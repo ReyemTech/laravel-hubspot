@@ -1,0 +1,127 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Webhooks;
+
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
+use ReyemTech\Hubspot\Gateway\WebhookSubscription;
+
+/**
+ * **The explicit desired-state list `hubspot:webhooks:sync` reconciles against a portal (D-10).**
+ *
+ * Reads `hubspot.webhooks.subscriptions` only -- `hubspot.webhooks.handlers` (the D-07 configured
+ * event-handler map) is a completely different key with a different shape and is never consulted
+ * here. Inferring subscriptions from handlers would mean receipt routing and portal subscriptions
+ * share a lifecycle they do not: an operator can want to receive `deal.creation` without ever
+ * wiring a handler for it, and want a handler wired without this package ever calling HubSpot.
+ *
+ * ## Validated when read, never at boot (D-12)
+ *
+ * The configured value is read through the injected `ConfigRepository` at CALL time, not captured
+ * in the constructor -- so this class can be a singleton with no invalidation problem, and so a
+ * malformed entry an operator has not yet reconciled never blocks the application from booting.
+ * `Webhooks\Console\SyncWebhookSubscriptionsCommand::handle()` is the one caller, and the failure
+ * therefore lands exactly when the command runs.
+ *
+ * ## Order is preserved, deliberately
+ *
+ * `all()` returns declarations in the exact order config lists them. This fixes the sync command's
+ * own report order, which is what makes two runs against unchanged config produce diffable output.
+ */
+final class SubscriptionDeclarations
+{
+    public function __construct(private readonly ConfigRepository $config) {}
+
+    /**
+     * @return list<WebhookSubscription>
+     */
+    public function all(): array
+    {
+        /** @var mixed $raw */
+        $raw = $this->config->get('hubspot.webhooks.subscriptions', []);
+
+        // A scalar here is a malformed setting, not an empty one. Coercing it to `[]` reported
+        // "hubspot.webhooks.subscriptions is empty" -- which names a mistake the operator did not
+        // make and sends them to add declarations that are already written.
+        //
+        // `null` stays lenient on purpose: Config::get() returns a present-null key as null rather
+        // than falling back to the default above, so an operator who commented the value out must
+        // reach the same "absent" path as one who never added the key at all.
+        if ($raw !== null && ! is_array($raw)) {
+            throw ConfigurationException::invalidWebhookSubscription($raw);
+        }
+
+        $declarations = [];
+        $seenIdentities = [];
+
+        foreach ($raw ?? [] as $entry) {
+            $declaration = $this->toSubscription($entry);
+            $identity = $declaration->identity();
+
+            if (isset($seenIdentities[$identity])) {
+                throw ConfigurationException::duplicateWebhookSubscription(
+                    $declaration->eventType,
+                    $declaration->propertyName,
+                );
+            }
+
+            $seenIdentities[$identity] = true;
+            $declarations[] = $declaration;
+        }
+
+        return $declarations;
+    }
+
+    private function toSubscription(mixed $entry): WebhookSubscription
+    {
+        if (! is_array($entry)) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
+        /** @var mixed $eventType */
+        $eventType = $entry['event_type'] ?? null;
+
+        if (! is_string($eventType) || trim($eventType) === '') {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
+        /** @var mixed $propertyName */
+        $propertyName = $entry['property_name'] ?? null;
+
+        if ($propertyName !== null && (! is_string($propertyName) || trim($propertyName) === '')) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
+        // A property filter only means anything on a *.propertyChange type, which is exactly what
+        // invalidWebhookSubscription()'s message has always said -- it was the one clause of that
+        // message nothing enforced. Unchecked, `deal.creation` carrying a `property_name` becomes
+        // desired state: sent to HubSpot by the legacy_public reconciliation, or written into a
+        // project component that then deploys. Rejected HERE so the failure is local, directed and
+        // free, rather than a remote subscription nobody asked for.
+        if ($propertyName !== null && ! str_ends_with($eventType, '.propertyChange')) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
+        // Surrounding whitespace is refused, never trimmed away. These two values are identifiers:
+        // they go to HubSpot verbatim on the legacy-public path, are written into a deployable
+        // artefact on the project path, and -- because `WebhookSubscription::identity()` keys on
+        // them -- a padded copy of a declared type reads as a DIFFERENT subscription rather than
+        // the duplicate it plainly is. Trimming would make the package act on a value the config
+        // file does not state; the same reason malformedWebhookAppId() coerces nothing.
+        if ($eventType !== trim($eventType)) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
+        if ($propertyName !== null && $propertyName !== trim($propertyName)) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
+        return new WebhookSubscription(
+            eventType: $eventType,
+            propertyName: $propertyName,
+            active: true,
+        );
+    }
+}

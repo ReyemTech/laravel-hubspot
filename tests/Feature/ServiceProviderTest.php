@@ -69,7 +69,29 @@ final class ServiceProviderTest extends TestCase
         self::assertFalse(config('hubspot.disabled'));
         self::assertTrue(config('hubspot.webhooks.enforce'));
         self::assertNull(config('hubspot.webhooks.secret'));
-        self::assertSame(300, config('hubspot.webhooks.tolerance'));
+    }
+
+    /**
+     * **The published config exposes no signature-tolerance knob, deliberately.**
+     *
+     * `hubspot.webhooks.tolerance` shipped through v0.6.0 documented as "the signature timestamp
+     * window, in seconds", and nothing ever read it: verification delegates to
+     * `HubSpot\Utils\Signature::isValid()`, which hardcodes
+     * `Signature::MAX_ALLOWED_TIMESTAMP = 300000` and accepts no tolerance argument at all — only
+     * a `checkTimestamp` on/off flag. Tightening or widening the value changed nothing, which is
+     * the worst shape a security setting can take: it reads as applied. Its default happened to
+     * equal the SDK's own 300 seconds, which is why no test ever caught the difference.
+     *
+     * Asserted as absent rather than merely deleted, so re-adding the key requires deciding to
+     * make it real first. `assertNull()` would not do: it passes for a key that is present and
+     * set to null.
+     */
+    public function test_the_published_config_declares_no_signature_tolerance_key(): void
+    {
+        /** @var array<string, mixed> $webhooks */
+        $webhooks = config('hubspot.webhooks');
+
+        self::assertArrayNotHasKey('tolerance', $webhooks);
     }
 
     /**

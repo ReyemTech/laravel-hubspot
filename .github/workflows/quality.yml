@@ -55,8 +55,11 @@ jobs:
       - name: Install dependencies
         run: bash scripts/ci/composer-retry.sh install --prefer-dist --no-interaction
 
+      # --memory-limit is explicit rather than inherited: setup-php happens to default to
+      # unlimited, which silently masked a 128M crash that every contributor hit locally.
+      # PHPStan has no config-file key for this, so the flag is the only lever.
       - name: Run PHPStan
-        run: vendor/bin/phpstan analyse --no-progress
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
   pint:
     name: pint (style, laravel preset)

@@ -215,6 +215,11 @@ test('a layer that throws the package exception hierarchy passes its own boundar
         'SeamFixtures/Signals/SignalsThrowingAnAssociationTypeException.php',
         'Signals',
     ],
+    'R4, Webhooks typed on a framework request' => [
+        'R4',
+        'SeamFixtures/Webhooks/WebhooksTypedOnAFrameworkRequest.php',
+        'Webhooks',
+    ],
 ]);
 
 test('the scratch overlay the proof above relies on is the tree the rule actually reads', function (): void {
@@ -233,5 +238,27 @@ test('the scratch overlay the proof above relies on is the tree the rule actuall
 
     expect(str_contains($result['output'], 'ReyemTech\Hubspot\Sync'))->toBeTrue(
         "R2 went red for a reason other than the fixture's forbidden dependency.\n\n".$result['output'],
+    );
+});
+
+test('R4 still rejects an SDK import from Webhooks after admitting the framework', function (): void {
+    // R4's widening to admit `Illuminate` (05-01, HOOK-01) must not also admit `HubSpot\*` —
+    // `Gateway` remains the only layer R1 permits to name the SDK. Played on its own, never
+    // merged with R4/WebhooksDependsOnSync.php's scratch tree: verify-arch-rules-fire.sh evaluates
+    // one run per rule, so a second violation declared there would make R4's firing verdict
+    // ambiguous — red for either reason — which is exactly how a later re-admission of the SDK
+    // could pass unnoticed.
+    $result = reyemtech_hubspot_arch_rule_over_fixtures('R4', [
+        'SeamFixtures/Webhooks/WebhooksUsingTheSdkDirectly.php' => 'Webhooks',
+    ]);
+
+    expect($result['exitCode'] === 0)->toBeFalse(
+        'R4 stayed green with an SDK import present in Webhooks, so widening R4 to admit the '
+        .'framework also admitted the SDK — the one thing R4 exists to forbid from this '
+        ."layer.\n\n".$result['output'],
+    );
+
+    expect(str_contains($result['output'], 'HubSpot\\'))->toBeTrue(
+        "R4 went red for a reason other than the SDK import.\n\n".$result['output'],
     );
 });
