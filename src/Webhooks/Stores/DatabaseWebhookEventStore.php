@@ -38,6 +38,17 @@ use RuntimeException;
  * reclaim the same stale row can both attempt this UPDATE; only one affects a row, and that one alone
  * returns {@see WebhookEventClaim::Acquired}.
  *
+ * **The reclaim predicate is a timestamp, so what it buys is exclusion for the length of the lease
+ * and not a lock.** It cannot distinguish a worker that has died from one that is merely slower
+ * than `hubspot.webhooks.claim_lease` -- the two look identical from here -- so a handler that
+ * outruns the lease is reclaimed out from under, and the replacement runs alongside it. There is
+ * no fencing token: `complete()` marks the row handled for whoever calls it, including a worker
+ * whose claim generation has already been superseded.
+ *
+ * Recorded rather than implied, because the guarantee is what an operator sizes `claim_lease`
+ * against, and because `config/hubspot.php`'s requirement that handlers be idempotent is doing
+ * real work here rather than offering advice.
+ *
  * ## A missing table names the fix
  *
  * `HUBSPOT_WEBHOOKS=true` without `php artisan migrate` is the most likely first encounter with this

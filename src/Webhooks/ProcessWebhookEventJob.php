@@ -36,6 +36,19 @@ use Throwable;
  * is what makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a
  * second, concurrent run of the same handlers.
  *
+ * **That exclusion holds for the length of the lease, and no longer — stated plainly because an
+ * earlier version of this paragraph implied otherwise.** A lease is a timeout, not a lock: a
+ * handler still running when `hubspot.webhooks.claim_lease` elapses no longer holds anything, and
+ * a waiting duplicate will reclaim the event and run every handler for it alongside the first.
+ * Nothing here detects that, because a worker that is merely SLOW is indistinguishable from one
+ * that has died, which is the same ambiguity the lease exists to resolve in the other direction.
+ *
+ * This is why `config/hubspot.php` requires handlers to be idempotent, and it is a real
+ * requirement rather than defensive advice: an ordinary retry already re-runs handlers that
+ * succeeded, and a handler that outlives the lease can be running twice at once. Set `claim_lease`
+ * above the slowest handler's worst case. Fencing each claim generation so a stale worker cannot
+ * complete is tracked separately; it is a change to the store's contract, not to this job.
+ *
  * A failure between the claim and `complete()` releases the claim through
  * {@see WebhookEventStore::abandon()} and rethrows untouched, so Laravel fails and retries the job
  * exactly as it always did. That release is not housekeeping: without it the retry arrives inside the

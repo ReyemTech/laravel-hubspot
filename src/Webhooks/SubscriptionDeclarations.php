@@ -104,6 +104,20 @@ final class SubscriptionDeclarations
             throw ConfigurationException::invalidWebhookSubscription($entry);
         }
 
+        // Surrounding whitespace is refused, never trimmed away. These two values are identifiers:
+        // they go to HubSpot verbatim on the legacy-public path, are written into a deployable
+        // artefact on the project path, and -- because `WebhookSubscription::identity()` keys on
+        // them -- a padded copy of a declared type reads as a DIFFERENT subscription rather than
+        // the duplicate it plainly is. Trimming would make the package act on a value the config
+        // file does not state; the same reason malformedWebhookAppId() coerces nothing.
+        if ($eventType !== trim($eventType)) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
+        if ($propertyName !== null && $propertyName !== trim($propertyName)) {
+            throw ConfigurationException::invalidWebhookSubscription($entry);
+        }
+
         return new WebhookSubscription(
             eventType: $eventType,
             propertyName: $propertyName,

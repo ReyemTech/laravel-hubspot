@@ -133,7 +133,41 @@ final class SyncWebhookSubscriptionsCommand extends Command
             throw ConfigurationException::missingWebhookTargetUrl();
         }
 
+        // Present but not usable is a DIFFERENT error from absent, because the fix is different:
+        // one is "set the variable", the other is "what you set is not an address HubSpot can
+        // deliver to". Both non-API artefacts embed this value verbatim, so `webhook` or
+        // `/hubspot/webhook` yields a project component that deploys and then receives nothing.
+        //
+        // Padding is refused rather than trimmed away, matching malformedWebhookAppId(): a value
+        // the package silently rewrites is no longer the value the config file states.
+        if ($raw !== trim($raw) || ! self::isAbsoluteHttpUrl($raw)) {
+            throw ConfigurationException::invalidWebhookTargetUrl($raw);
+        }
+
         return $raw;
+    }
+
+    /**
+     * Scheme and host both present, and the scheme one HubSpot actually delivers over.
+     *
+     * `parse_url()` rather than `filter_var(..., FILTER_VALIDATE_URL)`: the filter accepts
+     * `javascript:alert(1)` and other non-HTTP schemes as valid URLs, which is precisely the shape
+     * being rejected here. It answers `false` outright on a badly malformed string, and `null` for
+     * a component a well-formed string simply lacks -- `https://` parses with no host -- so both
+     * are checked rather than assumed away.
+     */
+    private static function isAbsoluteHttpUrl(string $url): bool
+    {
+        $parts = parse_url($url);
+
+        if (! is_array($parts)) {
+            return false;
+        }
+
+        $scheme = $parts['scheme'] ?? null;
+        $host = $parts['host'] ?? null;
+
+        return in_array($scheme, ['http', 'https'], true) && is_string($host) && $host !== '';
     }
 
     /**

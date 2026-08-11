@@ -247,8 +247,17 @@ final class ServiceProvider extends BaseServiceProvider
         // fresh on every resolution, not captured once at boot, so a test's config()->set() between
         // requests is observed the same way HubspotFake's transport swap is.
         $this->app->bind(HandlerMap::class, function (Application $app): HandlerMap {
-            /** @var array<array-key, mixed> $handlers */
+            /** @var mixed $handlers */
             $handlers = $app->make('config')->get('hubspot.webhooks.handlers', []);
+
+            // Checked, not merely annotated. The `@var` above narrowed nothing at runtime, so a
+            // scalar -- `'handlers' => SyncContact::class` is the natural mistake -- reached
+            // `new HandlerMap()` as a raw TypeError. Receipt has already answered 204 by then, so
+            // every event on that deployment failed in the worker with a PHP type error instead of
+            // a message naming the key.
+            if (! is_array($handlers)) {
+                throw ConfigurationException::invalidWebhookHandlerMap($handlers);
+            }
 
             return new HandlerMap($handlers);
         });

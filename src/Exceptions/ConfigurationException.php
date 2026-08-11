@@ -317,6 +317,54 @@ final class ConfigurationException extends LogicException implements HubspotExce
     }
 
     /**
+     * `hubspot.webhooks.handlers` is not an array at all — a bare class-string, a scalar, or any
+     * other value where the MAP belongs. Raised by `ServiceProvider`'s `HandlerMap` binding.
+     *
+     * Checked before construction rather than left to the constructor's own type declaration: an
+     * unchecked value reaches `new HandlerMap()` as a raw `TypeError`, and by then receipt has
+     * already answered 204, so every event on that deployment fails in the worker with a PHP type
+     * error instead of a message naming the key. A single class-string is the likely mistake --
+     * `'handlers' => App\Webhooks\SyncContact::class` reads naturally and is wrong, because a map
+     * keys handlers by subscription type.
+     */
+    public static function invalidWebhookHandlerMap(mixed $handlers): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.handlers must be an array keyed by HubSpot subscription type, but is '
+            .'%s. A single handler still needs its key, for example '
+            .'["contact.propertyChange" => App\\Webhooks\\SyncContactEmail::class]. Given: %s.',
+            get_debug_type($handlers),
+            var_export($handlers, true),
+        ));
+    }
+
+    /**
+     * `hubspot.webhooks.target_url` is present and non-blank but is not an absolute `http`/`https`
+     * URL, or carries surrounding whitespace. Raised by
+     * `Webhooks\Console\SyncWebhookSubscriptionsCommand`.
+     *
+     * Distinct from {@see self::missingWebhookTargetUrl()} because the fixes differ: one is "set
+     * the variable", this one is "the value you set is not a URL HubSpot can deliver to". Both
+     * non-API artefacts embed this value verbatim, so `webhook` or `/hubspot/webhook` produces a
+     * project component that deploys and then never receives anything.
+     *
+     * Padding is refused rather than trimmed, on the same grounds as
+     * {@see self::malformedWebhookAppId()}: a value the package silently rewrites is no longer the
+     * value the config file states.
+     */
+    public static function invalidWebhookTargetUrl(string $targetUrl): self
+    {
+        return new self(sprintf(
+            'HUBSPOT_WEBHOOK_TARGET_URL must be the absolute https URL your application mounts '
+            .'Route::hubspotWebhook() at -- scheme and host included, no surrounding whitespace -- '
+            .'for example "https://app.example.com/hubspot/webhook". It is not guessed at or '
+            .'completed: HubSpot delivers to exactly this address, and both the manual setup '
+            .'instructions and the project component embed it verbatim. Given: "%s".',
+            $targetUrl,
+        ));
+    }
+
+    /**
      * `hubspot.webhooks.app_id` is set but is not a canonical positive integer. Raised by
      * `Gateway\HubspotClientFactory::forWebhookManagement()` -- named as a PATH, not as a
      * `{@see}`, because pint's fully_qualified_strict_types rule rewrites a docblock class
