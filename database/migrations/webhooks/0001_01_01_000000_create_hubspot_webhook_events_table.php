@@ -26,7 +26,7 @@ use ReyemTech\Hubspot\Webhooks\WebhookEventClaim;
  * skipped and whether it was ever handled, and there is exactly one migration and one retention
  * policy to keep in step against the one-way-door cost D-02 names.
  *
- * ## `event_id` is bound to a fixed width, and validated before it ever reaches this table
+ * ## Every constraint below is validated before a value ever reaches this table
  *
  * `string('event_id', 191)`: 191 is the historical MySQL-safe VARCHAR width for a UNIQUE index
  * under `utf8mb4` (191 * 4 = 764 bytes, inside the legacy 767-byte index-prefix limit some
@@ -35,6 +35,15 @@ use ReyemTech\Hubspot\Webhooks\WebhookEventClaim;
  * normalization time and REJECTS an over-long id rather than truncating it (T-05-11, threat
  * register): a truncated value could silently alias two distinct HubSpot events onto the same
  * dedupe row, which is exactly the silent-wrong-id failure class this package exists to prevent.
+ *
+ * **`event_id` is not the only one, and the general rule is not about aliasing.** `WebhookController`
+ * answers `204` before any worker attempts the INSERT below, so a value this table cannot hold is
+ * not a failed request -- it is an ACKNOWLEDGED delivery that no longer exists, found in a worker
+ * log after HubSpot has stopped retrying. So `NormalizedWebhookEvent` bounds every field that a
+ * constraint here applies to: `subscription_type` and `object_id` to their widths
+ * (`MAX_SUBSCRIPTION_TYPE_LENGTH`, `MAX_OBJECT_ID_LENGTH`), `portal_id` and `subscription_id` to
+ * the non-negative range their UNSIGNED declaration allows, and `occurred_at` to the earliest
+ * instant a `TIMESTAMP` accepts. Adding a constrained column here means adding its check there.
  *
  * ## The claim lease, not a bare status column
  *

@@ -42,6 +42,37 @@ final readonly class NormalizedWebhookEvent
      */
     public const int MAX_EVENT_ID_LENGTH = 191;
 
+    /**
+     * The width the same migration bounds `subscription_type` to, and {@see self::MAX_OBJECT_ID_LENGTH}
+     * the width it bounds `object_id` to (Laravel's default `string()` length).
+     *
+     * **Every value this class hands to a constrained column is checked here, not only `eventId`.**
+     * `eventId` was for a while the only one, on the narrower argument above about aliasing. The
+     * general rule is a separate and simpler one: with an asynchronous queue, `WebhookController`
+     * answers `204` before any worker attempts the INSERT, so a value the column cannot hold is
+     * not a failed request -- it is an ACKNOWLEDGED delivery that no longer exists, discovered
+     * only in a worker log after HubSpot has stopped retrying. Validating at normalization turns
+     * every one of them back into the documented `400` (D-13) the sender can act on.
+     */
+    public const int MAX_SUBSCRIPTION_TYPE_LENGTH = 191;
+
+    public const int MAX_OBJECT_ID_LENGTH = 255;
+
+    /**
+     * The earliest instant `occurred_at` can hold, in the epoch milliseconds HubSpot sends.
+     *
+     * MySQL's `TIMESTAMP` range begins at `1970-01-01 00:00:01` UTC, so anything at or before the
+     * epoch is out of range and strict mode rejects it --
+     * `Webhooks\Stores\DatabaseWebhookEventStore::RECLAIMABLE_AT` already records that boundary,
+     * having been bought once on the `abandon()` path.
+     *
+     * **Only the lower bound is a normalization rule.** A time past `TIMESTAMP`'s 2038 ceiling is
+     * a WELL-FORMED value this column happens not to reach; refusing it here would itself be the
+     * defect, and the remedy is the column type that every `timestamp()` in this package shares,
+     * not a rule on this one field.
+     */
+    private const int MIN_OCCURRED_AT_MILLISECONDS = 1000;
+
     public function __construct(
         public string $eventId,
         public string $subscriptionType,
@@ -81,11 +112,19 @@ final readonly class NormalizedWebhookEvent
     public static function fromArray(array $item): self
     {
         return new self(
-            eventId: self::requireEventId($item),
-            subscriptionType: self::requireString($item, 'subscriptionType'),
-            portalId: self::requireInt($item, 'portalId'),
+            eventId: self::bounded(self::requireIdentifier($item, 'eventId'), 'eventId', self::MAX_EVENT_ID_LENGTH),
+            subscriptionType: self::bounded(
+                self::requireString($item, 'subscriptionType'),
+                'subscriptionType',
+                self::MAX_SUBSCRIPTION_TYPE_LENGTH,
+            ),
+            portalId: self::requireUnsignedInt($item, 'portalId'),
             appId: self::optionalInt($item, 'appId'),
-            objectId: self::requireIdentifier($item, 'objectId'),
+            objectId: self::bounded(
+                self::requireIdentifier($item, 'objectId'),
+                'objectId',
+                self::MAX_OBJECT_ID_LENGTH,
+            ),
             occurredAt: self::requireOccurredAt($item),
             attemptNumber: self::requireInt($item, 'attemptNumber'),
             changeSource: self::optionalString($item, 'changeSource'),
@@ -95,7 +134,7 @@ final readonly class NormalizedWebhookEvent
             associationType: self::optionalString($item, 'associationType'),
             fromObjectId: self::optionalIdentifier($item, 'fromObjectId'),
             toObjectId: self::optionalIdentifier($item, 'toObjectId'),
-            subscriptionId: self::optionalInt($item, 'subscriptionId'),
+            subscriptionId: self::optionalUnsignedInt($item, 'subscriptionId'),
         );
     }
 
@@ -161,28 +200,73 @@ final readonly class NormalizedWebhookEvent
     }
 
     /**
-     * `eventId` specifically -- see {@see self::MAX_EVENT_ID_LENGTH}'s own docblock for why this is
-     * the one identifier this class bounds the length of. `objectId` and the other opaque
-     * identifiers below are not columns this package indexes on a fixed width, so they carry no
-     * equivalent restriction.
+     * Refuses a value wider than the `hubspot_webhook_events` column that stores it.
      *
-     * @param  array<string, mixed>  $item
+     * Measured in BYTES (`strlen`, not `mb_strlen`) because the constraint being honoured is the
+     * byte-width MySQL applies to a `VARCHAR` index prefix, not a count of user-perceived
+     * characters -- an over-long multibyte value must be refused on the same terms the column
+     * refuses it.
+     *
+     * Rejecting beats truncating for every field, not just `eventId`: a truncated value is written
+     * successfully and wrong, which is the failure mode this package exists to prevent.
      */
-    private static function requireEventId(array $item): string
+    private static function bounded(string $value, string $key, int $max): string
     {
-        $eventId = self::requireIdentifier($item, 'eventId');
-
-        if (strlen($eventId) > self::MAX_EVENT_ID_LENGTH) {
+        if (strlen($value) > $max) {
             throw new InvalidArgumentException(sprintf(
-                'A webhook event\'s "eventId" is %d characters, which exceeds the %d-character '
-                .'column width hubspot_webhook_events indexes it at. Rejecting it here rather than '
-                .'truncating it keeps two distinct events from silently aliasing onto one dedupe row.',
-                strlen($eventId),
-                self::MAX_EVENT_ID_LENGTH,
+                'A webhook event\'s "%s" is %d bytes, which exceeds the %d-byte column width '
+                .'hubspot_webhook_events stores it at. Rejecting it here rather than truncating it '
+                .'keeps a value that cannot be stored from being acknowledged as if it had been.',
+                $key,
+                strlen($value),
+                $max,
             ));
         }
 
-        return $eventId;
+        return $value;
+    }
+
+    /**
+     * `portal_id` and `subscription_id` are UNSIGNED columns.
+     *
+     * A negative value is rejected by MySQL in strict mode and accepted by PostgreSQL and SQLite,
+     * which have no unsigned integer and take the column as a signed `bigint`. So leaving this
+     * unchecked would not merely risk one lost delivery -- it would let the SAME correctly signed
+     * payload behave differently on three drivers this package supports.
+     *
+     * @param  array<string, mixed>  $item
+     */
+    private static function requireUnsignedInt(array $item, string $key): int
+    {
+        return self::unsigned(self::requireInt($item, $key), $key);
+    }
+
+    /**
+     * The optional counterpart. An ABSENT value stays a valid `null`; only a value that is present
+     * and negative is refused, so bounding the field does not make it required.
+     *
+     * @param  array<string, mixed>  $item
+     */
+    private static function optionalUnsignedInt(array $item, string $key): ?int
+    {
+        $value = self::optionalInt($item, $key);
+
+        return $value === null ? null : self::unsigned($value, $key);
+    }
+
+    private static function unsigned(int $value, string $key): int
+    {
+        if ($value < 0) {
+            throw new InvalidArgumentException(sprintf(
+                'A webhook event\'s "%s" is %d, and hubspot_webhook_events stores it in an '
+                .'unsigned column. A negative value is refused by MySQL and silently accepted by '
+                .'PostgreSQL and SQLite, so it is refused here on every driver alike.',
+                $key,
+                $value,
+            ));
+        }
+
+        return $value;
     }
 
     /**
@@ -260,6 +344,15 @@ final readonly class NormalizedWebhookEvent
 
         if (! is_int($value)) {
             throw new InvalidArgumentException('A webhook event is missing a valid "occurredAt".');
+        }
+
+        if ($value < self::MIN_OCCURRED_AT_MILLISECONDS) {
+            throw new InvalidArgumentException(sprintf(
+                'A webhook event\'s "occurredAt" is %d, which is at or before the Unix epoch. '
+                .'hubspot_webhook_events stores it in a timestamp column whose range begins one '
+                .'second later, so it is refused here rather than acknowledged and then lost.',
+                $value,
+            ));
         }
 
         $seconds = intdiv($value, 1000);
