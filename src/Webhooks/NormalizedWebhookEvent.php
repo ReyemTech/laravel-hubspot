@@ -165,9 +165,17 @@ final readonly class NormalizedWebhookEvent
      * already forced `event_id` to 191 characters. SHA-256 for collision resistance, not secrecy --
      * `DatabaseAssociationTypeStore::lookupHash()` records the same reasoning.
      *
-     * `\0` separates the parts because it cannot occur in any of them, so no two different field
-     * combinations can concatenate into the same string -- `a|b` and `a` + `|b` would otherwise
-     * hash alike. `occurredAt` is rendered with millisecond precision, the precision HubSpot sends.
+     * `\0` separates the parts, and no two different field combinations can concatenate into the
+     * same string -- `a|b` and `a` + `|b` would otherwise hash alike.
+     *
+     * **That holds because {@see self::bounded()} REFUSES the byte, not because JSON cannot carry
+     * it.** An earlier version of this docblock asserted it could not occur in any of these
+     * fields; JSON permits ` ` inside a string and `json_decode` returns a NUL byte, so the
+     * separator was ambiguous for exactly as long as the claim went unenforced -- `subscriptionType`
+     * `a\0b` with `eventId` `c` hashed identically to `a` with `b\0c`. An invariant a separator
+     * depends on has to be checked somewhere, and the check is what the claim rests on.
+     *
+     * `occurredAt` is rendered with millisecond precision, the precision HubSpot sends.
      */
     public function deliveryIdentity(): string
     {
@@ -212,6 +220,25 @@ final readonly class NormalizedWebhookEvent
      */
     private static function bounded(string $value, string $key, int $max): string
     {
+        // Refused for TWO independent reasons, either of which alone would justify it.
+        //
+        // `deliveryIdentity()` joins these same fields with `\0` and relies on the byte not
+        // occurring inside one: `subscriptionType` `a\0b` with `eventId` `c` concatenates to the
+        // identical sequence as `a` with `b\0c`, so two distinct signed deliveries would hash
+        // alike and the second would be discarded as a redelivery. That separator's claim is TRUE
+        // because of this check, not independently of it.
+        //
+        // And PostgreSQL refuses a NUL byte in a `text`/`varchar` value outright, so an accepted
+        // one is the same acknowledged-then-lost failure every bound in this class exists to stop.
+        if (str_contains($value, "\0")) {
+            throw new InvalidArgumentException(sprintf(
+                'A webhook event\'s "%s" contains a NUL byte. It is refused because the delivery '
+                .'identity joins these fields on that byte, so allowing it would let two distinct '
+                .'deliveries hash alike and silently drop the second as a redelivery.',
+                $key,
+            ));
+        }
+
         if (strlen($value) > $max) {
             throw new InvalidArgumentException(sprintf(
                 'A webhook event\'s "%s" is %d bytes, which exceeds the %d-byte column width '
