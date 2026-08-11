@@ -442,13 +442,31 @@ return [
     | `app_model` fails the command rather than guessing:
     |
     | - app_model: exactly 'legacy_public', 'legacy_private' or 'project'.
-    |   Only 'legacy_public' runs the API reconciliation this release ships;
-    |   the other two fail with a directed message until a later plan adds
-    |   them. Receipt (verifying and handling an inbound webhook) works for
-    |   EVERY app model regardless of this key — only the SYNC command reads
-    |   it.
+    |   All three are implemented, and what the command DOES differs per
+    |   model because what HubSpot offers differs per model:
+    |
+    |     legacy_public   reconciles through HubSpot's subscriptions API —
+    |                     the only branch that makes a request at all.
+    |                     Needs app_id and developer_api_key below.
+    |     legacy_private  prints validated manual setup instructions.
+    |                     HubSpot exposes no subscription-management API for
+    |                     this app model, so there is nothing to call.
+    |     project         prints an exportable webhook component to place at
+    |                     src/app/webhooks/<name>-hsmeta.json in your HubSpot
+    |                     project, or writes it with --output. A project app
+    |                     declares subscriptions in an artefact deployed WITH
+    |                     the project rather than through a runtime API.
+    |
+    |   The latter two never contact HubSpot and never need the two
+    |   management credentials below. Receipt (verifying and handling an
+    |   inbound webhook) works for EVERY app model regardless of this key —
+    |   only the SYNC command reads it.
     | - app_id: the numeric HubSpot app id, from the app's "Auth" tab in
-    |   your developer account. Only used for reconciliation.
+    |   your developer account. Only used for reconciliation, so only the
+    |   legacy_public branch reads it. Digits only, no leading zero, and it
+    |   must survive PHP's integer cast unchanged — a value that does not is
+    |   refused rather than coerced, because reconciliation is APP-LEVEL and
+    |   a coerced id rewrites subscriptions for a real, different app.
     | - developer_api_key: a Developer API key from your HubSpot developer
     |   account — a THIRD credential class, distinct from both 'token' above
     |   (the CRM access token) and 'secret' above (the inbound signature
@@ -459,7 +477,12 @@ return [
     |   never WRITES this — HubSpot's app-settings target-URL endpoint is
     |   deliberately not called, since rewriting a live app's delivery
     |   target redirects production traffic for every installed account.
-    |   Recorded here for a later plan's rendered setup instructions.
+    |   It IS embedded verbatim in what the other two branches render: the
+    |   legacy_private setup instructions and the project component both
+    |   carry it, which is why it must be the absolute https URL your
+    |   application mounts Route::hubspotWebhook() at — scheme and host
+    |   included, no surrounding whitespace. Anything else is refused rather
+    |   than completed or trimmed.
     | - subscriptions: the desired-state list itself. Each entry names an
     |   'event_type' and, only for a *.propertyChange type, a
     |   'property_name' to filter on:

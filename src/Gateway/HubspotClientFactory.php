@@ -128,7 +128,14 @@ final class HubspotClientFactory
         //
         // `ctype_digit` alone would admit "0" and "0123"; neither is an app id HubSpot issues, and
         // both indicate a mis-set variable rather than a value worth guessing at.
-        if (! ctype_digit($appId) || $appId[0] === '0') {
+        //
+        // The round-trip is the rule the other two clauses are only spellings of: the string must
+        // survive `(int)` unchanged. Digits alone are not enough, because the cast SATURATES past
+        // PHP_INT_MAX rather than wrapping or failing -- "9223372036854775808" is all digits with
+        // no leading zero, and reaches the subscriptions endpoint as 9223372036854775807. That is
+        // the identical "lands somewhere plausible" failure as "123abc" reaching app 123, arrived
+        // at by arithmetic instead of by parsing, and it deserves the same loud refusal (T-05-17).
+        if (! ctype_digit($appId) || $appId[0] === '0' || (string) (int) $appId !== $appId) {
             throw ConfigurationException::malformedWebhookAppId($appId);
         }
 
