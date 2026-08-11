@@ -93,7 +93,31 @@ final class WebhookConfigurationGuardsTest extends TestCase
             'leading zero' => ['0123'],
             'whitespace padded' => [' 123 '],
             'hex' => ['0x7b'],
+            // All digits, no leading zero -- so the ctype_digit guard admits it -- but larger than
+            // PHP_INT_MAX, where `(int)` SATURATES rather than wrapping or failing. The cast the
+            // subscriptions endpoint depends on would silently address app
+            // 9223372036854775807 instead, which is the same "lands somewhere plausible" failure
+            // as "123abc" reaching app 123, reached by arithmetic instead of by parsing.
+            'one past PHP_INT_MAX' => ['9223372036854775808'],
+            'far past PHP_INT_MAX' => ['99999999999999999999'],
         ];
+    }
+
+    /**
+     * The guard's real rule, stated as its own case rather than left implicit in the list above:
+     * the string must survive the `(int)` cast unchanged. Every malformed shape above fails that,
+     * and so does any future one -- which is what makes this stronger than enumerating spellings.
+     */
+    public function test_the_accepted_app_id_survives_the_integer_cast_unchanged(): void
+    {
+        $appId = '998877';
+
+        self::assertSame($appId, (string) (int) $appId);
+
+        self::assertInstanceOf(
+            HubspotClientFactory::class,
+            HubspotClientFactory::forWebhookManagement($appId, 'a-developer-key'),
+        );
     }
 
     /** A canonical id still constructs — the guard must not reject what HubSpot actually issues. */
