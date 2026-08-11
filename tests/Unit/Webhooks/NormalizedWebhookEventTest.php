@@ -303,6 +303,62 @@ final class NormalizedWebhookEventTest extends TestCase
     }
 
     /**
+     * `deliveryIdentity()` joins its parts with `\0` and its docblock justified that by saying the
+     * byte "cannot occur in any of them" -- but JSON permits ` ` inside a string, `json_decode`
+     * returns it as a NUL byte, and nothing refused it. The separator was therefore ambiguous:
+     * `subscriptionType` `a\0b` with `eventId` `c` concatenates to the identical byte sequence as
+     * `a` with `b\0c`, so two DISTINCT signed deliveries hash alike and the second is discarded as
+     * a redelivery -- the exact silent-collision failure D-01 keys on an identity to avoid.
+     *
+     * It is also the same acknowledged-then-lost class as the widths above: PostgreSQL refuses a
+     * NUL byte in a `text`/`varchar` value outright, so the worker's INSERT fails after the `204`.
+     *
+     * Both halves are closed by refusing the byte, which is what makes the docblock's claim true
+     * rather than assumed.
+     */
+    public function test_it_refuses_a_nul_byte_in_each_field_the_delivery_identity_joins(): void
+    {
+        foreach (['eventId', 'subscriptionType', 'objectId'] as $key) {
+            $item = self::rawItem();
+            $item[$key] = "a\0b";
+
+            try {
+                NormalizedWebhookEvent::fromArray($item);
+                self::fail(sprintf('A NUL byte in "%s" was accepted.', $key));
+            } catch (InvalidArgumentException $exception) {
+                self::assertStringContainsString($key, $exception->getMessage());
+            }
+        }
+    }
+
+    /**
+     * The concrete collision, asserted as the pair it is: were either shape still accepted, these
+     * two distinct deliveries would share one `deliveryIdentity()`.
+     */
+    public function test_the_two_shapes_that_would_share_a_delivery_identity_are_both_refused(): void
+    {
+        $split = self::rawItem();
+        $split['subscriptionType'] = "a\0b";
+        $split['eventId'] = 'c';
+
+        $shifted = self::rawItem();
+        $shifted['subscriptionType'] = 'a';
+        $shifted['eventId'] = "b\0c";
+
+        $refused = 0;
+
+        foreach ([$split, $shifted] as $item) {
+            try {
+                NormalizedWebhookEvent::fromArray($item);
+            } catch (InvalidArgumentException) {
+                $refused++;
+            }
+        }
+
+        self::assertSame(2, $refused);
+    }
+
+    /**
      * **Pinned to the migration's literal widths, deliberately not to the constants themselves.**
      *
      * Every boundary test above spends the constant, so it moves WITH the constant: raise
