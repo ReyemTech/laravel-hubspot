@@ -282,6 +282,66 @@ final class NormalizedWebhookEventTest extends TestCase
     }
 
     /**
+     * **Sub-second precision either side of the epoch, pinned because it is now load-bearing.**
+     *
+     * `requireOccurredAt()` splits with `intdiv()`, which truncates TOWARD ZERO, so a pre-epoch
+     * value that is not a whole second yields a NEGATIVE remainder and the split reads oddly:
+     * `-1` becomes `@0` modified by `+-1 milliseconds`. A review round read that as broken. It is
+     * not -- `seconds * 1000 + milliseconds` re-derives the input by construction for either sign,
+     * and PHP applies a negative `modify()` offset exactly -- but nothing asserted it, and these
+     * values only became reachable when the column widened to a `DATETIME`.
+     *
+     * The expected instants below were computed independently rather than from this
+     * implementation, so this test can disagree with the code it covers.
+     *
+     * @param  int  $milliseconds  epoch milliseconds, as HubSpot sends them
+     */
+    #[DataProvider('subSecondInstants')]
+    public function test_it_normalizes_sub_second_values_on_both_sides_of_the_epoch(int $milliseconds, string $expected): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = $milliseconds;
+
+        $event = NormalizedWebhookEvent::fromArray($item);
+
+        self::assertSame($expected, $event->occurredAt->format('Y-m-d H:i:s.v'));
+    }
+
+    /**
+     * @return array<string, array{int, string}>
+     */
+    public static function subSecondInstants(): array
+    {
+        return [
+            'one millisecond before the epoch' => [-1, '1969-12-31 23:59:59.999'],
+            'half a second before the epoch' => [-500, '1969-12-31 23:59:59.500'],
+            'one and a half seconds before the epoch' => [-1500, '1969-12-31 23:59:58.500'],
+            'a whole day before the epoch' => [-86400000, '1969-12-31 00:00:00.000'],
+            'the epoch itself' => [0, '1970-01-01 00:00:00.000'],
+            'one and a half seconds after the epoch' => [1500, '1970-01-01 00:00:01.500'],
+            'the last millisecond the column holds' => [253402300799999, '9999-12-31 23:59:59.999'],
+        ];
+    }
+
+    /**
+     * The identity is derived from `occurredAt`, so a mis-split instant would silently change it.
+     * Two deliveries one millisecond apart across the epoch boundary must hash differently.
+     */
+    public function test_two_pre_epoch_deliveries_one_millisecond_apart_keep_distinct_identities(): void
+    {
+        $earlier = self::rawItem();
+        $earlier['occurredAt'] = -1;
+
+        $later = self::rawItem();
+        $later['occurredAt'] = 0;
+
+        self::assertNotSame(
+            NormalizedWebhookEvent::fromArray($earlier)->deliveryIdentity(),
+            NormalizedWebhookEvent::fromArray($later)->deliveryIdentity(),
+        );
+    }
+
+    /**
      * Both ends are bounded at what `DATETIME` genuinely holds -- `1000-01-01 00:00:00` through
      * `9999-12-31 23:59:59`. Nothing a real HubSpot event could carry lies outside that, so this
      * refuses no well-formed value while still keeping an unstorable one from being acknowledged.
