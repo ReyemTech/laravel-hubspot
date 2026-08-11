@@ -152,4 +152,138 @@ final class NormalizedWebhookEventTest extends TestCase
 
         NormalizedWebhookEvent::fromArray($item);
     }
+
+    /**
+     * `eventId` was for a while the ONLY field bounded to what `hubspot_webhook_events` can hold,
+     * and the four cases below are its siblings: every other normalized value the store's INSERT
+     * writes to a width- or range-constrained column. A signed item carrying one of them was
+     * accepted here, acknowledged `204`, and only rejected later by the worker's insert -- after
+     * HubSpot had stopped retrying. Each is asserted at the boundary AND one past it, so a bound
+     * that is off by one fails a test rather than passing both.
+     */
+    public function test_it_accepts_a_subscription_type_at_exactly_the_column_width(): void
+    {
+        $item = self::rawItem();
+        $item['subscriptionType'] = str_repeat('a', NormalizedWebhookEvent::MAX_SUBSCRIPTION_TYPE_LENGTH);
+
+        $event = NormalizedWebhookEvent::fromArray($item);
+
+        self::assertSame(NormalizedWebhookEvent::MAX_SUBSCRIPTION_TYPE_LENGTH, strlen($event->subscriptionType));
+    }
+
+    public function test_it_rejects_a_subscription_type_exceeding_the_column_width(): void
+    {
+        $item = self::rawItem();
+        $item['subscriptionType'] = str_repeat('a', NormalizedWebhookEvent::MAX_SUBSCRIPTION_TYPE_LENGTH + 1);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
+
+    public function test_it_accepts_an_object_id_at_exactly_the_column_width(): void
+    {
+        $item = self::rawItem();
+        $item['objectId'] = str_repeat('9', NormalizedWebhookEvent::MAX_OBJECT_ID_LENGTH);
+
+        $event = NormalizedWebhookEvent::fromArray($item);
+
+        self::assertSame(NormalizedWebhookEvent::MAX_OBJECT_ID_LENGTH, strlen($event->objectId));
+    }
+
+    public function test_it_rejects_an_object_id_exceeding_the_column_width(): void
+    {
+        $item = self::rawItem();
+        $item['objectId'] = str_repeat('9', NormalizedWebhookEvent::MAX_OBJECT_ID_LENGTH + 1);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
+
+    /**
+     * `portal_id` and `subscription_id` are UNSIGNED columns. A negative value is rejected by
+     * MySQL in strict mode and accepted by PostgreSQL and SQLite, which map the column to a signed
+     * `bigint` -- so leaving it unvalidated does not merely risk a lost delivery on one driver, it
+     * makes the SAME signed payload behave differently on three supported drivers.
+     */
+    public function test_it_rejects_a_negative_portal_id(): void
+    {
+        $item = self::rawItem();
+        $item['portalId'] = -1;
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
+
+    public function test_it_accepts_a_zero_portal_id(): void
+    {
+        $item = self::rawItem();
+        $item['portalId'] = 0;
+
+        self::assertSame(0, NormalizedWebhookEvent::fromArray($item)->portalId);
+    }
+
+    public function test_it_rejects_a_negative_subscription_id(): void
+    {
+        $item = self::rawItem();
+        $item['subscriptionId'] = -1;
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
+
+    /**
+     * An ABSENT `subscriptionId` stays a valid null -- the unsigned check bounds the value when one
+     * is present and must not turn the optional field into a required one.
+     */
+    public function test_it_still_accepts_an_absent_subscription_id(): void
+    {
+        $item = self::rawItem();
+        unset($item['subscriptionId']);
+
+        self::assertNull(NormalizedWebhookEvent::fromArray($item)->subscriptionId);
+    }
+
+    /**
+     * MySQL's `TIMESTAMP` range begins at `1970-01-01 00:00:01` UTC, so an `occurredAt` at or
+     * before the epoch is out of range and strict mode rejects it --
+     * `DatabaseWebhookEventStore::RECLAIMABLE_AT` already pays for that boundary being known.
+     * Rejected here rather than at the insert for the same reason as every case above.
+     *
+     * Only the LOWER bound is enforced. A time past 2038 is a WELL-FORMED value this column
+     * happens not to reach; refusing it would itself be the defect, and the remedy is the column
+     * type every `timestamp()` in this package shares, not a normalization rule on this one field.
+     */
+    public function test_it_rejects_an_occurred_at_at_or_before_the_earliest_storable_instant(): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = 0;
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
+
+    public function test_it_rejects_a_negative_occurred_at(): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = -1000;
+
+        $this->expectException(InvalidArgumentException::class);
+
+        NormalizedWebhookEvent::fromArray($item);
+    }
+
+    public function test_it_accepts_an_occurred_at_at_exactly_the_earliest_storable_instant(): void
+    {
+        $item = self::rawItem();
+        $item['occurredAt'] = 1000;
+
+        $event = NormalizedWebhookEvent::fromArray($item);
+
+        self::assertSame('1970-01-01 00:00:01', $event->occurredAt->format('Y-m-d H:i:s'));
+    }
 }
