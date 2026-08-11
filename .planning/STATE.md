@@ -6,14 +6,14 @@ current_phase: 6
 current_phase_name: Signals Core
 status: planning
 stopped_at: Phase 5 merged; Phase 6 not started
-last_updated: "2026-08-11T14:45:40.000Z"
+last_updated: "2026-08-11T17:08:55.000Z"
 progress:
   total_phases: 9
   completed_phases: 5
   total_plans: 30
   completed_plans: 30
 last_activity: 2026-08-11
-last_activity_desc: "Merged Phase 5 inbound webhooks as PR #71 (merge 1c37fd5). The final review round turned one reported P2 into five instances of one class -- every NormalizedWebhookEvent field the events table constrains is now bounded at normalization, so an unstorable value is a 400 rather than a 204 followed by a lost delivery. Two further members were found by codex review --base main before push: a NUL byte ambiguating the delivery-identity separator, and occurred_at's 2038 ceiling. release-please opened PR #78 for v0.7.0; not yet merged."
+last_activity_desc: "Merged Phase 5 inbound webhooks as PR #71 (merge 1c37fd5). The final review round turned one reported P2 into five instances of one class -- every NormalizedWebhookEvent field the events table constrains is now bounded at normalization, so an unstorable value is a 400 rather than a 204 followed by a lost delivery. Two further members were found by codex review --base main before push: a NUL byte ambiguating the delivery-identity separator, and occurred_at's 2038 ceiling. Released v0.7.0 the same day: PR #79 reconciled this file, then PR #78 merged and release-please published tag reyemtech/laravel-hubspot-v0.7.0 and its GitHub release."
 ---
 
 # Project State
@@ -35,9 +35,9 @@ Phase: 6 — Signals Core
 Plan: Not started
 Status: Ready to plan
 
-**Phase 5 is complete and merged** — PR #71, merge commit `1c37fd5`, 2026-08-11. All five plans have
-a SUMMARY on disk and ROADMAP.md is checked accordingly. `release-please` opened **PR #78 for
-v0.7.0**; it is not yet merged, so Phase 5 is merged but unreleased.
+**Phase 5 is complete, merged and released** — PR #71, merge commit `1c37fd5`, 2026-08-11. All five
+plans have a SUMMARY on disk and ROADMAP.md is checked accordingly. **v0.7.0** shipped the same day
+(PR #78, merge `3fa0723`; tag `reyemtech/laravel-hubspot-v0.7.0`).
 
 The last review round is worth carrying forward, because it was a class and not an instance. One
 reported P2 (an over-long `subscriptionType` exceeding its `VARCHAR(191)`) was true of FIVE fields:
@@ -306,8 +306,11 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - **Owner decision: `archived_at` — intent or confirmation?** Blocks the redelivery-window fix.
   Options on #57.
 
-- **v0.7.0 — release PR #78 is OPEN, not merged.** Opened by release-please when Phase 5 landed on
-  2026-08-11. Phase 5 is merged but unreleased until it goes in. Publishing stays owner-gated (D-47).
+- **v0.7.0 — released 2026-08-11.** PR #78 merged (`3fa0723`); release-please published tag
+  `reyemtech/laravel-hubspot-v0.7.0` and its GitHub release. Its CI had to be unblocked twice: the
+  branch was BEHIND after #79 landed, and every workflow on the bot's own head sat in
+  `action_required` because bot-authored PRs do not run CI unattended. `gh pr update-branch` cleared
+  both. Packagist publication remains impossible while the repo is private (D-47, REL-02).
 
 - **v0.6.0 — released 2026-08-05.** PR #52 auto-merged after required CI passed; release-please
   published tag `reyemtech/laravel-hubspot-v0.6.0` and its GitHub release.
