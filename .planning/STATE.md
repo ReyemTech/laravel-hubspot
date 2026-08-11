@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 6
 current_phase_name: Signals Core
 status: planning
-stopped_at: Completed 05-05-PLAN.md
-last_updated: "2026-08-07T02:59:44.287Z"
+stopped_at: Phase 5 merged; Phase 6 not started
+last_updated: "2026-08-11T14:45:40.000Z"
 progress:
-  total_phases: 5
+  total_phases: 9
   completed_phases: 5
   total_plans: 30
   completed_plans: 30
-last_activity: 2026-08-05
-last_activity_desc: "Released v0.6.0 after merging the Phase 4 batch-sync completion and dependency-maintenance work. PR #52 auto-merged after the full required CI suite passed; release-please published tag reyemtech/laravel-hubspot-v0.6.0."
+last_activity: 2026-08-11
+last_activity_desc: "Merged Phase 5 inbound webhooks as PR #71 (merge 1c37fd5). The final review round turned one reported P2 into five instances of one class -- every NormalizedWebhookEvent field the events table constrains is now bounded at normalization, so an unstorable value is a 400 rather than a 204 followed by a lost delivery. Two further members were found by codex review --base main before push: a NUL byte ambiguating the delivery-identity separator, and occurred_at's 2038 ceiling. release-please opened PR #78 for v0.7.0; not yet merged."
 ---
 
 # Project State
@@ -27,21 +27,47 @@ HubSpot CRM object type — with no per-type code, no migration step, and no cha
 association backwards. Extended 2026-07-26: …and records intent signals against an anonymous visitor
 that become attributed contact properties the moment an email appears, with no API call in the
 request lifecycle.
-**Current focus:** Phase 05 — inbound-webhooks
+**Current focus:** Phase 06 — Signals Core (not started)
 
 ## Current Position
 
 Phase: 6 — Signals Core
-with chunked identity-aware transport (one request for a homogeneous group of at most 100; larger and
-mixed input sum independently chunked linked updates and unlinked upserts), and 04-09 completed the
-doctor bound-model report. `DeleteRaceReconciler` runs only for links the batch job created, so a
-concurrent link is retained. REG-01 and REG-04 are now complete; SYNC-01b remains open for Phase 9's
-Generated mode and SHIP-01.
 Plan: Not started
-Sync, preserving R2 while reporting `DeletePolicy`-resolved primitives.
 Status: Ready to plan
-from four primitives and never the Eloquent model, so every cell is a deterministic unit test.
-Three DISTINCT events drive it — `trashed`, `forceDeleted`, and plain `deleted` gated on the
+
+**Phase 5 is complete and merged** — PR #71, merge commit `1c37fd5`, 2026-08-11. All five plans have
+a SUMMARY on disk and ROADMAP.md is checked accordingly. `release-please` opened **PR #78 for
+v0.7.0**; it is not yet merged, so Phase 5 is merged but unreleased.
+
+The last review round is worth carrying forward, because it was a class and not an instance. One
+reported P2 (an over-long `subscriptionType` exceeding its `VARCHAR(191)`) was true of FIVE fields:
+with the asynchronous queue the controller answers `204` before any worker inserts, so any value the
+`hubspot_webhook_events` columns cannot hold was an ACKNOWLEDGED delivery that no longer existed,
+found in a worker log after HubSpot had stopped retrying. `NormalizedWebhookEvent` now bounds every
+field a constraint applies to — `subscriptionType` and `objectId` to their widths, `portalId` and
+`subscriptionId` to their UNSIGNED range, `occurredAt` to its column's span. **Adding a constrained
+column to that table means adding its check there.**
+
+Two more members surfaced from `codex review --base main` before push, neither reported by the
+GitHub bot:
+
+- **A NUL byte ambiguated `deliveryIdentity()`.** It joins on `\0` and its docblock asserted the byte
+  could not occur; JSON permits it, so `subscriptionType` `a\0b` with `eventId` `c` hashed
+  identically to `a` with `b\0c` and the second distinct delivery was dropped as a redelivery. An
+  invariant a separator depends on has to be enforced somewhere.
+- **`occurred_at` is now a `DATETIME`, deviating from 05-02-PLAN.md Task 1**, which named
+  `timestamp('occurred_at')`. It is the one column in that table whose value arrives from outside, so
+  `TIMESTAMP`'s 2038 ceiling was reachable today rather than in 2038. Bounding normalization at 2038
+  instead would have been the same defect wearing a different hat — a 2039 event is well formed.
+  Safe because the migration was in no released tag and the column is written but never read back.
+
+One finding was REBUTTED rather than fixed: `intdiv()`'s toward-zero truncation was read as
+mis-splitting pre-epoch milliseconds. It does not — `seconds * 1000 + milliseconds` re-derives the
+input for either sign. Checked against an independently computed reference and pinned in tests.
+
+Prior Phase 4 context follows, retained because its lessons are still live.
+
+Three DISTINCT events drive the delete path — `trashed`, `forceDeleted`, and plain `deleted` gated on the
 ABSENCE of `SoftDeletes` — because `deleted` fires identically for a soft delete and a
 `forceDelete()`, and `forceDelete()` calls `delete()` internally, so a `deleted`-plus-`trashed()`
 implementation archives twice and misclassifies the hard delete. D-21 is implemented as selected:
@@ -101,7 +127,7 @@ Preceding plans, previously unrecorded here: **04-04** (2026-07-31) added the qu
 (2026-07-31) wired `updated` with D-17's restore guard, the per-model `$hubspotAutoSync` override
 and the `auto_sync` config block.
 
-Progress: [██████████] 100% of Phase 4
+Progress: [██████████] 100% of Phase 5 — 5 of 9 phases complete, 30 of 30 planned plans done
 
 ## Performance Metrics
 
@@ -255,6 +281,12 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 - [Phase ?]: 05-05: project webhook component field names (uid, type, config.settings.targetUrl/maxConcurrentRequests, config.subscriptions.crmObjects/legacyCrmObjects/hubEvents) verified against live HubSpot developer-platform docs on 2026-08-06, not recalled -- declared subscriptions map onto the documented legacyCrmObjects array
 - [Phase ?]: 05-05: neither legacy_private nor project branch ever resolves WebhookSubscriptionGatewayContract -- proven by a zero-request-count assertion against the FakeWebhookSubscriptionGateway seam, matching 05-04's own convention
 - [Phase ?]: 05-05: ProjectWebhookComponent::maxConcurrentRequests() is a method rather than a class constant, mirroring ServiceProvider::supportedStores()'s precedent -- a constant has no executed line pest --mutate can attribute a covering test to
+- [Phase 5]: PR #71 final round: NormalizedWebhookEvent bounds EVERY field hubspot_webhook_events constrains, not only eventId. The controller answers 204 before the worker inserts, so an unstorable value is an acknowledged delivery that no longer exists. Adding a constrained column to that table means adding its check to fromArray(). bounded() measures BYTES, matching what a VARCHAR width constrains
+- [Phase 5]: PR #71: portalId/subscriptionId are refused when negative because the columns are UNSIGNED -- MySQL rejects in strict mode while PostgreSQL and SQLite take the column as a signed bigint and accept, so one correctly signed payload behaved three ways across the support matrix. The check exists for driver AGREEMENT, not only for MySQL
+- [Phase 5]: PR #71: a NUL byte is refused in eventId/subscriptionType/objectId. deliveryIdentity() joins on \0 and its docblock asserted the byte could not occur; JSON permits it, so a\0b + c hashed identically to a + b\0c and the second distinct delivery was dropped as a redelivery. The check is what makes the separator's claim true
+- [Phase 5]: PR #71 DEVIATION from 05-02-PLAN.md Task 1: occurred_at is a DATETIME, not timestamp(). It is the one column in that table whose value arrives from outside, so TIMESTAMP's 2038 ceiling was reachable today. Capping normalization at 2038 would have been the same defect wearing a different hat -- a 2039 event is well formed. Safe because the migration was in no released tag and the column is written but never read back by package code
+- [Phase 5]: PR #71: intdiv()'s toward-zero truncation in requireOccurredAt() is CORRECT for negative epoch milliseconds -- seconds * 1000 + milliseconds re-derives the input for either sign. A review round claimed otherwise; checked against an independent reference and pinned in tests. Do not "fix" it
+- [Phase 5]: pest --mutate reports const-declaration lines as untested even when changing the constant DOES fail the suite -- a const is not an executable statement, so no covering test is attributed. Probe by hand before writing tests to kill one. intdiv($value, 1000) is a genuinely equivalent mutant for the same reason the point above holds
 
 ### Pending Todos
 
@@ -273,6 +305,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 - **Owner decision: `archived_at` — intent or confirmation?** Blocks the redelivery-window fix.
   Options on #57.
+
+- **v0.7.0 — release PR #78 is OPEN, not merged.** Opened by release-please when Phase 5 landed on
+  2026-08-11. Phase 5 is merged but unreleased until it goes in. Publishing stays owner-gated (D-47).
 
 - **v0.6.0 — released 2026-08-05.** PR #52 auto-merged after required CI passed; release-please
   published tag `reyemtech/laravel-hubspot-v0.6.0` and its GitHub release.
@@ -356,8 +391,8 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-07T02:48:09.937Z
-Stopped at: Completed 05-05-PLAN.md
+Last session: 2026-08-11T14:45:40.000Z
+Stopped at: Phase 5 merged (PR #71, `1c37fd5`); Phase 6 not started
 Resume file: None
 
 **Landed after Phase 3 closed (2026-07-30):**
