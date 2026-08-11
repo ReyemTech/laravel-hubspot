@@ -59,19 +59,27 @@ final readonly class NormalizedWebhookEvent
     public const int MAX_OBJECT_ID_LENGTH = 255;
 
     /**
-     * The earliest instant `occurred_at` can hold, in the epoch milliseconds HubSpot sends.
+     * The range `occurred_at` can hold, in the epoch milliseconds HubSpot sends:
+     * `1000-01-01 00:00:00` through `9999-12-31 23:59:59` UTC, MySQL's `DATETIME` limits and the
+     * narrowest of the three drivers this package supports.
      *
-     * MySQL's `TIMESTAMP` range begins at `1970-01-01 00:00:01` UTC, so anything at or before the
-     * epoch is out of range and strict mode rejects it --
-     * `Webhooks\Stores\DatabaseWebhookEventStore::RECLAIMABLE_AT` already records that boundary,
-     * having been bought once on the `abandon()` path.
+     * **`occurred_at` is a `DATETIME` and not a `timestamp()` like its neighbours, and the reason
+     * is whose value it is.** `claimed_at`, `handled_at` and `timestamps()` are stamped by this
+     * package at write time, so they are always "now" and `TIMESTAMP`'s 2038 ceiling is a distant,
+     * Laravel-wide concern rather than this table's. `occurred_at` is the one column here whose
+     * value arrives from OUTSIDE, in a signed payload nobody local chose -- so an out-of-range
+     * instant is reachable today, not in 2038. Under `TIMESTAMP` a delivery dated past 2038 was
+     * answered `204` and then lost when the worker's INSERT failed.
      *
-     * **Only the lower bound is a normalization rule.** A time past `TIMESTAMP`'s 2038 ceiling is
-     * a WELL-FORMED value this column happens not to reach; refusing it here would itself be the
-     * defect, and the remedy is the column type that every `timestamp()` in this package shares,
-     * not a rule on this one field.
+     * Bounding it at 2038 instead would have been the same defect wearing a different hat: a 2039
+     * event is WELL FORMED, and a package that refuses it is broken in 2039 rather than merely
+     * lossy. Widening the column and bounding both ends at what the column genuinely holds refuses
+     * nothing a real HubSpot event could carry, while still keeping an unstorable value from being
+     * acknowledged.
      */
-    private const int MIN_OCCURRED_AT_MILLISECONDS = 1000;
+    private const int MIN_OCCURRED_AT_MILLISECONDS = -30610224000000;
+
+    private const int MAX_OCCURRED_AT_MILLISECONDS = 253402300799999;
 
     public function __construct(
         public string $eventId,
@@ -373,11 +381,11 @@ final readonly class NormalizedWebhookEvent
             throw new InvalidArgumentException('A webhook event is missing a valid "occurredAt".');
         }
 
-        if ($value < self::MIN_OCCURRED_AT_MILLISECONDS) {
+        if ($value < self::MIN_OCCURRED_AT_MILLISECONDS || $value > self::MAX_OCCURRED_AT_MILLISECONDS) {
             throw new InvalidArgumentException(sprintf(
-                'A webhook event\'s "occurredAt" is %d, which is at or before the Unix epoch. '
-                .'hubspot_webhook_events stores it in a timestamp column whose range begins one '
-                .'second later, so it is refused here rather than acknowledged and then lost.',
+                'A webhook event\'s "occurredAt" is %d, which is outside the range '
+                .'hubspot_webhook_events can store it in -- 1000-01-01 through 9999-12-31. It is '
+                .'refused here rather than acknowledged and then lost by the worker\'s insert.',
                 $value,
             ));
         }

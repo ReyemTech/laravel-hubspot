@@ -42,8 +42,22 @@ use ReyemTech\Hubspot\Webhooks\WebhookEventClaim;
  * log after HubSpot has stopped retrying. So `NormalizedWebhookEvent` bounds every field that a
  * constraint here applies to: `subscription_type` and `object_id` to their widths
  * (`MAX_SUBSCRIPTION_TYPE_LENGTH`, `MAX_OBJECT_ID_LENGTH`), `portal_id` and `subscription_id` to
- * the non-negative range their UNSIGNED declaration allows, and `occurred_at` to the earliest
- * instant a `TIMESTAMP` accepts. Adding a constrained column here means adding its check there.
+ * the non-negative range their UNSIGNED declaration allows, and `occurred_at` to the span its
+ * `DATETIME` holds. Adding a constrained column here means adding its check there. A NUL byte is
+ * refused in the three string fields for the same reason, PostgreSQL rejecting one outright.
+ *
+ * ## `occurred_at` is a `DATETIME`; every other instant here is a `timestamp()`
+ *
+ * The difference is whose value it is. `claimed_at`, `handled_at` and `timestamps()` are stamped
+ * by this package at write time -- always "now", so `TIMESTAMP`'s 2038 ceiling is a distant,
+ * Laravel-wide concern and not this table's. `occurred_at` is the one column whose value arrives
+ * from OUTSIDE, in a signed payload nobody local chose, so an out-of-range instant is reachable
+ * today: under `TIMESTAMP` a delivery dated past 2038 was answered `204` and then lost when the
+ * worker's INSERT failed. Bounding normalization at 2038 instead would have been the same defect
+ * wearing a different hat -- a 2039 event is well formed, and refusing it breaks the package in
+ * 2039 rather than merely losing an event. This deviates from 05-02-PLAN.md Task 1, which named
+ * `timestamp('occurred_at')`; the migration is in no released tag and the column is written but
+ * never read back by package code, so the change costs nothing.
  *
  * ## The claim lease, not a bare status column
  *
@@ -95,7 +109,10 @@ return new class extends Migration
             $table->string('subscription_type', 191);
             $table->unsignedBigInteger('portal_id');
             $table->string('object_id')->nullable();
-            $table->timestamp('occurred_at')->nullable();
+            // A DATETIME, not a timestamp() like the columns below it -- see the class docblock.
+            // This is the one column here whose value arrives from outside in a signed payload,
+            // so TIMESTAMP's 2038 ceiling was reachable today rather than in 2038.
+            $table->datetime('occurred_at')->nullable();
 
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamp('claimed_at')->nullable();
