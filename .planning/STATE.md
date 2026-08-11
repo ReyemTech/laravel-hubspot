@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 6
 current_phase_name: Signals Core
 status: planning
-stopped_at: Phase 5 merged; Phase 6 not started
-last_updated: "2026-08-11T17:08:55.000Z"
+stopped_at: Phase 6 context gathered
+last_updated: "2026-08-11T20:57:39.138Z"
 progress:
-  total_phases: 9
+  total_phases: 6
   completed_phases: 5
   total_plans: 30
   completed_plans: 30
@@ -55,6 +55,7 @@ GitHub bot:
   could not occur; JSON permits it, so `subscriptionType` `a\0b` with `eventId` `c` hashed
   identically to `a` with `b\0c` and the second distinct delivery was dropped as a redelivery. An
   invariant a separator depends on has to be enforced somewhere.
+
 - **`occurred_at` is now a `DATETIME`, deviating from 05-02-PLAN.md Task 1**, which named
   `timestamp('occurred_at')`. It is the one column in that table whose value arrives from outside, so
   `TIMESTAMP`'s 2038 ceiling was reachable today rather than in 2038. Bounding normalization at 2038
@@ -394,9 +395,9 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 
 ## Session Continuity
 
-Last session: 2026-08-11T14:45:40.000Z
-Stopped at: Phase 5 merged (PR #71, `1c37fd5`); Phase 6 not started
-Resume file: None
+Last session: 2026-08-11T20:57:39.122Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-signals-core/06-CONTEXT.md
 
 **Landed after Phase 3 closed (2026-07-30):**
 
