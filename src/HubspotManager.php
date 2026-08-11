@@ -237,9 +237,9 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
      * request history {@see self::assertSynced()} and its siblings read -- see
      * `Testing\WebhookReceiptLog`'s own docblock for why the two must stay disjoint.
      *
-     * @param  array<string, mixed>  $expected
+     * @param  array<string, mixed>|string  $expected  the bare event id is shorthand for `['eventId' => ...]`
      */
-    public function assertWebhookHandled(string $eventKey, array $expected = []): void
+    public function assertWebhookHandled(string $eventKey, string|array $expected = []): void
     {
         $this->fakeOrFail()->assertWebhookHandled($eventKey, $expected);
     }

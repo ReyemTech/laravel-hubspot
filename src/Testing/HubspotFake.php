@@ -196,9 +196,9 @@ final class HubspotFake
      * builds every other assertion in this class from -- see {@see WebhookReceiptLog}'s own docblock
      * for why the two must stay two disjoint records rather than one merged log.
      *
-     * @param  array<string, mixed>  $expected
+     * @param  array<string, mixed>|string  $expected  the bare event id is shorthand for `['eventId' => ...]`
      */
-    public function assertWebhookHandled(string $eventKey, array $expected = []): void
+    public function assertWebhookHandled(string $eventKey, string|array $expected = []): void
     {
         $this->webhookReceipts->assertWebhookHandled($eventKey, $expected);
     }

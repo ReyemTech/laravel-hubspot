@@ -32,7 +32,15 @@ final class RecordingQueueJob implements Job
 
     public bool $deleted = false;
 
-    public function __construct(private readonly int $attempts = 1) {}
+    /**
+     * `$connectionName` is explicit because the job under test branches on the RESOLVED queue
+     * connection: a double that silently claimed to be "sync" would send every test down the
+     * cannot-defer path. Defaults to a real, deferring driver, which is the ordinary case.
+     */
+    public function __construct(
+        private readonly int $attempts = 1,
+        private readonly string $connectionName = 'database',
+    ) {}
 
     public function release($delay = 0): void
     {
@@ -140,7 +148,7 @@ final class RecordingQueueJob implements Job
 
     public function getConnectionName(): string
     {
-        return 'sync';
+        return $this->connectionName;
     }
 
     public function getQueue(): string

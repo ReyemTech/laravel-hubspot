@@ -45,10 +45,23 @@ final class WebhookReceiptLog
      * `RequestLog::assertSynced()`'s one-record rule: two receipts that between them carry every
      * expected field, but neither one alone, must not satisfy this.
      *
-     * @param  array<string, mixed>  $expected
+     * `$expected` accepts the array of normalized fields, or the bare event id the canonical design
+     * spec documents (`assertWebhookHandled('deal.creation', $eventId)`) as shorthand for
+     * `['eventId' => ...]`.
+     *
+     * @param  array<string, mixed>|string  $expected
      */
-    public function assertWebhookHandled(string $eventKey, array $expected = []): void
+    public function assertWebhookHandled(string $eventKey, string|array $expected = []): void
     {
+        // The string shorthand the canonical design spec documents --
+        // `assertWebhookHandled('deal.creation', $eventId)` -- normalised ONCE, here, where the
+        // only implementation lives. The two public entry points that delegate to this method
+        // widen their own signatures and hand the value straight through, so there is one place
+        // that decides what the shorthand means.
+        if (is_string($expected)) {
+            $expected = ['eventId' => $expected];
+        }
+
         $matchingKey = array_filter(
             $this->handled,
             static fn (NormalizedWebhookEvent $event): bool => $event->subscriptionType === $eventKey,

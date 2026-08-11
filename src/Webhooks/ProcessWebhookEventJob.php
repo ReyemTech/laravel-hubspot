@@ -8,9 +8,12 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Contracts\Queue\Factory as QueueFactory;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SyncQueue;
 use Illuminate\Support\Facades\Config;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
@@ -28,10 +31,12 @@ use Throwable;
  * `handle()` opens by claiming the event's id ({@see WebhookEventStore::claim()}). A `Handled` claim
  * means this exact eventId already completed successfully -- HOOK-01's durable redelivery guarantee
  * -- so `handle()` returns having done nothing. A `Held` claim means another claim on this event is
- * still inside its lease window, so `handle()` queues a FRESH copy of itself delayed past that
- * lease, emitting nothing and without failing. Failing would retry a race a live worker may be
- * winning; returning silently would be worse, because Laravel reads that as success and deletes a
- * job that is the event's last remaining chance when the holder has died. Only an `Acquired` claim reaches the dispatch this plan's
+ * still inside its lease window, and what `handle()` does with it DEPENDS ON THE QUEUE DRIVER --
+ * see the branch itself for the measurements that forced that. On a driver that can defer it
+ * queues a FRESH copy of itself past the lease; on `sync`, which cannot defer, it raises so the
+ * controller answers 500 and HubSpot redelivers. Neither returns silently, because Laravel reads
+ * that as success and deletes a job that is the event's last chance once the holder has died.
+ * Only an `Acquired` claim reaches the dispatch this plan's
  * predecessor (05-01) established, and `complete()` is called only AFTER that dispatch returns. This
  * is what makes a redelivery of a still-in-flight event safe (05-RESEARCH.md Pitfall 3) rather than a
  * second, concurrent run of the same handlers.
@@ -59,8 +64,8 @@ use Throwable;
  * The worker that DIES runs no `catch`, so `abandon()` cannot cover it — and the lease alone does
  * not either. A lease makes the row reclaimable; it does not make anything come back to reclaim it,
  * and the queue's own retry lands after `retry_after` (90 seconds by default), inside the lease.
- * That is what the `Held` re-dispatch above is for. The two together are what make D-03's "leaves
- * it retryable" true for both a handler that throws and a worker that is killed.
+ * That is what the `Held` branch above is for. The two together are what make D-03's "leaves it
+ * retryable" true for both a handler that throws and a worker that is killed.
  *
  * ## Typed events (05-03, D-06, D-08, D-09)
  *
@@ -115,6 +120,7 @@ final class ProcessWebhookEventJob implements ShouldQueue
         Container $container,
         WebhookReceiptRecorder $receipts,
         BusDispatcher $bus,
+        QueueFactory $queue,
     ): void {
         // The inbound half of `hubspot.disabled`, which config/hubspot.php writes as governing BOTH
         // directions. Checked HERE, on the worker, and not only at dispatch: that is what stops
@@ -150,6 +156,22 @@ final class ProcessWebhookEventJob implements ShouldQueue
         if ($claim === WebhookEventClaim::Held) {
             /** @var int $claimLease */
             $claimLease = Config::get('hubspot.webhooks.claim_lease');
+
+            // A driver that cannot defer has to be told apart from one that can, and it is told
+            // apart by its RESOLVED CLASS, never by the connection's name: a connection named
+            // anything at all may be configured `'driver' => 'sync'`, and measurement confirmed
+            // one named `inline` resolves to SyncQueue just as `sync` does.
+            //
+            // `SyncQueue::later()` discards the delay and runs the job inline (measured: a
+            // re-dispatch recursed 13 times before a test guard stopped it, and would otherwise
+            // exhaust memory). There is no queue to come back to, because the "worker" IS the
+            // request -- so the deferral is pushed up to HubSpot instead. Throwing reaches
+            // WebhookController's dispatch-loop catch, which answers 500, and HubSpot redelivers
+            // later; that is the same "refuse what cannot be processed now" rule the receipt
+            // guards already follow, and on this driver it is the only honest one available.
+            if ($queue->connection($this->job?->getConnectionName()) instanceof SyncQueue) {
+                throw ConfigurationException::webhookHeldOnSynchronousQueue($claimLease);
+            }
 
             // A FRESH job, not `$this->release()`. A held claim is not a failed attempt of this
             // job -- it is "not yet" -- and charging it as one is fatal on a default deployment:

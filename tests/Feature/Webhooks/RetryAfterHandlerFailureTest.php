@@ -36,6 +36,13 @@ final class RetryAfterHandlerFailureTest extends TestCase
     protected function defineEnvironment($app): void
     {
         $app['config']->set('hubspot.webhooks.enabled', true);
+
+        // A deferring driver: the Held branch below is the real-queue half, and the sync half has
+        // its own file (HeldClaimAcrossQueueDriversTest) driving the actual sync driver.
+        $app['config']->set('queue.default', 'database');
+        $app['config']->set('queue.connections.database', [
+            'driver' => 'database', 'table' => 'jobs', 'queue' => 'default', 'retry_after' => 90,
+        ]);
         $app['config']->set('hubspot.webhooks.handlers', ['*' => CountingThrowingHandler::class]);
     }
 

@@ -72,6 +72,7 @@ use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
  *
  * ```php
  * Hubspot::assertWebhookHandled('contact.propertyChange', ['propertyName' => 'email']);
+ * Hubspot::assertWebhookHandled('deal.creation', $eventId);   // bare id = ['eventId' => ...]
  * ```
  *
  * `recordWebhookHandled()` is `Webhooks\Contracts\WebhookReceiptRecorder`'s one method, advertised
@@ -95,7 +96,7 @@ use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
  * @method static void assertNothingSynced()
  * @method static void assertAssociated(\ReyemTech\Hubspot\Gateway\AssociationPair $pair, ?string $label = null)
  * @method static void recordWebhookHandled(NormalizedWebhookEvent $event)
- * @method static void assertWebhookHandled(string $eventKey, array<string, mixed> $expected = [])
+ * @method static void assertWebhookHandled(string $eventKey, array<string, mixed>|string $expected = [])
  * @method static void flushState()
  * @method static bool syncingSuppressed()
  * @method static bool isFaked()

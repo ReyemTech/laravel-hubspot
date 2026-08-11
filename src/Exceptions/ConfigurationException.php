@@ -317,6 +317,65 @@ final class ConfigurationException extends LogicException implements HubspotExce
     }
 
     /**
+     * A webhook event was claimed by someone else and this deployment's queue driver cannot defer
+     * the retry. Raised by `Webhooks\ProcessWebhookEventJob::handle()` on the `sync` driver only.
+     *
+     * **Why an exception is the right answer here, and only here.** On a real queue a held claim is
+     * re-queued delayed past the lease. `SyncQueue::later()` discards the delay and runs the job
+     * inline, so the same move recurses until memory is exhausted — measured, not assumed. There
+     * is no queue to come back to on this driver, because the "worker" is the request itself, so
+     * the only place left to defer to is HubSpot: throwing reaches `WebhookController`'s
+     * dispatch-loop catch, which answers 500, and HubSpot redelivers.
+     *
+     * A member of the four §9 permits rather than a fifth: the condition exists only on a
+     * particular queue configuration, and the message names the configuration change that removes
+     * it. It is not a defect in the delivery, and it is not an error the consumer must act on —
+     * the event is not lost, it is coming back.
+     */
+    public static function webhookHeldOnSynchronousQueue(int $claimLeaseSeconds): self
+    {
+        return new self(sprintf(
+            'A HubSpot webhook event is already claimed by another worker, and QUEUE_CONNECTION '
+            .'uses the "sync" driver, which runs jobs immediately and cannot delay a retry. This '
+            .'delivery was refused with a 500 so HubSpot redelivers it; nothing was lost. The '
+            .'claim frees itself after hubspot.webhooks.claim_lease (%d seconds). Set '
+            .'QUEUE_CONNECTION to a real queue driver to have the package retry it for you '
+            .'instead of relying on HubSpot to re-send.',
+            $claimLeaseSeconds,
+        ));
+    }
+
+    /**
+     * A declared subscription belongs to a project webhook component section this package does not
+     * render. Raised by `Webhooks\ProjectWebhookComponent`.
+     *
+     * The component has three subscription sections and this package populates one:
+     * `legacyCrmObjects`. The `object.*` family belongs in `crmObjects`, and
+     * `contact.privacyDeletion`/`conversation.*` in `hubEvents` -- verified against HubSpot's
+     * developer-platform documentation on 2026-08-06 and recorded in that class.
+     *
+     * Refused rather than filed under the section that happens to be populated. A component with a
+     * subscription in the wrong section still deploys, so the operator learns nothing until
+     * deliveries fail to arrive; an artefact that refuses to render says so at the point of the
+     * mistake. Routing them properly needs the per-entry SHAPE of the other two sections, which is
+     * not something this package has verified, and 05-05's rule is that the schema is checked
+     * against live documentation rather than recalled.
+     */
+    public static function projectComponentCannotExpressSubscription(string $eventType, string $section): self
+    {
+        return new self(sprintf(
+            'hubspot.webhooks.subscriptions declares "%s", which a HubSpot project webhook '
+            .'component carries in its "%s" section -- and this package renders only '
+            .'"legacyCrmObjects". It is not written into the section it does not belong to, '
+            .'because that component would deploy and then silently receive nothing. Remove the '
+            .'declaration and add this subscription in HubSpot directly, or use the legacy_public '
+            .'app model, whose API reconciliation has no such gap.',
+            $eventType,
+            $section,
+        ));
+    }
+
+    /**
      * `hubspot.webhooks.handlers` is not an array at all — a bare class-string, a scalar, or any
      * other value where the MAP belongs. Raised by `ServiceProvider`'s `HandlerMap` binding.
      *

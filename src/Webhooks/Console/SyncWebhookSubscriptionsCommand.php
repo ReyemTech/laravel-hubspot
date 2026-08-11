@@ -179,15 +179,19 @@ final class SyncWebhookSubscriptionsCommand extends Command
      */
     private function project(array $declared): int
     {
+        // Rendering is inside the try, not only targetUrl(): the component refuses to express a
+        // subscription belonging to a section this package does not render, and that refusal is a
+        // directed HubspotException the operator should read as a command failure rather than as
+        // an uncaught exception.
         try {
             $targetUrl = $this->targetUrl();
+
+            $json = ProjectWebhookComponent::encode(ProjectWebhookComponent::render($declared, $targetUrl));
         } catch (HubspotException $exception) {
             $this->error($exception->getMessage());
 
             return self::FAILURE;
         }
-
-        $json = ProjectWebhookComponent::encode(ProjectWebhookComponent::render($declared, $targetUrl));
 
         /** @var mixed $rawOutput */
         $rawOutput = $this->option('output');

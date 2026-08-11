@@ -247,4 +247,36 @@ final class AssertWebhookHandledTest extends TestCase
             'CONTENT_TYPE' => 'application/json',
         ];
     }
+
+    /**
+     * The form the canonical design spec documents -- `assertWebhookHandled('deal.creation',
+     * $eventId)` (design spec section 12). It required an ARRAY, so a consumer following the
+     * governing document got a TypeError instead of an assertion.
+     *
+     * Widened rather than amended out of the spec: widening a parameter is caller-safe and
+     * semver-safe on a final class, the same reasoning recorded for assertSynced accepting a bound
+     * model, and the shorthand is the common case -- "was THIS delivery handled".
+     */
+    public function test_the_documented_string_event_id_form_is_accepted(): void
+    {
+        Hubspot::fake();
+
+        $this->deliver([self::rawEventItem('evt-string-form', 'contact.propertyChange')]);
+
+        Hubspot::assertWebhookHandled('contact.propertyChange', 'evt-string-form');
+    }
+
+    /** The shorthand is exactly the array form, so a wrong id must still fail. */
+    public function test_the_string_form_fails_for_an_event_id_that_was_not_handled(): void
+    {
+        Hubspot::fake();
+
+        $this->deliver([self::rawEventItem('evt-string-form', 'contact.propertyChange')]);
+
+        $message = FailedAssertion::messageOf(
+            static fn () => Hubspot::assertWebhookHandled('contact.propertyChange', 'evt-never-seen'),
+        );
+
+        self::assertStringContainsString('evt-never-seen', $message);
+    }
 }

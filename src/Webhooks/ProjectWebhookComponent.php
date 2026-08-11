@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Webhooks;
 
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\WebhookSubscription;
 
 /**
@@ -60,6 +61,20 @@ final class ProjectWebhookComponent
      */
     public static function render(array $declarations, string $targetUrl): array
     {
+        foreach ($declarations as $declaration) {
+            $section = self::sectionFor($declaration->eventType);
+
+            // Refused, never filed under the one section this class populates. A component whose
+            // subscription sits in the wrong section still DEPLOYS -- the operator learns nothing
+            // until deliveries never arrive -- so the artefact declines to render instead.
+            if ($section !== 'legacyCrmObjects') {
+                throw ConfigurationException::projectComponentCannotExpressSubscription(
+                    $declaration->eventType,
+                    $section,
+                );
+            }
+        }
+
         return [
             'uid' => 'webhooks',
             'type' => 'webhooks',
@@ -75,6 +90,32 @@ final class ProjectWebhookComponent
                 ],
             ],
         ];
+    }
+
+    /**
+     * Which of the documented component sections an event type belongs to.
+     *
+     * The three families come from this class's own verified reading of HubSpot's schema (see the
+     * class docblock): `object.*` is the newer CRM-object family carried in `crmObjects`, and
+     * `contact.privacyDeletion` and `conversation.*` are carried in `hubEvents`. Everything else is
+     * a classic subscription type and belongs in `legacyCrmObjects`, the section this class
+     * renders.
+     *
+     * A prefix/exact table rather than a regex, and it answers with the SECTION rather than a
+     * boolean, so the refusal can name where the declaration actually belongs instead of only
+     * saying no.
+     */
+    private static function sectionFor(string $eventType): string
+    {
+        if (str_starts_with($eventType, 'object.')) {
+            return 'crmObjects';
+        }
+
+        if ($eventType === 'contact.privacyDeletion' || str_starts_with($eventType, 'conversation.')) {
+            return 'hubEvents';
+        }
+
+        return 'legacyCrmObjects';
     }
 
     /**

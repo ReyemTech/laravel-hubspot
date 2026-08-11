@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Webhooks;
 
 use Illuminate\Support\Facades\Artisan;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReyemTech\Hubspot\Gateway\Contracts\WebhookSubscriptionGatewayContract;
 use ReyemTech\Hubspot\Tests\Support\CommandOutput;
 use ReyemTech\Hubspot\Tests\Support\Webhooks\FakeWebhookSubscriptionGateway;
@@ -310,5 +311,59 @@ final class ProjectWebhookComponentTest extends TestCase
             $source,
         );
         self::assertMatchesRegularExpression('/checked \d{4}-\d{2}-\d{2}/', $source);
+    }
+
+    /**
+     * The component has three subscription sections and this class populates exactly one. Its own
+     * docblock records the mapping verified against HubSpot's documentation on 2026-08-06:
+     * `object.*` belongs in `crmObjects`, and `contact.privacyDeletion` / `conversation.*` in
+     * `hubEvents`. Filing those under `legacyCrmObjects` produces a component that deploys and is
+     * wrong, which is worse than one that refuses to render.
+     *
+     * Refused rather than routed: the per-entry SHAPE of the other two sections is not something
+     * this package has verified against live documentation, and 05-05's rule is that the schema is
+     * checked against HubSpot's docs rather than recalled. Routing them is follow-up work.
+     */
+    #[DataProvider('nonLegacyProjectEventTypes')]
+    public function test_a_subscription_the_component_cannot_express_is_refused(string $eventType): void
+    {
+        config([
+            'hubspot.webhooks.app_model' => 'project',
+            'hubspot.webhooks.target_url' => 'https://app.example.com/hubspot/webhook',
+            'hubspot.webhooks.subscriptions' => [['event_type' => $eventType]],
+        ]);
+
+        $this->bindGateway(new FakeWebhookSubscriptionGateway);
+
+        $path = sys_get_temp_dir().'/hubspot-webhook-component-'.uniqid('', true).'.json';
+
+        $exitCode = Artisan::call('hubspot:webhooks:sync', ['--output' => $path]);
+        $joined = implode("\n", CommandOutput::linesOf(Artisan::output()));
+
+        self::assertSame(Command::FAILURE, $exitCode);
+        self::assertFileDoesNotExist($path);
+        self::assertStringContainsString($eventType, $joined);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function nonLegacyProjectEventTypes(): array
+    {
+        return [
+            'crmObjects family' => ['object.propertyChange'],
+            'crmObjects creation' => ['object.creation'],
+            'hubEvents privacy deletion' => ['contact.privacyDeletion'],
+            'hubEvents conversation' => ['conversation.creation'],
+        ];
+    }
+
+    /** The legacy families this component DOES express are untouched by the guard. */
+    public function test_legacy_declarations_still_render(): void
+    {
+        self::project();
+        $this->bindGateway(new FakeWebhookSubscriptionGateway);
+
+        self::assertSame(Command::SUCCESS, Artisan::call('hubspot:webhooks:sync'));
     }
 }
