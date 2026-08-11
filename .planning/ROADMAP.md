@@ -255,6 +255,23 @@ Plans:
 
 - [x] 05-05-PLAN.md — Legacy-private manual setup instructions and the project webhook component
 
+**Phase close-out, 2026-08-11.** All five plans have a SUMMARY on disk. Merged as PR #71 (merge
+`1c37fd5`); `release-please` opened PR #78 for v0.7.0, so the phase is merged but unreleased.
+
+The final review round is the part worth carrying forward. One reported P2 was true of five fields:
+because the controller answers `204` before any worker inserts, a value `hubspot_webhook_events`
+cannot hold was an acknowledged delivery that no longer existed. `NormalizedWebhookEvent` now bounds
+every field a constraint applies to, and **adding a constrained column to that table means adding
+its check there.** Two further members came from `codex review --base main` before push and neither
+was reported by the GitHub bot — a NUL byte ambiguating the `\0`-joined delivery identity, and
+`occurred_at`'s 2038 ceiling.
+
+**Deviation from 05-02-PLAN.md Task 1:** `occurred_at` ships as a `DATETIME`, not the
+`timestamp('occurred_at')` the plan named. It is the one column in that table whose value arrives
+from outside, so `TIMESTAMP`'s 2038 ceiling was reachable today rather than in 2038, and bounding
+normalization at 2038 instead would have refused well-formed events. Safe because the migration was
+in no released tag and the column is written but never read back by package code.
+
 ### Phase 6: Signals Core
 
 **Goal**: An application records behavioural signals against an anonymous visitor, binds them to a person the moment an email finally appears, and HubSpot receives one batched property write — with no API call ever occurring in a request lifecycle.
