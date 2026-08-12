@@ -615,6 +615,14 @@ return [
     |   this file -- `php artisan config:cache` serialises with
     |   var_export(), which throws on a closure.
     |
+    |   If you schedule `hubspot:signals:flush` with
+    |   `Schedule::command(...)->withoutOverlapping()`, that call is an
+    |   operational convenience against stacked SCHEDULED runs -- it is NOT
+    |   what makes concurrent flushes correct. A scheduler lock cannot see
+    |   the flush `identify()` dispatches outside the schedule, and this
+    |   claim (flush_lease above) is what covers that race too. See
+    |   README.md's "Flushing" section for the full argument.
+    |
     | The `properties` recorded against a signal are the consumer's OWN
     | customers' behavioural data. This package writes to HubSpot only what
     | the map's roll-up rules read -- the same concern `webhooks.audit_payload`

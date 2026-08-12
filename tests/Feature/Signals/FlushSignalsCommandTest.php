@@ -7,10 +7,12 @@ namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 use DateTimeInterface;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use PDOException;
 use ReflectionMethod;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\ServiceProvider;
@@ -166,6 +168,33 @@ final class FlushSignalsCommandTest extends SignalsTestCase
         );
     }
 
+    /**
+     * A `QueryException` that is NOT the missing-table case propagates unchanged -- the guard only
+     * translates "the table this package owns has never been created", never every other database
+     * failure. Simulated deterministically via `Connection::beforeExecuting()` (the same technique
+     * `FlushClaimTest::test_a_lost_reclaim_race_answers_held_rather_than_recursing()` uses),
+     * scoped to the query's own `FROM "hubspot_signals"` clause so it does not also intercept the
+     * guard's own `hasTable()` schema check -- which legitimately queries `sqlite_master` and must
+     * be allowed to answer `true` for this test to prove anything.
+     */
+    public function test_an_unrelated_query_failure_propagates_unchanged(): void
+    {
+        $connection = app(DatabaseManager::class)->connection();
+        $armed = true;
+
+        $connection->beforeExecuting(function (string $query, array $bindings) use ($connection, &$armed): void {
+            if ($armed && str_contains($query, 'from "hubspot_signals"')) {
+                $armed = false;
+
+                throw new QueryException((string) $connection->getName(), $query, $bindings, new PDOException('simulated'));
+            }
+        });
+
+        $this->expectException(QueryException::class);
+
+        Artisan::call('hubspot:signals:flush');
+    }
+
     // -- Test 7: dependencies resolved inside handle(), never the constructor -------------------
 
     public function test_the_command_is_registered_without_error_even_with_signals_unmigrated(): void
@@ -183,7 +212,7 @@ final class FlushSignalsCommandTest extends SignalsTestCase
 
     public function test_the_package_registers_no_schedule_of_its_own(): void
     {
-        $schedule = $this->app->make(Schedule::class);
+        $schedule = app(Schedule::class);
 
         self::assertSame([], $schedule->events());
     }

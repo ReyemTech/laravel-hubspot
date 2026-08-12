@@ -34,6 +34,7 @@ use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\Signals\BoundModelReader;
+use ReyemTech\Hubspot\Signals\Console\FlushSignalsCommand;
 use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
 use ReyemTech\Hubspot\Signals\FlushClaims;
 use ReyemTech\Hubspot\Signals\IdentityResolver;
@@ -549,6 +550,7 @@ final class ServiceProvider extends BaseServiceProvider
             AssociationsDoctorCommand::class,
             PruneWebhookEventsCommand::class,
             SyncWebhookSubscriptionsCommand::class,
+            FlushSignalsCommand::class,
         ];
     }
 

@@ -119,6 +119,35 @@ person, not per device. An operator can recognise a merged subject directly, wit
 doing anything special to surface it: its `hubspot_signals` rows carry more than one distinct
 `visitor_id` for the same `subject_type`/`subject_id` pair.
 
+### Flushing
+
+`Hubspot::identify()` dispatches one flush per call, covering exactly the subject just identified.
+For everything still buffered when no `identify()` call happens to touch it, schedule the
+package's own command:
+
+```
+php artisan hubspot:signals:flush
+```
+
+Selects every identified subject (`subject_type` set) carrying at least one unflushed row,
+batches them at 100 subjects per dispatch, and queues one `FlushSignalsJob` per batch. The package
+registers **no** schedule of its own (D-04) — add one line in your own `routes/console.php` or
+`bootstrap/app.php`'s `withSchedule()`:
+
+```php
+Schedule::command('hubspot:signals:flush')->everyFiveMinutes()->withoutOverlapping();
+```
+
+Frequency, queue and `withoutOverlapping()` are your own operational choices, sized for your own
+traffic and worker capacity. **`withoutOverlapping()` is convenience, not correctness.** It stops
+two scheduled runs from stacking, but the scheduler's own lock covers only the scheduled command
+— SIG-06 also lets `identify()` dispatch a flush for the very subject a scheduled run is
+mid-flight on, and no scheduler lock can see that second, independently-triggered dispatch. What
+actually makes two overlapping flushes safe is the per-subject claim `FlushSignalsJob` takes
+internally (D-06): the loser of that race skips the subject outright, leaving its rows for the
+next flush to pick up. `withoutOverlapping()` is still worth setting — it just is not the thing
+that makes concurrent flushes correct.
+
 ## Requirements
 
 - PHP `^8.3`
