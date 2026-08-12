@@ -5,12 +5,12 @@ milestone_name: milestone
 current_phase: 6
 current_phase_name: Signals Core
 status: planning
-stopped_at: Phase 6 planned — 7 plans, verification passed
+stopped_at: Phase 6 REPLANNED — 8 plans in 6 waves, after PR #81 review revised D-05 and D-06
 last_updated: "2026-08-12T01:20:51.220Z"
 progress:
-  total_phases: 6
+  total_phases: 9
   completed_phases: 5
-  total_plans: 37
+  total_plans: 38
   completed_plans: 30
 last_activity: 2026-08-11
 last_activity_desc: "Merged Phase 5 inbound webhooks as PR #71 (merge 1c37fd5). The final review round turned one reported P2 into five instances of one class -- every NormalizedWebhookEvent field the events table constrains is now bounded at normalization, so an unstorable value is a 400 rather than a 204 followed by a lost delivery. Two further members were found by codex review --base main before push: a NUL byte ambiguating the delivery-identity separator, and occurred_at's 2038 ceiling. Released v0.7.0 the same day: PR #79 reconciled this file, then PR #78 merged and release-please published tag reyemtech/laravel-hubspot-v0.7.0 and its GitHub release."
@@ -396,7 +396,7 @@ at ingest, one promoted on sign-off (D-34), and 15 added from the signals/attrib
 ## Session Continuity
 
 Last session: 2026-08-12T01:20:51.204Z
-Stopped at: Phase 6 planned — 7 plans, verification passed
+Stopped at: Phase 6 REPLANNED — 8 plans in 6 waves, after PR #81 review revised D-05 and D-06
 Resume file: .planning/phases/06-signals-core/06-01-PLAN.md
 
 **Landed after Phase 3 closed (2026-07-30):**

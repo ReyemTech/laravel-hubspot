@@ -282,25 +282,46 @@ in no released tag and the column is written but never read back by package code
   1. `Hubspot::signal('pricing_page_viewed', $visitorId, ['source' => 'google_ads', 'gclid' => '…'])` writes exactly one buffer row and issues **zero** HTTP requests, proven by `assertRequestCount(0)`. An unknown signal name or an unknown merge verb throws `ConfigurationException` naming the fix, and the map is validated **at boot rather than at flush**, so a typo fails fast instead of silently dropping data.
   2. `Hubspot::identify($visitorId, $user)` backfills the subject onto every buffered row for that visitor and dispatches the flush; binding a visitor id already bound to a **different** subject throws `SignalException`. The package reads no cookie, no session and no request state — the app supplies the visitor id.
   3. Every merge verb is provable with no HTTP, no database and no fake, because `RollUpCalculator` has no dependencies at all: `first_wins:<field>` returns the earliest value and is never overwritten once set, `last_wins:<field>` the most recent, `increment` the count of matching signals, `sum:<field>` a numeric total — plus a closure receiving the subject's matching signals. There is no `overwrite` verb.
-  4. One flush issues **one** batch property write regardless of how many signals buffered, and running the same flush twice produces the same property values — roll-ups are absolute values computed from the buffer, never read back from HubSpot, so a queue retry cannot double-count. The `first_wins:source|reconcile` modifier performs at most one read per subject, ever, recorded on the row so it never repeats.
+  4. One flush issues **one batch property write per `(objectType, idProperty)` chunk** — `sum(ceil(groupSize / 100))` requests, which for one subject is one — regardless of how many signals buffered, and never one request per subject. Running the same flush twice produces the same property values: roll-ups are absolute values computed from the buffer, never read back from HubSpot, so a queue **retry** cannot double-count. Two **overlapping** flushes cannot lose an update either, but that is a separate mechanism and not a consequence of absoluteness — a subject-level atomic claim serializes calculate-and-write per subject, and the loser skips that subject leaving its rows unflushed. The `first_wins:source|reconcile` modifier performs at most one read per subject, ever, recorded on the row so it never repeats.
+     *Amended 2026-08-12 (PR #81 review). The grouping is forced by `upsertMany()`'s signature, which carries one object type and one id property per request; `REQUIREMENTS.md` SIG-06's "issues **one** batch property write" predates that reading and wants the same one-line amendment — its intent, "not N", is what the grouping preserves.*
   5. `HUBSPOT_SIGNALS=false` (the default) leaves the package with no migration and no new table, so zero-migration install is intact; setting it true without migrating produces `HUBSPOT_SIGNALS=true but table 'hubspot_signals' does not exist — run 'php artisan migrate'.` rather than a raw SQL failure. `assertSignalRecorded()`, `assertSignalFlushed()` and `assertPropertyRolledUp()` are available on the fake, with `occurred_at` from a frozen Carbon and visitor ids from a counter.
 
-**Plans**: 7 plans, in 5 waves
+**Plans**: 8 plans, in 6 waves
 
 Plans:
-- [ ] 06-01-PLAN.md — Tracer: one signal to one buffer row to one batched write, plus SIG-01's gated migration (wave 1)
+- [ ] 06-01-PLAN.md — Tracer: one signal to one buffer row to one grouped batched write, plus SIG-01's gated migration (wave 1)
 - [ ] 06-02-PLAN.md — Signal map, closed four-verb vocabulary, boot-time validation (wave 2)
 - [ ] 06-03-PLAN.md — `identify()`, subject backfill, `SignalException` (wave 2)
 - [ ] 06-04-PLAN.md — `RollUpCalculator`, all four verbs, pure function (wave 3)
 - [ ] 06-05-PLAN.md — `SignalStore` contract and the `local` driver (wave 3)
-- [ ] 06-06-PLAN.md — `FlushSignalsJob` complete, `reconcile`, `hubspot:signals:flush` (wave 4)
-- [ ] 06-07-PLAN.md — Signal assertions on the fake, determinism (wave 5)
+- [ ] 06-06-PLAN.md — `FlushSignalsJob`: grouped by `(objectType, idProperty)` then chunked at 100, and the subject-level atomic claim (wave 4)
+- [ ] 06-07-PLAN.md — `reconcile` at most once per subject, and `hubspot:signals:flush` (wave 5)
+- [ ] 06-08-PLAN.md — Signal assertions on the fake, determinism (wave 6)
 
 **Blocking prerequisite found at plan time:** architecture rule **R5 does not admit `Illuminate`**,
 unlike R2/R3/R4. Every `src/Signals/` class needs `Illuminate\Support\Collection`,
 `Illuminate\Contracts\Config\Repository` and the queue contracts, so R5 is widened in 06-01 Task 1
 — mirroring R4's own 2026-08-06 widening, with committed fixtures proving `Signals` still rejects
 `HubSpot\*` (R1) and still rejects `Sync`/`Webhooks` (R7).
+
+**Replanned 2026-08-12 after automated review of PR #81 found two wrong premises.** The first plan
+set was seven plans in five waves; it is now eight in six, because D-05 and D-06 were both revised
+and the flush work no longer fits one plan.
+
+- **D-06 (P1, lost update).** The withdrawn reading claimed overlapping flushes were harmless "by
+  construction" because roll-ups are absolute. Absolute values are idempotent under a *retry of the
+  same input*, not under *two workers computing over different row sets* — the later worker's
+  correct value can be overwritten by an earlier worker's stale one, with every row already flushed
+  so nothing repairs it. A subject-level atomic claim around calculate-and-write now ships in 06-06,
+  decided on an affected row count, and rows are marked flushed by explicit id so a mid-flush insert
+  survives to repair the next run.
+- **D-05 (P2, unsendable batches).** "Chunk at 100 across subjects" was written against a Phase 4
+  precedent's prose rather than against
+  `ObjectGatewayContract::upsertMany(string $objectType, string $idProperty, array $records)`, which
+  carries one object type and one id property per request. Pending subjects are now grouped by
+  `(objectType, idProperty)` and each group chunked at 100; a flush issues
+  `sum(ceil(groupSize / 100))` requests, which is what every `assertRequestCount` in the phase is
+  written against.
 
 ### Phase 7: Signal Stores & Attribution
 

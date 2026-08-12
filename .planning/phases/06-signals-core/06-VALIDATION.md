@@ -57,21 +57,28 @@ memory flag while `vendor/bin/phpstan` does (`--memory-limit=512M`).
 | 6-04-CP | 04 | 3 | SIG-04 | — | Blocking decision checkpoint — tie-break rule (one-way with D-10) | manual | n/a — `checkpoint:decision`, gate `blocking` | n/a | ⬜ pending |
 | 6-04-01 | 04 | 3 | SIG-04 | T-06-15 / T-06-16 / T-06-18 / T-06-19 | `sum` throws on non-numeric rather than coercing; `flushed_at` never an input; escape hatch sees one subject's matching signals only | unit | `vendor/bin/pest tests/Unit/Signals/RollUpCalculatorTest.php` | ❌ W0 | ⬜ pending |
 | 6-04-02 | 04 | 3 | SIG-04 | T-06-17 | Plain-decimal rendering; loss-bearing totals refused | unit + mutation | `vendor/bin/pest tests/Unit/Signals/RollUpCalculatorTest.php && vendor/bin/pest --mutate --parallel --min=80 --class="ReyemTech\Hubspot\Signals\RollUpCalculator"` | ❌ W0 | ⬜ pending |
-| 6-05-CP | 05 | 3 | SIG-07 | T-06-21 | Blocking decision checkpoint — trail column shape (one-way per D-06) | manual | n/a — `checkpoint:decision`, gate `blocking` | n/a | ⬜ pending |
+| 6-05-CP | 05 | 3 | SIG-07 | T-06-21 | Blocking decision checkpoint — trail column shape (D-06's trail half, one-way) | manual | n/a — `checkpoint:decision`, gate `blocking` | n/a | ⬜ pending |
 | 6-05-01 | 05 | 3 | SIG-07 | T-06-20 / T-06-23 | Unique key on source row id; `isReady()` caches nothing | feature | `vendor/bin/pest tests/Feature/Signals/LocalSignalStoreTest.php` | ❌ W0 | ⬜ pending |
 | 6-05-02 | 05 | 3 | SIG-07 | T-06-22 | Unknown driver throws; never falls back to `local` | feature | `vendor/bin/pest tests/Feature/Signals/SignalStoreResolutionTest.php` | ❌ W0 | ⬜ pending |
 | 6-05-03 | 05 | 3 | SIG-07 | T-06-24 | Constrained columns behave identically on SQLite, MySQL and PostgreSQL | feature + mutation | `vendor/bin/pest tests/Feature/Signals && vendor/bin/pest --mutate --parallel --min=80 --class="ReyemTech\Hubspot\Signals\Stores\LocalSignalStore"` | ❌ W0 | ⬜ pending |
-| 6-06-01 | 06 | 4 | SIG-06 | T-06-25 / T-06-26 / T-06-27 / T-06-30 / T-06-31 | One write per flush; duplicate `id_property` refused pre-request; identifiers-only queue payload | feature | `vendor/bin/pest tests/Feature/Signals/FlushSignalsJobTest.php` | ❌ W0 | ⬜ pending |
-| 6-06-02 | 06 | 4 | SIG-06 | T-06-28 / T-06-29 | `reconcile` gated on the persisted column, at most one read per subject ever | feature | `vendor/bin/pest tests/Feature/Signals/FlushReconcileTest.php` | ❌ W0 | ⬜ pending |
-| 6-06-03 | 06 | 4 | SIG-06 | T-06-31 | Command bounds selection at 100; package registers no schedule | feature | `vendor/bin/pest tests/Feature/Signals/FlushSignalsCommandTest.php` | ❌ W0 | ⬜ pending |
-| 6-07-01 | 07 | 5 | SIG-08 | T-06-33 / T-06-35 | One record must carry the asserted property; failure messages name the subject, not the log | unit | `vendor/bin/pest tests/Unit/Signals/SignalReceiptLogTest.php` | ❌ W0 | ⬜ pending |
-| 6-07-02 | 07 | 5 | SIG-08 | T-06-32 / T-06-34 / T-06-36 | Records only while faked; reset at Octane boundaries; constructor signature stays a strict prefix | feature | `vendor/bin/pest tests/Feature/Signals/FakeAssertionsTest.php tests/Feature/HubspotFakeTest.php` | ❌ W0 | ⬜ pending |
-| 6-07-03 | 07 | 5 | SIG-08 | T-06-37 | Suite green with the token config key explicitly unset | feature | `vendor/bin/pest tests/Feature/Signals/SignalDeterminismTest.php tests/Feature/FakeDeterminismTest.php` | ❌ W0 | ⬜ pending |
+| 6-06-CP | 06 | 4 | SIG-06 | T-06-40 | Blocking decision checkpoint — subject-level flush claim storage (D-06 revised, one-way) | manual | n/a — `checkpoint:decision`, gate `blocking` | n/a | ⬜ pending |
+| 6-06-01 | 06 | 4 | SIG-06 | T-06-25 / T-06-26 / T-06-30 / T-06-38 | Grouped by `(objectType, idProperty)` then chunked at 100; each request's object type and id property asserted, not just the count; collision guard scoped to the group; identifiers-only queue payload | feature | `vendor/bin/pest tests/Feature/Signals/FlushSignalsJobTest.php` | ❌ W0 | ⬜ pending |
+| 6-06-02 | 06 | 4 | SIG-06 | T-06-27 / T-06-40 / T-06-41 / T-06-42 / T-06-43 | Overlapping flushes cannot lose an update; decided on affected row count, never a prior read; per subject, not per flush; lease recovers a dead worker's claim | feature + mutation | `vendor/bin/pest tests/Feature/Signals/FlushClaimTest.php && vendor/bin/pest --mutate --parallel --min=80 --class="ReyemTech\Hubspot\Signals\FlushSignalsJob,ReyemTech\Hubspot\Signals\FlushClaims"` | ❌ W0 | ⬜ pending |
+| 6-07-01 | 07 | 5 | SIG-06 | T-06-28 / T-06-29 | `reconcile` gated on the persisted column, at most one read per subject ever, batched one read per group, none at all for a subject whose claim was not acquired | feature | `vendor/bin/pest tests/Feature/Signals/FlushReconcileTest.php` | ❌ W0 | ⬜ pending |
+| 6-07-02 | 07 | 5 | SIG-06 | T-06-31 / T-06-44 / T-06-45 | Command bounds selection at 100 and never selects unidentified rows; package registers no schedule; documentation does not present `withoutOverlapping()` as correctness | feature | `vendor/bin/pest tests/Feature/Signals/FlushSignalsCommandTest.php` | ❌ W0 | ⬜ pending |
+| 6-08-01 | 08 | 6 | SIG-08 | T-06-33 / T-06-35 | One record must carry the asserted property; failure messages name the subject, not the log | unit | `vendor/bin/pest tests/Unit/Signals/SignalReceiptLogTest.php` | ❌ W0 | ⬜ pending |
+| 6-08-02 | 08 | 6 | SIG-08 | T-06-32 / T-06-34 / T-06-36 | Records only while faked; reset at Octane boundaries; constructor signature stays a strict prefix | feature | `vendor/bin/pest tests/Feature/Signals/FakeAssertionsTest.php tests/Feature/HubspotFakeTest.php` | ❌ W0 | ⬜ pending |
+| 6-08-03 | 08 | 6 | SIG-08 | T-06-37 | Suite green with the token config key explicitly unset | feature | `vendor/bin/pest tests/Feature/Signals/SignalDeterminismTest.php tests/Feature/FakeDeterminismTest.php` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
 No three consecutive tasks lack an `<automated>` verify: every non-checkpoint task in every plan
-carries one, and the two checkpoints are separated by implementation tasks that do.
+carries one, and the three checkpoints are each followed immediately by implementation tasks that do.
+
+*Regenerated 2026-08-12 for the eight-plan replan (PR #81 review revised D-05 and D-06). The flush
+work split into 06-06 (grouped write plus the subject-level claim) and 06-07 (`reconcile` plus the
+command); the fake assertions moved from 06-07 to 06-08. Threat ids T-06-38 … T-06-45 are new and
+extend the register rather than renumbering it — T-06-01 … T-06-37 keep their meanings.*
 
 ---
 
@@ -83,8 +90,8 @@ directories every later plan writes into.
 
 - [ ] `tests/Feature/Signals/` — does not exist; created by 06-01 Task 1
 - [ ] `tests/Unit/Signals/` — does not exist; created by 06-02 Task 1
-- [ ] `tests/Support/Signals/` — does not exist; `SignalSubject.php` and `SignalsTestCase.php` created by 06-01 Task 1
-- [ ] `database/migrations/signals/` — does not exist; created by 06-01 Task 1
+- [ ] `tests/Support/Signals/` — does not exist; `SignalSubject.php` and `SignalsTestCase.php` created by 06-01 Task 1. The fixture config needs at least two bindings on distinct `(objectType, idProperty)` pairs — a `contacts`/`email` subject and a `companies`/`domain` subject — because 06-06's grouping tests are unwritable against a single-binding fixture, and a suite that cannot express two groups would pass a flat-chunking implementation
+- [ ] `database/migrations/signals/` — does not exist; created by 06-01 Task 1; gains the trail migration in 06-05 and the flush-claim migration in 06-06, all three behind the same `hubspot.signals.enabled === true` group gate
 - [ ] `src/Signals/` — a `.gitkeep` placeholder today; genuinely greenfield
 - [x] Framework install — none needed. Pest 4, `pest-plugin-arch` and `pest --mutate` are all installed.
 
@@ -96,6 +103,7 @@ directories every later plan writes into.
 |----------|-------------|------------|-------------------|
 | The `first_wins` tie-break rule | SIG-04 | A `checkpoint:decision` — the rule is one-way once installs compute under it, and `06-CONTEXT.md` delegates the choice rather than locking it | 06-04's checkpoint presents three options with the recommendation named; reply with the option id |
 | The `hubspot_signal_trail` column shape and payload default | SIG-07 | A `checkpoint:decision` — D-06 rates the trail's unique key one-way, and the payload default is a data-retention decision made on a consumer's behalf | 06-05's checkpoint presents three options with the recommendation named; reply with the option id |
+| The subject-level flush claim's storage shape | SIG-06 | A `checkpoint:decision` — D-06 (revised 2026-08-12) rates the claim one-way because it ships in a migration, and the literal reading of its wording (a column on `hubspot_signals`) does not on its own give per-subject exclusion, so the trade-off is worth naming before the migration exists | 06-06's checkpoint presents three options with the recommendation (option-a) named; reply with the option id |
 | CI gate results on GitHub | all | Local green is not evidence — Phase 1 shipped four gate failures that passed locally and none were reachable without pushing | Push the branch, watch the required checks, report what GitHub says rather than what the local run said |
 
 Everything else in this phase has automated verification.
