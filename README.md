@@ -148,6 +148,40 @@ internally (D-06): the loser of that race skips the subject outright, leaving it
 next flush to pick up. `withoutOverlapping()` is still worth setting — it just is not the thing
 that makes concurrent flushes correct.
 
+### Testing
+
+`Hubspot::fake()` carries three assertions for the signals path, alongside the ones it already
+carries for outbound writes (`assertSynced()`) and inbound webhooks (`assertWebhookHandled()`):
+
+```php
+Hubspot::fake();
+
+Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+$lead = Lead::create(['email' => 'ada@example.com']);
+Hubspot::identify('visitor-1', $lead);
+
+Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed', ['source' => 'google_ads']);
+Hubspot::assertPropertyRolledUp($lead, 'pricing_page_views', '1');
+Hubspot::assertRequestCount(1);
+```
+
+`assertSignalRecorded()` reads the INBOUND buffer receipt, never the outbound Guzzle history — a
+buffered signal never leaves the process (SIG-02), so it never satisfies `assertRequestCount()` or
+`assertSynced()`, and the reverse holds too. `assertSignalFlushed()` and `assertPropertyRolledUp()`
+take a bound model (as above) or a `'SubjectType#subjectId'` string for a caller with no model
+instance in hand. `assertPropertyRolledUp()` requires that ONE flushed record carried the property
+with the expected value, mirroring `assertSynced()`'s one-record rule — never a value assembled by
+checking the property's presence and the value's presence as two independent facts.
+
+`assertRequestCount()` is the EXISTING mechanism, reused rather than duplicated: a flush issues
+`sum(ceil(groupSize / 100))` requests, one per `(objectType, idProperty)` chunk of at most 100
+subjects (D-05) — the worked example's `1` is that arithmetic for one subject in one group, not a
+promise that every flush is a single request. Two subjects bound to different object types, or
+more than 100 subjects sharing one, issue more than one.
+
+The whole signals suite runs with **no credentials and no internet** — every assertion above
+passes with `HUBSPOT_TOKEN` unset, exactly like the rest of this package's test surface (D-12).
+
 ## Requirements
 
 - PHP `^8.3`

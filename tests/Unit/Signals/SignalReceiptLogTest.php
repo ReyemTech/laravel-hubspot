@@ -98,6 +98,21 @@ final class SignalReceiptLogTest extends TestCase
         $log->assertSignalFlushed('App\\Models\\Lead', '1', ['pricing_page_views' => '3', 'first_touch_source' => 'google_ads']);
     }
 
+    /**
+     * The subset check genuinely decides the assertion -- a flushed subject whose recorded
+     * properties do NOT carry the expected subset must fail, never pass merely because the
+     * subject itself was flushed.
+     */
+    public function test_assert_signal_flushed_fails_when_the_expected_subset_is_wrong(): void
+    {
+        $log = new SignalReceiptLog;
+        $log->recordFlushed('App\\Models\\Lead', '1', ['pricing_page_views' => '3']);
+
+        $this->expectException(AssertionFailedError::class);
+
+        $log->assertSignalFlushed('App\\Models\\Lead', '1', ['pricing_page_views' => '999']);
+    }
+
     public function test_assert_property_rolled_up_names_that_the_property_was_never_recorded_when_absent_entirely(): void
     {
         $log = new SignalReceiptLog;
@@ -125,6 +140,11 @@ final class SignalReceiptLogTest extends TestCase
         self::assertStringContainsString('pricing_page_views', $message);
         self::assertStringContainsString('9', $message);
         self::assertStringContainsString('3', $message);
+        // The RECORDED value ('3') specifically, type-tagged -- not merely "(string)" appearing
+        // anywhere, which the EXPECTED value's own (separately-built, unmutated) describeValue()
+        // call would already satisfy. This is what proves describeValues() maps each recorded
+        // entry through describeValue() individually rather than imploding the raw values.
+        self::assertStringContainsString('"3" (string)', $message);
     }
 
     /**

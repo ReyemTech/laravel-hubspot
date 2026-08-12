@@ -232,14 +232,43 @@ final class FakeAssertionsTest extends SignalsTestCase
     /**
      * A string subject identity with no `'#'` throws naming the expected format, rather than
      * silently misreading the whole string as the subject type with an empty id.
+     *
+     * Asserted by POSITION as well as by presence, mirroring `FailedAssertion`'s own reasoning for
+     * why this package pins directed messages exactly rather than by substring: a message built
+     * from three concatenated fragments can drop or reorder one and still contain any ONE fragment
+     * checked in isolation.
      */
     public function test_a_malformed_string_subject_identity_throws_naming_the_expected_format(): void
     {
         Hubspot::fake();
 
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage("'SubjectType#subjectId'");
+        // A single regex asserting presence AND ORDER of all three concatenated fragments in one
+        // shot -- a message built from three concatenated parts can drop or reorder one and still
+        // contain any ONE fragment checked in isolation, which a plain substring check would miss.
+        $this->expectExceptionMessageMatches(
+            "/'SubjectType#subjectId'.*not-a-valid-identity.*Pass the Eloquent model instead.*have one\\./s",
+        );
 
         Hubspot::assertSignalFlushed('not-a-valid-identity');
+    }
+
+    /**
+     * `Hubspot::assertPropertyRolledUp()` genuinely FAILS for a wrong value, exercising the whole
+     * delegation chain -- `HubspotManager::assertPropertyRolledUp()` -> `HubspotFake::assertPropertyRolledUp()`
+     * -> `SignalReceiptLog::assertPropertyRolledUp()` -- so a delegate call dropped at ANY of those
+     * three links would leave this a silent no-op instead of a real assertion.
+     */
+    public function test_assert_property_rolled_up_through_the_facade_fails_for_a_wrong_value(): void
+    {
+        Hubspot::fake();
+        $this->threePricingViews('visitor-1');
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+        Hubspot::identify('visitor-1', $subject);
+
+        $this->expectException(AssertionFailedError::class);
+
+        Hubspot::assertPropertyRolledUp($subject, 'pricing_page_views', '999');
     }
 }
