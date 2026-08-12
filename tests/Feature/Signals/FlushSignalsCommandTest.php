@@ -82,7 +82,10 @@ final class FlushSignalsCommandTest extends SignalsTestCase
         $exitCode = Artisan::call('hubspot:signals:flush');
 
         self::assertSame(Command::SUCCESS, $exitCode);
-        self::assertContains('No pending identified subjects to flush.', CommandOutput::linesOf(Artisan::output()));
+        // The exact, WHOLE output -- not merely "contains" -- so a fallthrough that also prints a
+        // second "Dispatched 0 ..." line (the empty-array chunk loop is a harmless no-op, so a
+        // missing early return would not otherwise be observable) is caught.
+        self::assertSame(['No pending identified subjects to flush.'], CommandOutput::linesOf(Artisan::output()));
         Bus::assertNotDispatched(FlushSignalsJob::class);
     }
 

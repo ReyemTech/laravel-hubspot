@@ -317,6 +317,141 @@ final class FlushReconcileTest extends SignalsTestCase
         Hubspot::assertRequestCount(0);
     }
 
+    // -- Test 12 (mutation coverage): the read chunks at exactly 100, not 99 or 101 -------------
+
+    public function test_one_hundred_and_one_reconciling_subjects_in_one_group_issue_two_reads_of_100_and_1(): void
+    {
+        $fake = Hubspot::fake();
+
+        for ($i = 1; $i <= 101; $i++) {
+            $subject = SignalSubject::query()->create(['email' => "chunk-{$i}@example.com"]);
+            $this->insertBoundSignal("visitor-chunk-{$i}", $subject, 'pricing_page_viewed', ['source' => "source-{$i}"]);
+        }
+
+        $entries = array_values(SignalSubject::query()
+            ->get()
+            ->map(fn (SignalSubject $subject): array => $this->subjectEntry($subject))
+            ->all());
+
+        app()->call([new FlushSignalsJob($entries), 'handle']);
+
+        $readSizes = [];
+        foreach ($fake->recordedRequests() as $entry) {
+            $path = $entry['request']->getUri()->getPath();
+
+            if (! str_contains($path, '/batch/read')) {
+                continue;
+            }
+
+            /** @var array{inputs: list<array{id: string}>} $body */
+            $body = json_decode((string) $entry['request']->getBody(), true);
+            $readSizes[] = count($body['inputs']);
+        }
+
+        sort($readSizes);
+        self::assertSame([1, 100], $readSizes);
+    }
+
+    /**
+     * The property union is deduplicated AND stays a proper list (sequential keys from zero), never
+     * merely deduplicated with gaps left in the keys -- `array_unique()` keeps the FIRST occurrence
+     * of each value and discards later ones, so a duplicate landing BEFORE a still-unique later
+     * value leaves a gap unless the result is re-indexed. Two signal names, so the two subjects
+     * contribute DIFFERENT-length property lists (`first_touch_source` common to both,
+     * `first_touch_medium` only the second's) -- the shape `array_merge()` alone cannot dedup
+     * without leaving that gap: `[source, source, medium]` -- (kept, DUPE removed, kept) --
+     * survives at keys `{0, 2}`, not `{0, 1}`. A gapped array json-encodes as an OBJECT
+     * (`{"0":...,"2":...}`), not an ARRAY (`[...]`), which is what this test asserts against the
+     * RAW wire body rather than a `json_decode()`'d and therefore re-typed PHP value.
+     */
+    public function test_the_union_of_reconcile_properties_across_a_chunk_is_deduplicated_and_flattened(): void
+    {
+        config(['hubspot.signals.map' => [
+            'pricing_page_viewed' => [
+                'object' => 'contacts',
+                'properties' => [
+                    'first_touch_source' => 'first_wins:source|reconcile',
+                ],
+            ],
+            'demo_requested' => [
+                'object' => 'contacts',
+                'properties' => [
+                    'first_touch_medium' => 'first_wins:medium|reconcile',
+                ],
+            ],
+        ]]);
+
+        $fake = Hubspot::fake();
+
+        $first = SignalSubject::query()->create(['email' => 'union-first@example.com']);
+        $second = SignalSubject::query()->create(['email' => 'union-second@example.com']);
+        $this->insertBoundSignal('visitor-union-first', $first, 'pricing_page_viewed', ['source' => 'a']);
+        $this->insertBoundSignal('visitor-union-second', $second, 'pricing_page_viewed', ['source' => 'c']);
+        $this->insertBoundSignal('visitor-union-second-demo', $second, 'demo_requested', ['medium' => 'd']);
+
+        app()->call([new FlushSignalsJob([
+            $this->subjectEntry($first),
+            $this->subjectEntry($second),
+        ]), 'handle']);
+
+        $readRequest = $fake->recordedRequests()[0]['request'];
+        self::assertStringContainsString('/batch/read', $readRequest->getUri()->getPath());
+
+        $rawBody = (string) $readRequest->getBody();
+
+        // The RAW wire shape -- a re-indexed list serialises as a JSON array; a gapped
+        // (non-list) array serialises as a JSON object. json_decode()'ing first and inspecting
+        // the resulting PHP array would hide exactly this difference, since PHP re-keys either
+        // shape into an ordinary array on the way back in.
+        self::assertMatchesRegularExpression('/"properties":\["[^"]+","[^"]+"\]/', $rawBody);
+
+        // Likewise `inputs`: $chunk is keyed by the subject's own id VALUE (an email, never a
+        // sequential index), and array_map() alone preserves those STRING keys -- HubSpot's batch
+        // read endpoint expects `inputs` as a JSON ARRAY, and a keyed PHP array with non-numeric
+        // string keys serialises as a JSON OBJECT instead (verified directly: removing the
+        // array_values() wrapping $ids produces `"inputs":{"first@...":...}`, not `"inputs":[...]`).
+        self::assertMatchesRegularExpression('/"inputs":\[\{/', $rawBody);
+
+        /** @var array{properties: list<string>} $readBody */
+        $readBody = json_decode($rawBody, true);
+
+        sort($readBody['properties']);
+        self::assertSame(['first_touch_medium', 'first_touch_source'], $readBody['properties']);
+    }
+
+    /**
+     * Reconciling a subject refreshes `updated_at` too -- asserted in isolation from the LATER
+     * `flushed_at` write, which also touches `updated_at` on the same rows and would otherwise mask
+     * whether the reconcile step's own update ran at all. The write is made to throw (mirroring
+     * Test 7's decorator) so the ONLY update these rows can have received is the reconcile one.
+     */
+    public function test_reconciling_a_subject_refreshes_updated_at(): void
+    {
+        Hubspot::fake();
+        $realGateway = Hubspot::objects();
+
+        $subject = SignalSubject::query()->create(['email' => 'refreshes-updated-at@example.com']);
+        $this->insertBoundSignal('visitor-refreshes-updated-at', $subject, 'pricing_page_viewed', ['source' => 'x']);
+
+        DB::table('hubspot_signals')
+            ->where('visitor_id', 'visitor-refreshes-updated-at')
+            ->update(['updated_at' => now()->subDay()]);
+
+        app()->instance(ObjectGatewayContract::class, self::throwingOnUpsert($realGateway));
+
+        try {
+            app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+            self::fail('Expected an ApiException.');
+        } catch (ApiException) {
+            // Expected -- the write never ran; only the reconcile step could have touched this row.
+        }
+
+        $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-refreshes-updated-at')->first();
+        self::assertNotNull($row);
+        self::assertSame('2026-08-12 12:00:00', $row->updated_at);
+    }
+
     // -- helpers -------------------------------------------------------------------------------
 
     /** @return array{subjectType: class-string, subjectId: string} */
