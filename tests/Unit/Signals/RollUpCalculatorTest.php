@@ -7,44 +7,16 @@ namespace ReyemTech\Hubspot\Tests\Unit\Signals;
 use DateTimeImmutable;
 use Illuminate\Support\Collection;
 use LogicException;
-use ReyemTech\Hubspot\Signals\Contracts\SignalCalculator;
 use ReyemTech\Hubspot\Signals\MergeRule;
 use ReyemTech\Hubspot\Signals\RollUpCalculator;
 use ReyemTech\Hubspot\Tests\Support\Signals\BufferedSignal;
 use ReyemTech\Hubspot\Tests\Support\Signals\IntentScore;
+use ReyemTech\Hubspot\Tests\Support\Signals\NonScalarSignalCalculator;
+use ReyemTech\Hubspot\Tests\Support\Signals\RecordingSignalCalculator;
 use ReyemTech\Hubspot\Tests\TestCase;
 use UnexpectedValueException;
 
 mutates(RollUpCalculator::class);
-
-/**
- * A `SignalCalculator` fixture that records the exact `Collection` it was invoked with, so a test
- * can assert the invokable escape hatch (D-08) received precisely the signals `compute()` was
- * given -- not a copy, not a superset, not another subject's rows. Declared in this file rather
- * than a new `tests/Support` class: this test file is the only consumer, and 06-01's own lesson
- * (PHPUnit's file-based discovery collects only ONE *test* class per file) does not apply to a
- * plain, non-`TestCase` support class living alongside it.
- */
-final class RecordingSignalCalculator implements SignalCalculator
-{
-    /**
-     * @var Collection<int, array{
-     *     id: int,
-     *     signal_name: string,
-     *     properties: array<string, mixed>,
-     *     occurred_at: \DateTimeInterface,
-     *     flushed_at: ?\DateTimeInterface,
-     * }>|null
-     */
-    public static ?Collection $received = null;
-
-    public function __invoke(Collection $signals): mixed
-    {
-        self::$received = $signals;
-
-        return $signals->pluck('id')->implode(',');
-    }
-}
 
 /**
  * SIG-04: `RollUpCalculator::compute()` is a pure function of its two arguments -- no fake, no
@@ -154,7 +126,11 @@ final class RollUpCalculatorTest extends TestCase
         $calculator = new RollUpCalculator;
 
         $this->expectException(UnexpectedValueException::class);
-        $this->expectExceptionMessage('is not numeric');
+        $this->expectExceptionMessage(
+            'RollUpCalculator cannot sum property "amount": the value \'not-a-number\' is not '
+            .'numeric. Every signal that carries this field must carry it as a number or a numeric '
+            .'string.',
+        );
 
         $calculator->compute(
             self::toArrays([
@@ -208,9 +184,105 @@ final class RollUpCalculatorTest extends TestCase
         self::assertSame(['p' => '10'], $calculator->compute([$signal], ['p' => self::rule(IntentScore::class)]));
 
         $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('does not support the "overwrite" merge verb');
+        $this->expectExceptionMessage(
+            'RollUpCalculator does not support the "overwrite" merge verb. Supported verbs: '
+            .'first_wins, last_wins, increment, sum, plus an invokable class-string.',
+        );
 
         $calculator->compute([$signal], ['p' => self::bogusRule('overwrite')]);
+    }
+
+    public function test_require_field_throws_a_directed_message_for_a_field_bearing_verb_with_no_field(): void
+    {
+        $calculator = new RollUpCalculator;
+        $signal = (new BufferedSignal(1, 'pricing_page_viewed', ['field' => '5'], new DateTimeImmutable('2026-01-01')))->toArray();
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage(
+            'RollUpCalculator cannot compute the "first_wins" verb without a field -- MergeRule '
+            .'should have refused this declaration before it reached here.',
+        );
+
+        $calculator->compute([$signal], ['p' => self::bogusRule('first_wins')]);
+    }
+
+    public function test_require_calculator_throws_a_directed_message_for_an_invokable_rule_with_no_calculator(): void
+    {
+        $calculator = new RollUpCalculator;
+        $signal = (new BufferedSignal(1, 'pricing_page_viewed', [], new DateTimeImmutable('2026-01-01')))->toArray();
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage(
+            'RollUpCalculator reached the invokable branch for a rule carrying no calculator '
+            .'class-string -- MergeRule should have refused this declaration before it reached '
+            .'here.',
+        );
+
+        $calculator->compute([$signal], ['p' => self::bogusRule('invokable')]);
+    }
+
+    public function test_an_invokable_returning_a_non_scalar_value_throws_a_directed_message(): void
+    {
+        $calculator = new RollUpCalculator;
+        $signal = (new BufferedSignal(1, 'pricing_page_viewed', [], new DateTimeImmutable('2026-01-01')))->toArray();
+
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage(
+            NonScalarSignalCalculator::class.'::__invoke() returned a array, which cannot be '
+            .'written to HubSpot as a property value. An invokable signal calculator must return '
+            .'a scalar.',
+        );
+
+        $calculator->compute([$signal], ['p' => self::rule(NonScalarSignalCalculator::class)]);
+    }
+
+    /**
+     * `RemoveStringCast`: {@see RollUpCalculator}'s field-value cast
+     * matters only when the buffered value is not ALREADY a string -- a JSON-decoded int property
+     * value proves the cast runs, since `assertSame()` distinguishes `5` (int) from `'5'` (string).
+     */
+    public function test_a_non_string_scalar_field_value_is_cast_to_a_string_in_the_output(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $result = $calculator->compute(
+            self::toArrays([
+                new BufferedSignal(1, 'pricing_page_viewed', ['count' => 5], new DateTimeImmutable('2026-01-01')),
+            ]),
+            [
+                'p' => self::rule('first_wins:count'),
+                'q' => self::rule('last_wins:count'),
+            ],
+        );
+
+        self::assertSame(['p' => '5', 'q' => '5'], $result);
+    }
+
+    /**
+     * `compute()` accepts any `iterable`, not just an `array` -- a `Generator` proves the
+     * non-array branch of its own input-normalisation is exercised, not merely present.
+     */
+    public function test_a_generator_input_is_accepted_identically_to_an_array(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $signals = self::toArrays([
+            new BufferedSignal(1, 'pricing_page_viewed', ['source' => 'google_ads'], new DateTimeImmutable('2026-01-01')),
+            new BufferedSignal(2, 'pricing_page_viewed', ['source' => 'direct'], new DateTimeImmutable('2026-01-02')),
+        ]);
+
+        $generator = (static function () use ($signals): iterable {
+            foreach ($signals as $signal) {
+                yield $signal;
+            }
+        })();
+
+        $rules = ['first_touch_source' => self::rule('first_wins:source')];
+
+        self::assertSame(
+            $calculator->compute($signals, $rules),
+            $calculator->compute($generator, $rules),
+        );
     }
 
     public function test_flushed_and_unflushed_rows_produce_identical_increment_and_sum_values(): void
@@ -528,8 +600,31 @@ final class RollUpCalculatorTest extends TestCase
         ]);
 
         $this->expectException(\OverflowException::class);
+        $this->expectExceptionMessage(
+            'RollUpCalculator cannot sum property "amount": the total 9.007199254741E+15 cannot be '
+            .'represented as a 64-bit float without losing precision (it exceeds 2**53). Summing it '
+            .'here would write a silently-rounded absolute value to HubSpot.',
+        );
 
         $calculator->compute($signals, ['lifetime_value' => self::rule('sum:amount')]);
+    }
+
+    /**
+     * The threshold itself, not just a value safely past it: a total of exactly `2**53 - 1`
+     * (`9007199254740991`, the largest float below the refusal boundary) must NOT throw --
+     * otherwise the boundary comparison is off by one in the wrong direction.
+     */
+    public function test_a_sum_exactly_one_below_the_precision_threshold_does_not_throw(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $signals = self::toArrays([
+            new BufferedSignal(1, 'purchase', ['amount' => '9007199254740991'], new DateTimeImmutable('2026-01-01')),
+        ]);
+
+        $result = $calculator->compute($signals, ['lifetime_value' => self::rule('sum:amount')]);
+
+        self::assertSame(['lifetime_value' => '9007199254740991'], $result);
     }
 
     /**
