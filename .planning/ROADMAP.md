@@ -334,6 +334,16 @@ and the flush work no longer fits one plan.
   2. The `custom_object` driver writes associated records on the subject using the generic objects API and the **directional** associations already built, needing no credential beyond the existing PAT; the `timeline` driver's third credential class — an app id and a developer API key, distinct from both the PAT and the webhook client secret — is documented as such, and its absence throws `ConfigurationException` naming what is needed and where to get it.
   3. Four questions are answered against **live HubSpot documentation and not from recall**, each recorded in the repository with its source URL and the date checked: which tiers permit custom objects, which permit custom behavioural events, current per-interval and daily rate limits per tier, and the exact credential and scope requirements of the Timeline Events API. If custom objects prove tier-gated above what this package targets, the driver ships with that requirement documented rather than quietly dropped.
   4. `php artisan hubspot:signals:prune` deletes flushed rows and unidentified rows older than `retention_days` (default 90 — the window the `li_fat_id` case requires), reports what it deleted, and is safe to run repeatedly and on a schedule.
+     *Constrained by D-10 (06-CONTEXT.md), recorded here at Phase 6 plan time so Phase 7's planner
+     inherits it rather than rediscovering it: `RollUpCalculator` computes `increment`/`sum` over
+     ALL of a subject's rows, flushed included, so deleting flushed rows for an IDENTIFIED subject
+     silently shrinks those values on the next flush and overwrites HubSpot with a smaller, wrong
+     number. This prune must therefore either never delete an identified subject's rows, or
+     materialise the roll-up before deleting them. `retention_days` applies cleanly only to
+     UNIDENTIFIED rows, which is where the buffer's unbounded growth actually comes from. Two more
+     tables this prune inherits, from 06-06 and 06-05 respectively: the subject-level flush-claim
+     table (released rows persist rather than delete, per `FlushClaims::release()`), and the `local`
+     driver's own event trail.*
   5. The attribution property-name convention is documented with a worked `paid_landing` example (`hs_first_touch_gclid`, `hs_first_touch_source`, `hs_first_touch_at`, `hs_first_landing_page`), and a first-touch value recorded before a later branded or direct visit is provably not overwritten by it.
 
 **Plans**: TBD

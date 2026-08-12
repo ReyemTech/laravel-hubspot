@@ -91,7 +91,15 @@ use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
  * ever runs -- is the lease's own backstop, not a second `finally`; see
  * `FlushClaimTest::test_a_job_that_throws_mid_flush_leaves_the_claim_recoverable_through_the_lease()`.
  *
+ * ## The `reconcile` modifier reads at most once per subject, ever (SIG-06)
+ *
+ * `first_wins:<field>|reconcile` is the single documented exception to D-40's buffer-first rule --
+ * see {@see SignalReconciler} for the mechanism itself, extracted to its own class purely to keep
+ * this file under STANDARDS §6b's 500-line cap. It runs per group, inside the claim and before that
+ * group's write, between {@see self::buildGroups()} and {@see self::sendGroup()} below.
+ *
  * @see FlushClaims for the claim mechanism itself.
+ * @see SignalReconciler for the reconcile read.
  */
 final class FlushSignalsJob implements ShouldQueue
 {
@@ -134,6 +142,8 @@ final class FlushSignalsJob implements ShouldQueue
         ksort($groups);
 
         foreach ($groups as $group) {
+            $group = SignalReconciler::reconcile($group, $connection, $gateway);
+
             self::sendGroup($group, $connection, $gateway, $store, $claims, $token);
         }
     }
@@ -160,8 +170,9 @@ final class FlushSignalsJob implements ShouldQueue
      *         properties: array<string, string>,
      *         subjectType: string,
      *         subjectId: string,
-     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}>,
+     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string}>,
      *         rowIds: list<int>,
+     *         reconcileProperties: list<string>,
      *     }>,
      * }>
      */
@@ -186,11 +197,11 @@ final class FlushSignalsJob implements ShouldQueue
             try {
                 $binding = $bindings->for($subjectType);
 
-                /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}> $rows */
+                /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string}> $rows */
                 $rows = $connection->table('hubspot_signals')
                     ->where('subject_type', $subjectType)
                     ->where('subject_id', $subjectId)
-                    ->get(['id', 'signal_name', 'properties', 'occurred_at', 'flushed_at'])
+                    ->get(['id', 'signal_name', 'properties', 'occurred_at', 'flushed_at', 'reconciled_at'])
                     ->all();
 
                 if ($rows === []) {
@@ -245,6 +256,7 @@ final class FlushSignalsJob implements ShouldQueue
                     'subjectId' => $subjectId,
                     'rows' => $rows,
                     'rowIds' => array_map(static fn (object $row): int => $row->id, $rows),
+                    'reconcileProperties' => SignalReconciler::candidateProperties($map, $rows),
                 ];
 
                 $carriedForward = true;
@@ -270,8 +282,9 @@ final class FlushSignalsJob implements ShouldQueue
      *         properties: array<string, string>,
      *         subjectType: string,
      *         subjectId: string,
-     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}>,
+     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string}>,
      *         rowIds: list<int>,
+     *         reconcileProperties: list<string>,
      *     }>,
      * }  $group
      */
