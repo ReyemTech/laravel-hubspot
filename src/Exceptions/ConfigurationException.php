@@ -861,4 +861,25 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
         );
     }
+
+    /**
+     * `hubspot.signals.store` (env `HUBSPOT_SIGNAL_STORE`) is set to a value the package does not
+     * recognise (SIG-07). Thrown from the `default` arm of `ServiceProvider::register()`'s
+     * `SignalStore` binding, mirroring `unknownStore()`'s shape exactly: a package that fell back
+     * to `local` would keep working while the operator believed a different driver was in use --
+     * the silent-wrong-behaviour failure this package exists to prevent, wearing a config bug's
+     * clothes. Naming a Phase 7 driver (`custom_object`, `timeline`) before it ships throws here
+     * too, rather than being quietly tolerated as a forward declaration.
+     *
+     * @param  list<string>  $validValues
+     */
+    public static function unknownSignalStore(string $given, array $validValues): self
+    {
+        return new self(sprintf(
+            'HUBSPOT_SIGNAL_STORE is set to "%s", which is not a supported signal store. Set it '
+            .'to one of: %s.',
+            $given,
+            implode(', ', $validValues),
+        ));
+    }
 }

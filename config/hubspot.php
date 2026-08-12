@@ -536,7 +536,24 @@ return [
     |   naming the table and `php artisan migrate`.
     | - store: HUBSPOT_SIGNAL_STORE, the event-trail driver (SIG-07). 'local'
     |   is the only driver this phase ships, and is the default because it is
-    |   the only one that works on any portal with no new credential.
+    |   the only one that works on any portal with no new credential, no tier
+    |   gate and no portal schema. 'custom_object' and 'timeline' arrive in a
+    |   later release, and naming either NOW throws a ConfigurationException
+    |   naming the supported drivers -- it is never silently ignored as a
+    |   forward declaration. All three drivers write the SAME roll-up
+    |   properties through Gateway; they differ only in WHERE the per-event
+    |   trail entry that produced those properties is recorded.
+    | - trail_payload: false by default, mirroring 'webhooks' -> audit_payload
+    |   above exactly, for the identical reason -- the `local` driver's
+    |   hubspot_signal_trail table would otherwise persist the consumer's OWN
+    |   customers' behavioural data (visitor ids, ad click identifiers,
+    |   referrer and page-path values, all tied to an identified person by
+    |   the time a row reaches that table), and its retention is UNBOUNDED
+    |   until Phase 7 ships `hubspot:signals:prune`. A package that defaulted
+    |   this true would be an opt-out data-retention decision made on
+    |   somebody else's behalf. Set true only when the operator wants the
+    |   recorded properties inspectable alongside the trail row that
+    |   flushed them.
     | - map: signal name -> object type + HubSpot property roll-up rules
     |   (SIG-03, SIG-04). Plain scalars and arrays only, here and everywhere
     |   in this file -- `php artisan config:cache` serialises with
@@ -596,6 +613,7 @@ return [
     'signals' => [
         'enabled' => (bool) env('HUBSPOT_SIGNALS', false),
         'store' => env('HUBSPOT_SIGNAL_STORE', 'local'),
+        'trail_payload' => (bool) env('HUBSPOT_SIGNAL_TRAIL_PAYLOAD', false),
         'map' => [
             //
         ],

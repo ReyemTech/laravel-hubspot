@@ -34,9 +34,11 @@ use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\Signals\BoundModelReader;
+use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
 use ReyemTech\Hubspot\Signals\IdentityResolver;
 use ReyemTech\Hubspot\Signals\SignalMap;
 use ReyemTech\Hubspot\Signals\SignalRecorder;
+use ReyemTech\Hubspot\Signals\Stores\LocalSignalStore;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncGate;
@@ -310,6 +312,55 @@ final class ServiceProvider extends BaseServiceProvider
                 $featureEnabled,
             );
         });
+
+        // The signal-history driver selector is HUBSPOT_SIGNAL_STORE, the identical
+        // throwing-default-arm shape AssociationTypeStore above already establishes: an
+        // unrecognised value throws rather than falling back, because a package that fell back
+        // would keep working while the operator believed a different driver was in use -- the
+        // silent-wrong-behaviour failure this package exists to prevent, wearing a config bug's
+        // clothes. Phase 7 adds custom_object and timeline as further arms; until then naming
+        // either must throw too, not be quietly tolerated as a forward declaration. Shared, like
+        // WebhookEventStore above: holds no transport Hubspot::fake() would ever need to
+        // invalidate, only a database connection.
+        //
+        // Extracted to its own named method (rather than an inline closure, unlike every binding
+        // above it) purely to keep register()'s own cyclomatic complexity under the ceiling
+        // Generic.Metrics.CyclomaticComplexity enforces -- a second match/default-arm pair nested
+        // directly in this method pushed it over. The extraction changes no behaviour.
+        $this->app->singleton(
+            SignalStore::class,
+            fn (Application $app): SignalStore => self::resolveSignalStore($app),
+        );
+    }
+
+    /**
+     * The `SignalStore` binding's own resolver -- see the call site in {@see self::register()} for
+     * why this is a named method rather than the inline closure every other binding above it uses.
+     */
+    private static function resolveSignalStore(Application $app): SignalStore
+    {
+        $config = $app->make('config');
+
+        /** @var mixed $store */
+        $store = $config->get('hubspot.signals.store');
+
+        /** @var bool $trailPayload */
+        $trailPayload = $config->get('hubspot.signals.trail_payload');
+
+        /** @var bool $featureEnabled */
+        $featureEnabled = $config->get('hubspot.signals.enabled');
+
+        return match ($store) {
+            'local' => new LocalSignalStore(
+                $app->make(DatabaseManager::class)->connection(),
+                $trailPayload,
+                $featureEnabled,
+            ),
+            default => throw ConfigurationException::unknownSignalStore(
+                is_string($store) ? $store : get_debug_type($store),
+                self::supportedSignalStores(),
+            ),
+        };
     }
 
     /**
@@ -325,6 +376,24 @@ final class ServiceProvider extends BaseServiceProvider
     private static function supportedStores(): array
     {
         return ['array', 'cache', 'database'];
+    }
+
+    /**
+     * The driver names HUBSPOT_SIGNAL_STORE accepts, named once so the selector above and the
+     * error message that lists the valid values cannot drift apart -- mirrors supportedStores()
+     * above exactly, for the identical reason.
+     *
+     * A method rather than a class constant: `pest --mutate` reports a mutation on a constant
+     * declaration as UNCOVERED, because a constant has no executed line for coverage to attribute a
+     * test to. Dropping a driver from this list is a real defect. `custom_object` and `timeline`
+     * (Phase 7) are deliberately not listed yet -- naming either throws until they ship, rather
+     * than being silently tolerated as a forward declaration.
+     *
+     * @return list<string>
+     */
+    private static function supportedSignalStores(): array
+    {
+        return ['local'];
     }
 
     public function boot(): void

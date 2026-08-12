@@ -178,6 +178,42 @@ final class LocalSignalStoreTest extends TestCase
     }
 
     /**
+     * The `false` branch of `ConfigurationException::missingSignalTrailTable()` -- mirrors
+     * `MigrationGateTest::test_disabled_signal_with_the_flag_off_and_no_table_names_the_flag_as_the_alternative_fix()`.
+     * `featureEnabled` is passed directly to the store rather than resolved through the container,
+     * but the `test_disabled_` prefix still keeps `hubspot.signals.enabled` off so the "before
+     * migrating" assertion below is meaningful against the shipped default.
+     */
+    public function test_disabled_append_with_the_flag_off_and_no_table_names_the_flag_as_the_alternative_fix(): void
+    {
+        self::assertFalse(config('hubspot.signals.enabled'));
+        self::assertFalse(Schema::hasTable('hubspot_signal_trail'), 'This test is only meaningful before migrating.');
+
+        try {
+            $this->store(featureEnabled: false)->append(
+                1,
+                'App\\Models\\Contact',
+                '42',
+                'pricing_page_viewed',
+                [],
+                Carbon::now(),
+            );
+
+            self::fail('Expected a directed ConfigurationException for the absent table.');
+        } catch (ConfigurationException $exception) {
+            self::assertSame(
+                'Appending to the signal trail requires HUBSPOT_SIGNALS=true, and it is currently '
+                .'false. The "hubspot_signal_trail" table is where each buffered signal\'s flush '
+                .'is recorded, so appending cannot run without it. Set HUBSPOT_SIGNALS=true and '
+                .'run `php artisan migrate` (+ `php artisan config:cache` if you cache config). '
+                .'Nothing needs publishing first: this package loads its own migrations whenever '
+                .'HUBSPOT_SIGNALS=true.',
+                $exception->getMessage(),
+            );
+        }
+    }
+
+    /**
      * A database failure that is not a missing table is not relabelled as one -- mirrors
      * `MigrationGateTest::test_enabled_a_query_failure_with_the_table_present_is_not_reported_as_a_missing_table()`.
      */
