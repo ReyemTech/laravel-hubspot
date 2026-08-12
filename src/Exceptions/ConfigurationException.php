@@ -836,17 +836,33 @@ final class ConfigurationException extends LogicException implements HubspotExce
     public static function signalObjectTypeMismatch(string $signalName, string $mapObjectType, string $boundObjectType, string $modelClass): self
     {
         return new self(sprintf(
-            'hubspot.signals.map["%s"] declares object type "%s", but no hubspot.models binding '
-            .'claims it -- the closest configured binding is %s, bound to "%s". Add a '
-            .'hubspot.models entry naming "%s", or correct the map\'s "object" key so it names '
-            .'an object type a binding actually claims. Both sides are compared after '
-            .'Registry\HubspotObjectType::normalise(), so a spelling difference like "Contacts" '
-            .'vs "contacts" is never the cause.',
-            $signalName,
-            $mapObjectType,
-            $modelClass,
-            $boundObjectType,
-            $mapObjectType,
+            'hubspot.signals.map["%s"] declares object type "%s", but no hubspot.models binding claims it -- the closest configured binding is %s, bound to "%s". Add a hubspot.models entry naming "%s", or correct the map\'s "object" key so it names an object type a binding actually claims. Both sides are compared after Registry\HubspotObjectType::normalise(), so a spelling difference like "Contacts" vs "contacts" is never the cause.',
+            $signalName, $mapObjectType, $modelClass, $boundObjectType, $mapObjectType,
+        ));
+    }
+
+    /**
+     * D-03's RUNTIME half. `signalObjectTypeMismatch()` above is the BOOT check: it proves some
+     * bound model claims the map's object type, with no runtime subject in hand. It cannot catch
+     * the case this one exists for -- a signal declared for one object type, buffered against a
+     * subject whose OWN binding resolves to a different one (a `companies`-declared signal name
+     * reused for a `contacts`-bound subject, or the reverse). Both sides pass the boot check
+     * individually; only a specific (signal, subject) pairing at flush time can catch the mismatch.
+     *
+     * Thrown from `FlushSignalsJob::computeAcrossSignalNames()`, per subject, for every buffered
+     * signal name that HAS matching rows for that subject -- never filtered away silently, per the
+     * P1 finding this closes: a dropped signal is exactly the silent attribution loss SIG-06 exists
+     * to prevent. The whole flush aborts rather than skipping just this subject, mirroring
+     * `duplicateSignalSubjectIdentifier()`'s own "refuse rather than guess" precedent.
+     *
+     * `$subjectIdentity` is pre-composed by the caller as `ClassName#id`, the same convention
+     * `duplicateSignalSubjectIdentifier()` already uses.
+     */
+    public static function signalSubjectObjectTypeMismatch(string $signalName, string $mapObjectType, string $subjectObjectType, string $subjectIdentity): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"] declares object type "%s", but subject %s resolved to "%s" through hubspot.models -- refusing to flush this signal\'s properties there. A signal\'s declared object type and the object type its subject resolves to must match, or a roll-up computed for one HubSpot object would be written to a different one. Record "%s" only for subjects bound to "%s" in hubspot.models, or add a separate hubspot.signals.map entry declaring "%s" for subjects of that kind.',
+            $signalName, $mapObjectType, $subjectIdentity, $subjectObjectType, $signalName, $mapObjectType, $subjectObjectType,
         ));
     }
 

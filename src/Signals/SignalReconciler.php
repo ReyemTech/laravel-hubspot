@@ -119,7 +119,7 @@ final class SignalReconciler
         // array_values() before the spread: $chunk is keyed by the subject's own id VALUE, and
         // PHP 8.1+ treats a spread of STRING keys as named arguments -- array_merge() rejects
         // them outright. Resetting to a plain list first is what makes the spread positional.
-        $properties = array_values(array_unique(array_merge(
+        $reconcileProperties = array_values(array_unique(array_merge(
             [],
             ...array_values(array_map(static fn (array $subject): array => $subject['reconcileProperties'], $chunk)),
         )));
@@ -129,12 +129,28 @@ final class SignalReconciler
         // an int array key by PHP, and findMany()'s $ids parameter is typed list<string>.
         $ids = array_values(array_map(static fn (array $subject): string => $subject['id'], $chunk));
 
-        $result = $gateway->findMany($group['objectType'], $ids, $properties, $group['idProperty']);
+        // The id property rides along in the requested properties too, never assumed to be part of
+        // HubSpot's default response set -- `properties` (unlike `create`/`update`/`upsert`) governs
+        // exactly what a READ returns, so leaving it out would silently drop it from the response
+        // (PR #82 review). It is what `$found` below correlates each record back to its subject
+        // with, the identical technique `FlushSignalsJob`'s own write-side fix uses.
+        $requestedProperties = array_values(array_unique([...$reconcileProperties, $group['idProperty']]));
+
+        $result = $gateway->findMany($group['objectType'], $ids, $requestedProperties, $group['idProperty']);
 
         $found = [];
 
         foreach ($result->recordsDespitePartialFailure() as $object) {
-            $found[$object->id] = $object->properties;
+            $portalIdValue = $object->properties[$group['idProperty']] ?? null;
+
+            if ($portalIdValue === null) {
+                // No echoed id property to correlate on -- HubSpot's own internal record id
+                // (`$object->id`) is never in the same namespace as `$group['idProperty']`'s
+                // values, so it cannot be used as a fallback correlation key here either.
+                continue;
+            }
+
+            $found[$portalIdValue] = $object->properties;
         }
 
         foreach ($chunk as $idValue => $subject) {

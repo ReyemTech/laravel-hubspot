@@ -61,6 +61,31 @@ final class SignalMap
     }
 
     /**
+     * D-03's RUNTIME half (PR #82 review): {@see self::validate()} only proves SOME bound model
+     * claims the map's object type, with no runtime subject in hand. `FlushSignalsJob::
+     * computeAcrossSignalNames()` calls this once per signal name that has matching buffered rows
+     * for a subject, comparing that signal's OWN declared object type against the SAME subject's
+     * `BoundModelReader`-resolved one -- the pairing only a runtime subject can prove or disprove.
+     * `$subjectIdentity` is pre-composed by the caller as `ClassName#id`.
+     *
+     * @throws ConfigurationException if the signal's declared object type differs from
+     *                                `$subjectObjectType`, or if no entry is named `$name`
+     */
+    public function assertBoundToSameObjectType(string $name, string $subjectObjectType, string $subjectIdentity): void
+    {
+        $mapObjectType = $this->objectTypeFor($name);
+
+        if ($mapObjectType !== $subjectObjectType) {
+            throw ConfigurationException::signalSubjectObjectTypeMismatch(
+                $name,
+                $mapObjectType,
+                $subjectObjectType,
+                $subjectIdentity,
+            );
+        }
+    }
+
+    /**
      * @return array<string, MergeRule>
      *
      * @throws ConfigurationException if no entry is named `$name`

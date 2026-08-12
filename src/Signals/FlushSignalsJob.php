@@ -28,8 +28,7 @@ use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
  * strict `records()` accessor throws on any 207 partial failure and would abandon every subject
  * that succeeded alongside one that failed (T-06-25).
  *
- * ## Grouped before it is chunked, and that ordering is a correctness requirement (D-05, revised
- * 2026-08-12)
+ * ## Grouped before it is chunked (D-05, revised 2026-08-12) -- ordering is a correctness requirement
  *
  * `upsertMany(string $objectType, string $idProperty, array $records)` carries ONE object type and
  * ONE id property per request, so a chunk assembled from subjects spanning more than one
@@ -52,19 +51,23 @@ use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
  * than failing the whole batch (SIG-06 stale-payload edge) -- there is no value left to upsert on,
  * and its rows stay unflushed for a later flush to repair once the data is fixed.
  *
- * Two distinct subjects resolving to the SAME `id_property` value in the SAME group are refused
- * with {@see ConfigurationException::duplicateSignalSubjectIdentifier()} before any request for
- * that group is issued (T-06-26) -- HubSpot would otherwise merge two people's roll-ups into one
- * record and report success. The same value under two DIFFERENT id properties is not a collision
- * (SIG-06 adjacency edge): the check is scoped to the group.
+ * **The RESPONSE's `id` is a different value -- HubSpot's own internal record id, never the
+ * request's `id` back again** (PR #82 review; confirmed against `vendor/hubspot/api-client`
+ * 14.1.0's `SimplePublicUpsertObject` and developers.hubspot.com, fetched 2026-08-12). `sendGroup()`
+ * folds the id property into the written PROPERTIES too (a harmless no-op) and confirms via
+ * `properties[$idProperty]`, mirroring `Sync\SyncHubspotObjectsBatchJob::storeConfirmedRecords()`.
+ * Two subjects resolving to the SAME value in the SAME group are refused with
+ * {@see ConfigurationException::duplicateSignalSubjectIdentifier()}. **A signal's declared object
+ * type must match its subject's bound one at RUNTIME too (D-03)** -- boot (D-07) only proves SOME
+ * bound model claims each map `object`; `computeAcrossSignalNames()` calls the runtime half PR
+ * #82's review found missing, {@see SignalMap::assertBoundToSameObjectType()}.
  *
- * ## Marked flushed by explicit row id, never by a blanket subject-scoped UPDATE (D-06, T-06-39)
+ * ## Marked flushed by explicit row id, never a blanket subject-scoped UPDATE (D-06, T-06-39)
  *
  * Exactly the `hubspot_signals.id` values a subject's own roll-up calculation read are marked
  * `flushed_at`, with `WHERE id IN (...) AND flushed_at IS NULL` -- scoped per SUBJECT, not per
  * group, and only for a subject the batch response actually confirmed. A row inserted for the
- * subject between the read and the write therefore stays unflushed and repairs the value on the
- * next flush.
+ * subject between the read and the write therefore stays unflushed and repairs on the next flush.
  *
  * ## Trail append precedes the flushed-at write, per subject the batch confirmed
  *
@@ -75,37 +78,24 @@ use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
  *
  * ## The subject-level atomic claim (D-06, revised 2026-08-12)
  *
- * Absolute roll-up values (D-10, D-40) make a RETRY of the SAME input idempotent; they do NOT make
- * two workers computing over DIFFERENT row sets safe -- a later-computed, correct value can be
- * overwritten by an earlier worker's stale one, permanently, with no unflushed rows left to repair
- * it (the exact trace `06-CONTEXT.md` D-06 works through). Scheduler `withoutOverlapping()` does
- * not close this either: the lock covers the command, while SIG-06 requires `identify()` to
- * dispatch a flush that races it.
- *
  * `Signals\FlushClaims::claim()` is taken for EVERY subject before anything is computed for it --
- * a `Held` subject is skipped entirely (no roll-up computed, no record built, no row marked
- * flushed, no exception) -- and released once that subject's write has been decided (confirmed,
- * rejected, or never sent because it had nothing to flush), in a `finally` so a throwing subject
- * does not strand the claim for a whole lease. The claim is per subject, not per flush: a job that
- * loses subject S to another worker still writes subject T in the same run. The one gap a
- * `finally` cannot close -- the gateway call itself throwing before the per-subject release loop
- * ever runs -- is the lease's own backstop, not a second `finally`; see
- * `FlushClaimTest::test_a_job_that_throws_mid_flush_leaves_the_claim_recoverable_through_the_lease()`.
+ * a `Held` subject is skipped entirely -- and released once that subject's write has been decided,
+ * in a `finally` so a throwing subject does not strand the claim for a whole lease. See
+ * {@see FlushClaims} for the mechanism and why absolute values alone do not make this safe.
  *
  * ## The `reconcile` modifier reads at most once per subject, ever (SIG-06)
  *
  * `first_wins:<field>|reconcile` is the single documented exception to D-40's buffer-first rule --
- * see {@see SignalReconciler} for the mechanism itself, extracted to its own class purely to keep
- * this file under STANDARDS §6b's 500-line cap. It runs per group, inside the claim and before that
- * group's write, between {@see self::buildGroups()} and {@see self::sendGroup()} below.
+ * see {@see SignalReconciler} for the mechanism, extracted to its own class to keep this file under
+ * STANDARDS §6b's 500-line cap. Runs per group, between {@see self::buildGroups()} and
+ * {@see self::sendGroup()} below.
  *
  * ## The flush receipt (SIG-08)
  *
  * `Signals\Contracts\SignalReceiptRecorder::recordSignalFlushed()` is called per subject in
- * `sendGroup()` ONLY after that subject's write is confirmed by the response AND its trail is
- * appended -- a receipt records that work FINISHED, never that it merely started, mirroring the
- * identical rule `Webhooks\Contracts\WebhookReceiptRecorder`'s own docblock states. No-op unless a
- * fake is installed, per that contract's own gate.
+ * `sendGroup()` ONLY after that subject's write is confirmed AND its trail is appended -- a
+ * receipt records that work FINISHED, mirroring `Webhooks\Contracts\WebhookReceiptRecorder`'s own
+ * rule. No-op unless a fake is installed, per that contract's own gate.
  *
  * @see FlushClaims for the claim mechanism itself.
  * @see SignalReconciler for the reconcile read.
@@ -218,7 +208,7 @@ final class FlushSignalsJob implements ShouldQueue
                     continue;
                 }
 
-                $properties = self::computeAcrossSignalNames($calculator, $map, $rows);
+                $properties = self::computeAcrossSignalNames($calculator, $map, $rows, $binding, $subjectType, $subjectId);
 
                 if ($properties === []) {
                     continue;
@@ -315,21 +305,27 @@ final class FlushSignalsJob implements ShouldQueue
         );
 
         foreach (array_chunk($subjects, 100) as $chunk) {
+            // The id property rides along in `properties` too -- see the class docblock.
             $sendChunk = array_map(
                 static fn (array $subjectRecord): array => [
                     'id' => $subjectRecord['id'],
-                    'properties' => $subjectRecord['properties'],
+                    'properties' => [$group['idProperty'] => $subjectRecord['id']] + $subjectRecord['properties'],
                 ],
                 $chunk,
             );
 
             $result = $gateway->upsertMany($group['objectType'], $group['idProperty'], $sendChunk);
 
-            // recordsDespitePartialFailure(), never records() -- see the class docblock. A
-            // 207 partial failure must not throw and abandon every subject that DID succeed
-            // in the same chunk.
+            // recordsDespitePartialFailure(), never records() -- see the class docblock. A 207
+            // partial failure must not throw and abandon every subject that DID succeed in the chunk.
             $confirmed = $result->recordsDespitePartialFailure();
-            $confirmedIds = array_map(static fn ($object): string => $object->id, $confirmed);
+            // A missing echoed id property maps to null here, which never equals a real
+            // $subjectRecord['id'] string under the strict in_array() check below -- there is no
+            // behavioural difference between filtering it out and leaving it in, so it is left in.
+            $confirmedIdValues = array_map(
+                static fn ($object): ?string => $object->properties[$group['idProperty']] ?? null,
+                $confirmed,
+            );
 
             Log::info('HubSpot signal roll-up flush wrote a batch.', [
                 'object_type' => $group['objectType'],
@@ -347,7 +343,7 @@ final class FlushSignalsJob implements ShouldQueue
 
             foreach ($chunk as $subjectRecord) {
                 try {
-                    if (! in_array($subjectRecord['id'], $confirmedIds, true)) {
+                    if (! in_array($subjectRecord['id'], $confirmedIdValues, true)) {
                         // Not confirmed -- left unflushed. The next flush recomputes an absolute
                         // value over the full set, exactly like a retry.
                         continue;
@@ -430,13 +426,20 @@ final class FlushSignalsJob implements ShouldQueue
      * HubSpot property, the first one processed (declared array order in `SignalMap::names()`)
      * wins -- `SignalMap` does not police cross-signal property collisions, so this is the same
      * "first configured wins" precedent the array union operator gives for free, not a new rule
-     * invented here.
+     * invented here. D-03's runtime half (class docblock) also lives here, checked only for a
+     * signal name WITH matching rows.
      *
      * @param  list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}>  $rows
      * @return array<string, string>
      */
-    private static function computeAcrossSignalNames(RollUpCalculator $calculator, SignalMap $map, array $rows): array
-    {
+    private static function computeAcrossSignalNames(
+        RollUpCalculator $calculator,
+        SignalMap $map,
+        array $rows,
+        BoundSignalSubject $binding,
+        string $subjectType,
+        string $subjectId,
+    ): array {
         $properties = [];
 
         foreach ($map->names() as $signalName) {
@@ -448,6 +451,8 @@ final class FlushSignalsJob implements ShouldQueue
             if ($matching === []) {
                 continue;
             }
+
+            $map->assertBoundToSameObjectType($signalName, $binding->objectType, $subjectType.'#'.$subjectId);
 
             $rules = $map->rulesFor($signalName);
 
