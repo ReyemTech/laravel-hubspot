@@ -144,6 +144,22 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
      * Binds a visitor id to a subject, backfilling every buffered signal that visitor id has
      * recorded, then dispatches the batched HubSpot write (SIG-05). Delegates to
      * `Signals\IdentityResolver`.
+     *
+     * **`$visitorId` is supplied by the caller, and this package never reads a cookie, the
+     * session or the request to invent one (D9).** That is what keeps `Signals` free of any
+     * request-scoped state — the whole call succeeds identically whether it runs inside a
+     * controller, a queued job, or a console command with no request in flight at all.
+     *
+     * **Many visitor ids may bind to ONE subject**, and roll-ups compute across the union of
+     * every visitor id a subject carries — the same person on their phone and their laptop, both
+     * attributed to one record, which is what lets a `first_wins` property capture the genuinely
+     * earliest touch across a person's own devices (D-09). The reverse is refused: rebinding one
+     * visitor id to a SECOND, different subject throws `Exceptions\SignalException` and mutates no
+     * buffered row — one visitor id may attribute to only one subject at a time.
+     *
+     * **Issues zero HTTP.** Every buffered row this call backfills is written in one local UPDATE,
+     * and the HubSpot write itself is dispatched to the queue as `Signals\FlushSignalsJob` rather
+     * than issued inline.
      */
     public function identify(string $visitorId, Model $subject): void
     {

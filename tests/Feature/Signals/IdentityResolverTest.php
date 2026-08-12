@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -227,6 +228,77 @@ final class IdentityResolverTest extends SignalsTestCase
         self::assertSame(SignalSubject::class, $row->subject_type);
     }
 
+    /**
+     * D-02's cast branch: a non-string SCALAR `id_property` value (an int, here) is cast to a
+     * string rather than refused -- only null, a non-scalar, or a value that trims to '' is
+     * refused. `SignalSubject::email` carries no cast, so assigning an int leaves it as one in the
+     * model's own attribute array until this check casts it.
+     */
+    public function test_a_non_string_scalar_id_property_value_is_cast_to_a_string_and_accepted(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-scalar');
+        $subject = SignalSubject::query()->create(['email' => 'placeholder@example.com']);
+        $subject->setAttribute('email', 12345);
+
+        Hubspot::identify('visitor-scalar', $subject);
+
+        $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-scalar')->first();
+        self::assertNotNull($row);
+        self::assertSame(SignalSubject::class, $row->subject_type);
+    }
+
+    /**
+     * D-02's `default => null` branch: a non-scalar `id_property` value (an array, here) is
+     * refused exactly like a missing one -- `is_scalar()` answers false for it, so it falls
+     * through the `match` to the same `null` result a genuinely absent value produces.
+     */
+    public function test_a_non_scalar_id_property_value_throws_like_a_missing_one(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-non-scalar');
+        $subject = SignalSubject::query()->create(['email' => 'placeholder@example.com']);
+        $subject->setAttribute('email', ['not', 'a scalar']);
+
+        try {
+            Hubspot::identify('visitor-non-scalar', $subject);
+
+            self::fail('Expected a SignalException for a non-scalar id_property value.');
+        } catch (SignalException $exception) {
+            self::assertStringContainsString('email', $exception->getMessage());
+        }
+    }
+
+    /**
+     * **A database failure that is not a missing table is not relabelled as one.** Mirrors
+     * `MigrationGateTest::test_enabled_a_query_failure_with_the_table_present_is_not_reported_as_a_missing_table()`,
+     * applied to `IdentityResolver::guarded()` -- the table is replaced by one of the same name
+     * without the `subject_type` column `refuseRebindToADifferentSubject()` selects, so the query
+     * fails while `Schema::hasTable()` still answers true.
+     */
+    public function test_a_query_failure_with_the_table_present_is_not_reported_as_a_missing_table(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        DB::statement('DROP TABLE hubspot_signals');
+        Schema::create('hubspot_signals', function (Blueprint $table): void {
+            $table->id();
+        });
+
+        self::assertTrue(Schema::hasTable('hubspot_signals'));
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+
+        $this->expectException(QueryException::class);
+
+        Hubspot::identify('visitor-1', $subject);
+    }
+
     public function test_a_subject_class_absent_from_hubspot_models_throws_unbound_signal_subject(): void
     {
         Hubspot::fake();
@@ -330,5 +402,66 @@ final class IdentityResolverTest extends SignalsTestCase
         $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-1')->first();
         self::assertNotNull($row);
         self::assertSame(SignalSubject::class, $row->subject_type);
+    }
+
+    /**
+     * `Hubspot::identify()` reaches `Signals\IdentityResolver::identify()` with the arguments
+     * unchanged (06-03-PLAN.md Task 3). The container's `IdentityResolver` singleton binding is
+     * swapped for a plain recorder object -- `IdentityResolver` is `final`, so it cannot be
+     * extended into a spy, and `instance()` binds whatever object it is given without checking
+     * that it is actually one.
+     */
+    public function test_hubspot_identify_reaches_identity_resolver_with_the_arguments_unchanged(): void
+    {
+        $spy = new class
+        {
+            public ?string $visitorId = null;
+
+            public ?Model $subject = null;
+
+            public function identify(string $visitorId, Model $subject): void
+            {
+                $this->visitorId = $visitorId;
+                $this->subject = $subject;
+            }
+        };
+
+        app()->instance(IdentityResolver::class, $spy);
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+
+        Hubspot::identify('visitor-facade', $subject);
+
+        self::assertSame('visitor-facade', $spy->visitorId);
+        self::assertSame($subject, $spy->subject);
+    }
+
+    /**
+     * The README's own promise: a shared-device merge is not silent, because the merged subject's
+     * buffer rows carry more than one distinct `visitor_id` (D-09's accepted consequence,
+     * 06-03-PLAN.md Task 3, README.md's Signals section).
+     */
+    public function test_a_merged_subjects_rows_carry_both_visitor_ids_so_an_operator_can_find_it(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-shared-device-1');
+        Hubspot::signal('pricing_page_viewed', 'visitor-shared-device-2');
+        $subject = SignalSubject::query()->create(['email' => 'shared@example.com']);
+
+        Hubspot::identify('visitor-shared-device-1', $subject);
+        Hubspot::identify('visitor-shared-device-2', $subject);
+
+        $visitorIds = DB::table('hubspot_signals')
+            ->where('subject_type', SignalSubject::class)
+            ->where('subject_id', (string) $subject->getKey()) // @phpstan-ignore-line cast.string
+            ->pluck('visitor_id')
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        self::assertSame(['visitor-shared-device-1', 'visitor-shared-device-2'], $visitorIds);
     }
 }

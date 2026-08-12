@@ -100,6 +100,25 @@ taking the first would report success regardless of which id was really written.
 directions are confirmed it records the observed pairing into the registry; when either is not, it
 records nothing.
 
+## Signals
+
+Behavioural signals are recorded against a **visitor id the application supplies** — this package
+never reads a cookie, the session or the request to invent one (D9). `Hubspot::signal()` buffers a
+signal with zero HTTP; `Hubspot::identify()` binds that visitor id to a bound model, backfilling
+every buffered signal for it and dispatching one batched HubSpot write.
+
+One subject may be bound to **many** visitor ids — the same person on their phone and their
+laptop — and roll-ups compute across the union, which is what lets a `first_wins` property capture
+the genuinely earliest touch across a person's own devices. The reverse is refused: one visitor id
+binding to a **second, different** subject throws `SignalException`.
+
+**Accepted consequence:** a visitor id reused across two different people — a shared device, a
+shared browser profile — merges their attribution onto one subject. Visitor-id issuance is the
+application's own responsibility (D9), so the fix lives there: issue a fresh visitor id per
+person, not per device. An operator can recognise a merged subject directly, without this package
+doing anything special to surface it: its `hubspot_signals` rows carry more than one distinct
+`visitor_id` for the same `subject_type`/`subject_id` pair.
+
 ## Requirements
 
 - PHP `^8.3`

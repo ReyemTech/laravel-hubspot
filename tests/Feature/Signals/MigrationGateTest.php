@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schema;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\ServiceProvider;
+use ReyemTech\Hubspot\Signals\IdentityResolver;
 use ReyemTech\Hubspot\Signals\SignalRecorder;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 use ReyemTech\Hubspot\Tests\TestCase;
@@ -95,6 +96,44 @@ final class MigrationGateTest extends TestCase
     private function recorder(): SignalRecorder
     {
         return app(SignalRecorder::class);
+    }
+
+    /**
+     * Same reasoning as {@see self::recorder()}: resolved from the container, not called through
+     * `Hubspot::identify()`, to avoid the identical PHPStan dead-catch false positive against the
+     * facade's `@method` signature (06-03-PLAN.md Task 2).
+     */
+    private function identityResolver(): IdentityResolver
+    {
+        return app(IdentityResolver::class);
+    }
+
+    /**
+     * `IdentityResolver::guarded()`'s own missing-table translation (06-03-PLAN.md Task 2),
+     * mirroring `test_enabled_signal_with_the_flag_on_and_no_table_names_the_table_and_migrate()`
+     * above exactly. The subject is never persisted -- `identify()`'s D-02 check reads only the
+     * in-memory `id_property` attribute, so no `signal_subjects` table is needed for this failure
+     * to reach the `hubspot_signals` query that actually throws.
+     */
+    public function test_enabled_identify_with_the_flag_on_and_no_table_names_the_table_and_migrate(): void
+    {
+        self::assertTrue(config('hubspot.signals.enabled'));
+        self::assertFalse(Schema::hasTable('hubspot_signals'), 'This test is only meaningful before migrating.');
+
+        $subject = new SignalSubject(['email' => 'ada@example.com']);
+
+        try {
+            $this->identityResolver()->identify('visitor-1', $subject);
+
+            self::fail('Expected a directed ConfigurationException for the absent table.');
+        } catch (ConfigurationException $exception) {
+            self::assertSame(
+                'HUBSPOT_SIGNALS is true but the "hubspot_signals" table does not exist. Run '
+                .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+                .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+                $exception->getMessage(),
+            );
+        }
     }
 
     public function test_disabled_a_default_install_registers_no_migration_path_and_migrate_creates_no_table(): void
