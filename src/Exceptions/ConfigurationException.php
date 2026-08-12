@@ -628,6 +628,41 @@ final class ConfigurationException extends LogicException implements HubspotExce
     }
 
     /**
+     * Two distinct signal subjects, in the SAME `(objectType, idProperty)` group, resolved to the
+     * SAME `id_property` value in one flush (T-06-26, SIG-06 adjacency edge). Thrown by
+     * `Signals\FlushSignalsJob::handle()` before any request for that group is issued -- a batch
+     * upsert has no way to express two different local subjects converging on one HubSpot record,
+     * and merging them silently would attribute one person's buffered behaviour to another.
+     *
+     * Scoped to the group deliberately: the SAME string under two DIFFERENT id properties (an
+     * email of "a@b.c" on contacts and a domain of "a@b.c" on companies) identifies two different
+     * records and is never a collision this factory is thrown for.
+     */
+    public static function duplicateSignalSubjectIdentifier(
+        string $objectType,
+        string $idProperty,
+        string $value,
+        string $firstSubject,
+        string $secondSubject,
+    ): self {
+        return new self(sprintf(
+            'Two signal subjects resolved to the same HubSpot %s "%s" value "%s" in one flush: %s '
+            .'and %s. A batch upsert has no way to express two different local subjects converging '
+            .'on one HubSpot record, and merging them silently would attribute one person\'s '
+            .'buffered behaviour to another. This package refuses the whole batch for this group '
+            .'rather than guessing which subject actually owns "%s" -- correct the "%s" value on '
+            .'one of the two subjects before the next flush.',
+            $objectType,
+            $idProperty,
+            $value,
+            $firstSubject,
+            $secondSubject,
+            $value,
+            $idProperty,
+        ));
+    }
+
+    /**
      * `HUBSPOT_SIGNALS=true` is set but the `hubspot_signals` table this package owns has never
      * been created. Raised by `Signals\SignalRecorder` in place of the driver's own
      * `SQLSTATE[42S02]`, mirroring `missingWebhookEventsTable()`'s shape exactly: name the table,
@@ -881,5 +916,60 @@ final class ConfigurationException extends LogicException implements HubspotExce
             $given,
             implode(', ', $validValues),
         ));
+    }
+
+    /**
+     * `hubspot.signals.flush_lease` resolved to zero or less. Raised by `Signals\FlushClaims`'s
+     * constructor, mirroring `invalidWebhookClaimLease()`'s exact reasoning: a store that cannot
+     * honour per-subject exclusion should never hand out a claim at all.
+     *
+     * The lease deadline is `now() - flush_lease`. At zero that deadline is the present moment,
+     * and the comparison is not even a tie: persisted timestamps carry second precision while
+     * `Carbon::now()` carries microseconds, so a claim taken moments ago already reads as expired
+     * and an overlapping flush reclaims a subject still being written -- reintroducing exactly the
+     * lost update D-06's revision exists to close. A negative value puts the deadline in the future
+     * and makes every claim reclaimable outright.
+     *
+     * Same `(int)` cast caveat as {@see self::invalidWebhookClaimLease()}.
+     */
+    public static function invalidSignalFlushLease(int $leaseSeconds): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.flush_lease must be a whole number of seconds of at least 1, but is '
+            .'%d. A lease of zero or less makes a claim taken moments ago read as already expired, '
+            .'so an overlapping flush could reclaim a subject still being written and overwrite '
+            .'its correct roll-up value with a stale one. Note that a blank or non-numeric value '
+            .'becomes 0.',
+            $leaseSeconds,
+        ));
+    }
+
+    /**
+     * `HUBSPOT_SIGNALS=true` is set but the `hubspot_signal_flush_claims` table this package owns
+     * has never been created. Raised by `Signals\FlushClaims` in place of the driver's own
+     * `SQLSTATE[42S02]`, mirroring `missingSignalTrailTable()`'s shape exactly: name the table,
+     * name `php artisan migrate`, and pre-empt the publish question, because every other Laravel
+     * package that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingSignalFlushClaimTable(bool $featureEnabled = true): self
+    {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis -- the identical reasoning missingSignalTrailTable() already carries.
+        if (! $featureEnabled) {
+            return new self(
+                'Claiming a subject for flush requires HUBSPOT_SIGNALS=true, and it is currently '
+                .'false. The "hubspot_signal_flush_claims" table is what stops two overlapping '
+                .'flushes from writing the same subject twice, so claiming cannot run without it. '
+                .'Set HUBSPOT_SIGNALS=true and run `php artisan migrate` (+ `php artisan '
+                .'config:cache` if you cache config). Nothing needs publishing first: this package '
+                .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+            );
+        }
+
+        return new self(
+            'HUBSPOT_SIGNALS is true but the "hubspot_signal_flush_claims" table does not exist. '
+            .'Run `php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+        );
     }
 }
