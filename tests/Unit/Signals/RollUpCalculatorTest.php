@@ -311,6 +311,21 @@ final class RollUpCalculatorTest extends TestCase
         self::assertSame(['lifetime_value' => '5'], $result);
     }
 
+    public function test_sum_contributes_no_key_when_no_signal_carries_the_field_at_all(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $result = $calculator->compute(
+            self::toArrays([
+                new BufferedSignal(1, 'purchase', [], new DateTimeImmutable('2026-01-01')),
+                new BufferedSignal(2, 'purchase', ['other_field' => '5'], new DateTimeImmutable('2026-01-02')),
+            ]),
+            ['lifetime_value' => self::rule('sum:amount')],
+        );
+
+        self::assertSame([], $result);
+    }
+
     public function test_increment_counts_signals_regardless_of_their_properties(): void
     {
         $calculator = new RollUpCalculator;

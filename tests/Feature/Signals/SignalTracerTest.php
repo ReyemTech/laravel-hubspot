@@ -323,6 +323,101 @@ final class SignalTracerTest extends SignalsTestCase
         ]);
     }
 
+    /**
+     * 06-04: `RollUpCalculator::compute()` is called once per signal name present in a subject's
+     * buffered rows, not once across the whole map -- a configured name with zero matching rows
+     * for THIS subject contributes nothing and the loop moves on to the next name.
+     */
+    public function test_a_configured_signal_name_absent_for_the_subject_contributes_no_properties(): void
+    {
+        Hubspot::fake();
+        config(['hubspot.signals.map' => [
+            'pricing_page_viewed' => ['properties' => ['pricing_page_views' => 'increment']],
+            'demo_requested' => ['properties' => ['demo_requests' => 'increment']],
+        ]]);
+
+        $subject = SignalSubject::query()->create(['email' => 'only-one-signal@example.com']);
+        $this->insertBoundSignal('visitor-only-one', $subject, 'pricing_page_viewed');
+
+        $job = new FlushSignalsJob([
+            ['subjectType' => SignalSubject::class, 'subjectId' => (string) $subject->getKey()], // @phpstan-ignore-line cast.string
+        ]);
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '1']);
+    }
+
+    /**
+     * 06-04: a `first_wins` property computed from a REAL, non-empty `properties` JSON column
+     * round-trips through `FlushSignalsJob`'s own decode -- proving the whole pipeline, not just
+     * `RollUpCalculator::compute()` in isolation.
+     */
+    public function test_a_first_wins_property_computed_from_real_buffered_properties_reaches_the_write(): void
+    {
+        Hubspot::fake();
+        config(['hubspot.signals.map' => [
+            'pricing_page_viewed' => ['properties' => ['first_touch_source' => 'first_wins:source']],
+        ]]);
+
+        $subject = SignalSubject::query()->create(['email' => 'first-touch@example.com']);
+
+        DB::table('hubspot_signals')->insert([
+            'visitor_id' => 'visitor-first-touch',
+            'subject_type' => SignalSubject::class,
+            'subject_id' => (string) $subject->getKey(), // @phpstan-ignore-line cast.string
+            'signal_name' => 'pricing_page_viewed',
+            'properties' => json_encode(['source' => 'google_ads'], JSON_THROW_ON_ERROR),
+            'occurred_at' => now(),
+            'flushed_at' => null,
+            'reconciled_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $job = new FlushSignalsJob([
+            ['subjectType' => SignalSubject::class, 'subjectId' => (string) $subject->getKey()], // @phpstan-ignore-line cast.string
+        ]);
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        Hubspot::assertSynced('contacts', ['first_touch_source' => 'google_ads']);
+    }
+
+    /**
+     * 06-04: `properties` is read from a column outside this package's control at the point of
+     * write -- a row whose JSON decodes to something other than an array (a bare string, in this
+     * case) is treated as carrying no properties at all rather than crashing the flush.
+     */
+    public function test_a_malformed_properties_column_is_treated_as_carrying_no_properties(): void
+    {
+        Hubspot::fake();
+        $this->incrementMap();
+
+        $subject = SignalSubject::query()->create(['email' => 'malformed-properties@example.com']);
+
+        DB::table('hubspot_signals')->insert([
+            'visitor_id' => 'visitor-malformed',
+            'subject_type' => SignalSubject::class,
+            'subject_id' => (string) $subject->getKey(), // @phpstan-ignore-line cast.string
+            'signal_name' => 'pricing_page_viewed',
+            'properties' => json_encode('not-an-object', JSON_THROW_ON_ERROR),
+            'occurred_at' => now(),
+            'flushed_at' => null,
+            'reconciled_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $job = new FlushSignalsJob([
+            ['subjectType' => SignalSubject::class, 'subjectId' => (string) $subject->getKey()], // @phpstan-ignore-line cast.string
+        ]);
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '1']);
+    }
+
     private function insertBoundSignal(string $visitorId, SignalSubject|SignalCompanySubject $subject, string $signalName): void
     {
         DB::table('hubspot_signals')->insert([
