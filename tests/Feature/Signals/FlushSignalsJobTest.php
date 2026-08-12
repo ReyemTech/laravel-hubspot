@@ -7,6 +7,7 @@ namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use ReyemTech\Hubspot\Exceptions\ApiException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
@@ -15,7 +16,6 @@ use ReyemTech\Hubspot\Signals\FlushSignalsJob;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalCompanySubject;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalIntakeSubject;
-use ReyemTech\Hubspot\Tests\Support\Signals\SignalOddIdSubject;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalsTestCase;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 
@@ -30,6 +30,9 @@ mutates(FlushSignalsJob::class, ConfigurationException::class);
  *
  * Concurrency (the subject-level claim, D-06) is Task 2's own file,
  * `tests/Feature/Signals/FlushClaimTest.php` -- nothing here exercises two overlapping flushes.
+ * `FlushSignalsJobOrchestrationTest.php` covers `handle()`'s OWN use of `FlushClaims` (the token,
+ * the release-on-skip paths, and the ordering/log/signal-name-loop mutation-coverage tests that
+ * did not fit under STANDARDS §6b's 500-line file cap once this file also grew).
  */
 final class FlushSignalsJobTest extends SignalsTestCase
 {
@@ -40,11 +43,6 @@ final class FlushSignalsJobTest extends SignalsTestCase
         Schema::create('signal_intake_subjects', function (Blueprint $table): void {
             $table->id();
             $table->string('intake_email');
-            $table->timestamps();
-        });
-
-        Schema::create('signal_odd_id_subjects', function (Blueprint $table): void {
-            $table->id();
             $table->timestamps();
         });
     }
@@ -263,12 +261,19 @@ final class FlushSignalsJobTest extends SignalsTestCase
         self::assertSame('3', self::decodedBody($fake, 1)['inputs'][0]['properties']['pricing_page_views']);
     }
 
+    /**
+     * `$bad` is created FIRST (the lower primary key) so it sorts BEFORE `$good` and is therefore
+     * the FIRST subject the per-chunk confirmation loop visits -- proving that skipping an
+     * unconfirmed subject does not `break` out of the loop before a LATER, confirmed subject is
+     * reached. `Log::info()`'s own call is asserted with its exact context array, not merely
+     * observed indirectly through the database state.
+     */
     public function test_a_partial_failure_keeps_the_confirmed_subjects_trail_and_flushed_state(): void
     {
-        $good = SignalSubject::query()->create(['email' => 'good@example.com']);
         $bad = SignalSubject::query()->create(['email' => 'bad@example.com']);
-        $this->insertBoundSignal('visitor-good', $good, 'pricing_page_viewed');
+        $good = SignalSubject::query()->create(['email' => 'good@example.com']);
         $this->insertBoundSignal('visitor-bad', $bad, 'pricing_page_viewed');
+        $this->insertBoundSignal('visitor-good', $good, 'pricing_page_viewed');
 
         Hubspot::fake(['contacts' => Hubspot::response([
             'status' => 'COMPLETE',
@@ -281,10 +286,11 @@ final class FlushSignalsJobTest extends SignalsTestCase
                 'status' => 'error',
             ]],
         ], 207)]);
+        $log = Log::spy();
 
         app()->call([new FlushSignalsJob([
-            $this->subjectEntry($good),
             $this->subjectEntry($bad),
+            $this->subjectEntry($good),
         ]), 'handle']);
 
         Hubspot::assertRequestCount(1);
@@ -295,6 +301,15 @@ final class FlushSignalsJobTest extends SignalsTestCase
         self::assertNull(
             DB::table('hubspot_signals')->where('visitor_id', 'visitor-bad')->value('flushed_at'),
         );
+
+        $log->shouldHaveReceived('info', [
+            'HubSpot signal roll-up flush wrote a batch.',
+            ['object_type' => 'contacts', 'confirmed' => 1, 'errors' => 1],
+        ]);
+        $log->shouldHaveReceived('error', [
+            'HubSpot rejected a signal roll-up write.',
+            ['object_type' => 'contacts', 'category' => 'VALIDATION_ERROR', 'status' => 'error'],
+        ]);
         self::assertSame(1, DB::table('hubspot_signal_trail')->count());
     }
 
@@ -330,6 +345,12 @@ final class FlushSignalsJobTest extends SignalsTestCase
         self::assertSame($bodies1, $bodies2);
     }
 
+    /**
+     * The full message is asserted, not a substring -- a substring match cannot distinguish a
+     * `ConcatSwitchSides`/`ConcatRemoveRight` mutation on the message-building code from the
+     * correct implementation (the same reasoning `06-04-SUMMARY.md` records for its own
+     * message-factory tests).
+     */
     public function test_two_subjects_in_the_same_group_with_equal_id_property_values_throw_before_any_request(): void
     {
         Hubspot::fake();
@@ -348,7 +369,20 @@ final class FlushSignalsJobTest extends SignalsTestCase
 
             self::fail('Expected a duplicateSignalSubjectIdentifier ConfigurationException.');
         } catch (ConfigurationException $exception) {
-            self::assertStringContainsString('dup@example.com', $exception->getMessage());
+            self::assertSame(
+                sprintf(
+                    'Two signal subjects resolved to the same HubSpot contacts "email" value '
+                    .'"dup@example.com" in one flush: %s and %s. A batch upsert has no way to '
+                    .'express two different local subjects converging on one HubSpot record, and '
+                    .'merging them silently would attribute one person\'s buffered behaviour to '
+                    .'another. This package refuses the whole batch for this group rather than '
+                    .'guessing which subject actually owns "dup@example.com" -- correct the '
+                    .'"email" value on one of the two subjects before the next flush.',
+                    SignalSubject::class.'#'.$first->getKey(), // @phpstan-ignore-line cast.string
+                    SignalSubject::class.'#'.$second->getKey(), // @phpstan-ignore-line cast.string
+                ),
+                $exception->getMessage(),
+            );
         }
 
         Hubspot::assertRequestCount(0);
@@ -412,82 +446,32 @@ final class FlushSignalsJobTest extends SignalsTestCase
         );
     }
 
+    /**
+     * A second, valid subject is included so this also proves the blank-value skip does not
+     * `break` the outer subjects loop -- a later subject in the same job still gets flushed.
+     */
     public function test_a_blank_id_property_value_at_flush_time_is_skipped_silently(): void
     {
         Hubspot::fake();
         $subject = SignalSubject::query()->create(['email' => 'blank@example.com']);
+        $valid = SignalSubject::query()->create(['email' => 'valid-after-blank@example.com']);
         $this->insertBoundSignal('visitor-blank', $subject, 'pricing_page_viewed');
+        $this->insertBoundSignal('visitor-valid-after-blank', $valid, 'pricing_page_viewed');
 
         // Blanked out AFTER identify()'s own D-02 check would have refused it -- the value can
         // change between binding and flush.
         DB::table('signal_subjects')->where('id', $subject->getKey())->update(['email' => '   ']);
 
-        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+        app()->call([new FlushSignalsJob([
+            $this->subjectEntry($subject),
+            $this->subjectEntry($valid),
+        ]), 'handle']);
 
-        Hubspot::assertRequestCount(0);
+        Hubspot::assertRequestCount(1);
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '1']);
         self::assertNull(
             DB::table('hubspot_signals')->where('visitor_id', 'visitor-blank')->value('flushed_at'),
         );
-    }
-
-    /**
-     * `idPropertyValue()`'s `is_scalar($value) => (string) $value` branch -- a real column can
-     * never produce this (every bound column in this suite is a `string()` column), so this binds
-     * {@see SignalOddIdSubject}'s computed, non-persisted `numeric_id` accessor instead.
-     */
-    public function test_a_non_string_scalar_id_property_value_is_cast_to_a_string(): void
-    {
-        $fake = Hubspot::fake();
-        config(['hubspot.models' => [
-            SignalOddIdSubject::class => ['object' => 'contacts', 'id_property' => 'numeric_id'],
-        ]]);
-
-        $subject = SignalOddIdSubject::query()->create();
-        $this->insertBoundSignal('visitor-numeric-id', $subject, 'pricing_page_viewed');
-
-        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
-
-        Hubspot::assertRequestCount(1);
-        self::assertSame('42', self::decodedBody($fake, 0)['inputs'][0]['id']);
-    }
-
-    /**
-     * `idPropertyValue()`'s `default => null` branch -- the subject is skipped exactly like a
-     * blank value, never reaching the request.
-     */
-    public function test_a_non_scalar_id_property_value_is_skipped_silently(): void
-    {
-        Hubspot::fake();
-        config(['hubspot.models' => [
-            SignalOddIdSubject::class => ['object' => 'contacts', 'id_property' => 'list_id'],
-        ]]);
-
-        $subject = SignalOddIdSubject::query()->create();
-        $this->insertBoundSignal('visitor-list-id', $subject, 'pricing_page_viewed');
-
-        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
-
-        Hubspot::assertRequestCount(0);
-    }
-
-    /**
-     * `idPropertyValue()`'s `$value === null => null` branch, distinct from a blank STRING --
-     * every real column in this suite is `NOT NULL`, so this is the only way to construct a
-     * genuine `null`.
-     */
-    public function test_a_null_id_property_value_is_skipped_silently(): void
-    {
-        Hubspot::fake();
-        config(['hubspot.models' => [
-            SignalOddIdSubject::class => ['object' => 'contacts', 'id_property' => 'null_id'],
-        ]]);
-
-        $subject = SignalOddIdSubject::query()->create();
-        $this->insertBoundSignal('visitor-null-id', $subject, 'pricing_page_viewed');
-
-        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
-
-        Hubspot::assertRequestCount(0);
     }
 
     public function test_a_large_sum_roll_up_is_sent_as_a_plain_decimal_string(): void
@@ -621,7 +605,7 @@ final class FlushSignalsJobTest extends SignalsTestCase
     // -- helpers -------------------------------------------------------------------------------
 
     /** @return array{subjectType: class-string, subjectId: string} */
-    private function subjectEntry(SignalSubject|SignalCompanySubject|SignalIntakeSubject|SignalOddIdSubject $subject): array
+    private function subjectEntry(SignalSubject|SignalCompanySubject|SignalIntakeSubject $subject): array
     {
         return ['subjectType' => $subject::class, 'subjectId' => (string) $subject->getKey()]; // @phpstan-ignore-line cast.string
     }
@@ -629,7 +613,7 @@ final class FlushSignalsJobTest extends SignalsTestCase
     /** @param array<string, mixed> $properties */
     private function insertBoundSignal(
         string $visitorId,
-        SignalSubject|SignalCompanySubject|SignalIntakeSubject|SignalOddIdSubject $subject,
+        SignalSubject|SignalCompanySubject|SignalIntakeSubject $subject,
         string $signalName,
         array $properties = [],
     ): void {

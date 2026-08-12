@@ -10,7 +10,6 @@ use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -21,6 +20,7 @@ use ReyemTech\Hubspot\ServiceProvider;
 use ReyemTech\Hubspot\Signals\FlushClaims;
 use ReyemTech\Hubspot\Signals\FlushSignalsJob;
 use ReyemTech\Hubspot\Signals\SubjectFlushClaim;
+use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalsTestCase;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 
@@ -95,6 +95,16 @@ final class FlushClaimTest extends SignalsTestCase
         return ['subjectType' => $subject::class, 'subjectId' => (string) $subject->getKey()]; // @phpstan-ignore-line cast.string
     }
 
+    public function test_lease_seconds_returns_the_configured_lease(): void
+    {
+        self::assertSame(123, $this->claims(lease: 123)->leaseSeconds());
+    }
+
+    /**
+     * Asserts the actual row a fresh claim writes -- `attempts`, `created_at` and `updated_at` --
+     * not merely the `Acquired` return value, so a mutation dropping one of those columns from the
+     * insert is caught.
+     */
     public function test_claim_for_an_unclaimed_subject_returns_acquired(): void
     {
         $this->migrate();
@@ -103,6 +113,18 @@ final class FlushClaimTest extends SignalsTestCase
             SubjectFlushClaim::Acquired,
             $this->claims()->claim(SignalSubject::class, '1', 'token-a'),
         );
+
+        $row = DB::table('hubspot_signal_flush_claims')
+            ->where('subject_type', SignalSubject::class)
+            ->where('subject_id', '1')
+            ->first();
+
+        self::assertNotNull($row);
+        self::assertSame('token-a', $row->claim_token);
+        self::assertSame(1, (int) $row->attempts); // @phpstan-ignore-line cast.int
+        self::assertSame('2026-08-12 12:00:00', $row->claimed_at);
+        self::assertSame('2026-08-12 12:00:00', $row->created_at);
+        self::assertSame('2026-08-12 12:00:00', $row->updated_at);
     }
 
     public function test_a_second_claim_under_a_different_token_while_the_first_is_live_returns_held(): void
@@ -113,6 +135,45 @@ final class FlushClaimTest extends SignalsTestCase
         $claims->claim(SignalSubject::class, '1', 'token-a');
 
         self::assertSame(SubjectFlushClaim::Held, $claims->claim(SignalSubject::class, '1', 'token-b'));
+    }
+
+    /**
+     * `featureEnabled` defaults to `true` when a caller constructs `FlushClaims` without naming it
+     * -- proven by triggering the missing-table branch through a two-argument construction and
+     * observing the "enabled" message rather than the "flag is off" one.
+     */
+    public function test_the_feature_enabled_constructor_parameter_defaults_to_true(): void
+    {
+        Schema::drop('hubspot_signal_flush_claims');
+
+        $claims = new FlushClaims(app(DatabaseManager::class)->connection(), 900);
+
+        try {
+            $claims->claim(SignalSubject::class, '1', 'token-a');
+
+            self::fail('Expected a directed ConfigurationException for the absent table.');
+        } catch (ConfigurationException $exception) {
+            self::assertSame(
+                'HUBSPOT_SIGNALS is true but the "hubspot_signal_flush_claims" table does not exist. Run '
+                .'`php artisan migrate` to create it. Nothing needs publishing first: this package loads '
+                .'its own migrations whenever HUBSPOT_SIGNALS=true.',
+                $exception->getMessage(),
+            );
+        }
+    }
+
+    /**
+     * The boundary this lease check actually turns on: exactly 1 second is accepted, distinguishing
+     * `$leaseSeconds < 1` from an off-by-one `<= 1` mutant.
+     */
+    public function test_a_lease_of_exactly_one_second_is_accepted(): void
+    {
+        $this->migrate();
+
+        self::assertSame(
+            SubjectFlushClaim::Acquired,
+            $this->claims(lease: 1)->claim(SignalSubject::class, '1', 'token-a'),
+        );
     }
 
     /**
@@ -165,13 +226,36 @@ final class FlushClaimTest extends SignalsTestCase
         self::assertSame('free@example.com', self::decodedBody($fake)['inputs'][0]['id']);
     }
 
+    /**
+     * Asserts the raw row `release()` leaves behind -- `claimed_at` backdated to exactly one
+     * second past the epoch, `updated_at` refreshed -- not merely the follow-up `claim()`'s
+     * return value, so a mutation dropping or shifting either column is caught directly.
+     */
     public function test_after_the_winner_releases_the_same_subject_is_immediately_reclaimable(): void
     {
         $this->migrate();
         $claims = $this->claims();
 
         $claims->claim(SignalSubject::class, '1', 'token-a');
+
+        // Backdated directly so the assertion below can tell "updated_at was refreshed by
+        // release()" apart from "updated_at was simply left at whatever claim() already wrote" --
+        // both would otherwise read as the same frozen Carbon::setTestNow() instant.
+        DB::table('hubspot_signal_flush_claims')
+            ->where('subject_type', SignalSubject::class)
+            ->where('subject_id', '1')
+            ->update(['updated_at' => now()->subDay()]);
+
         $claims->release(SignalSubject::class, '1', 'token-a');
+
+        $row = DB::table('hubspot_signal_flush_claims')
+            ->where('subject_type', SignalSubject::class)
+            ->where('subject_id', '1')
+            ->first();
+
+        self::assertNotNull($row);
+        self::assertSame('1970-01-01 00:00:01', $row->claimed_at);
+        self::assertSame('2026-08-12 12:00:00', $row->updated_at);
 
         self::assertSame(
             SubjectFlushClaim::Acquired,
@@ -181,7 +265,9 @@ final class FlushClaimTest extends SignalsTestCase
 
     /**
      * Decided on the affected row count of a conditional UPDATE, asserted by mutating the stored
-     * instant directly rather than sleeping.
+     * instant directly rather than sleeping. The raw row `reclaim()` leaves behind is asserted too
+     * -- `claim_token` overwritten, `claimed_at` refreshed, `attempts` incremented -- not merely
+     * the `Acquired` return value.
      */
     public function test_a_claim_older_than_the_lease_is_reclaimed(): void
     {
@@ -190,15 +276,30 @@ final class FlushClaimTest extends SignalsTestCase
 
         $claims->claim(SignalSubject::class, '1', 'token-a');
 
+        // Both backdated directly, and to DIFFERENT instants, so the assertions below can tell
+        // "reclaim() refreshed claimed_at/updated_at" apart from "the stale value was simply left
+        // in place" -- a single frozen Carbon::setTestNow() instant would make a removed column
+        // indistinguishable from a correctly-written one.
         DB::table('hubspot_signal_flush_claims')
             ->where('subject_type', SignalSubject::class)
             ->where('subject_id', '1')
-            ->update(['claimed_at' => now()->subSeconds(901)]);
+            ->update(['claimed_at' => now()->subSeconds(901), 'updated_at' => now()->subDay()]);
 
         self::assertSame(
             SubjectFlushClaim::Acquired,
             $claims->claim(SignalSubject::class, '1', 'token-b'),
         );
+
+        $row = DB::table('hubspot_signal_flush_claims')
+            ->where('subject_type', SignalSubject::class)
+            ->where('subject_id', '1')
+            ->first();
+
+        self::assertNotNull($row);
+        self::assertSame('token-b', $row->claim_token);
+        self::assertSame('2026-08-12 12:00:00', $row->claimed_at);
+        self::assertSame('2026-08-12 12:00:00', $row->updated_at);
+        self::assertSame(2, (int) $row->attempts); // @phpstan-ignore-line cast.int
     }
 
     public function test_a_claim_one_second_inside_the_lease_is_held(): void
@@ -223,6 +324,11 @@ final class FlushClaimTest extends SignalsTestCase
      * A reclaim that loses its race to a concurrent worker resolves to `Held` rather than
      * recursing or throwing -- simulated deterministically via `DB::listen()`, which fires
      * synchronously right before this call's own reclaim UPDATE runs.
+     *
+     * `FlushClaims::reclaim()` has no SELECT before its own decisive UPDATE for `DB::listen()`
+     * (a POST-execution hook) to intercept -- `Connection::beforeExecuting()` is the PRE-execution
+     * hook this simulation needs instead, firing before ANY query on the connection, including the
+     * very first one this call issues.
      */
     public function test_a_lost_reclaim_race_answers_held_rather_than_recursing(): void
     {
@@ -238,19 +344,19 @@ final class FlushClaimTest extends SignalsTestCase
 
         $armed = true;
 
-        DB::listen(function (QueryExecuted $query) use (&$armed): void {
+        app(DatabaseManager::class)->connection()->beforeExecuting(function (string $query) use (&$armed): void {
             if (! $armed) {
                 return;
             }
 
             if (
-                str_starts_with(strtolower($query->sql), 'update')
-                && str_contains($query->sql, 'hubspot_signal_flush_claims')
+                str_starts_with(strtolower($query), 'update')
+                && str_contains($query, 'hubspot_signal_flush_claims')
             ) {
                 $armed = false;
 
                 // The "concurrent worker": reclaims the row first, so this call's own reclaim
-                // UPDATE -- already in flight -- loses the race when it runs next.
+                // UPDATE -- already about to run -- loses the race when it executes next.
                 DB::table('hubspot_signal_flush_claims')
                     ->where('subject_type', SignalSubject::class)
                     ->where('subject_id', '1')
@@ -287,9 +393,15 @@ final class FlushClaimTest extends SignalsTestCase
         $this->claims(lease: -5);
     }
 
+    /**
+     * `SignalsTestCase::setUp()` already migrates (`hubspot.signals.enabled` is true for every
+     * test in this class except the `test_disabled_*`-prefixed ones), so the table is dropped
+     * explicitly here rather than asserted absent before a migration this class's own base never
+     * skips.
+     */
     public function test_claiming_against_a_missing_table_throws_naming_the_table_and_migrate(): void
     {
-        self::assertFalse(Schema::hasTable('hubspot_signal_flush_claims'), 'This test is only meaningful before migrating.');
+        Schema::drop('hubspot_signal_flush_claims');
 
         try {
             $this->claims()->claim(SignalSubject::class, '1', 'token-a');
@@ -370,14 +482,18 @@ final class FlushClaimTest extends SignalsTestCase
         );
     }
 
+    /**
+     * `SignalsTestCase::setUp()` already migrated once for every `enabled` test in this class --
+     * `Schema::hasTable()` alone would only prove that base class's own migrate call worked, so
+     * the claim's own columns are asserted too, proving the migration THIS plan ships is what ran.
+     */
     public function test_enabled_migrate_creates_the_claims_table(): void
     {
         self::assertTrue(config('hubspot.signals.enabled'));
-        self::assertFalse(Schema::hasTable('hubspot_signal_flush_claims'), 'This test is only meaningful before migrating.');
-
-        Artisan::call('migrate', ['--force' => true]);
-
         self::assertTrue(Schema::hasTable('hubspot_signal_flush_claims'));
+        self::assertTrue(Schema::hasColumns('hubspot_signal_flush_claims', [
+            'subject_type', 'subject_id', 'claim_token', 'attempts', 'claimed_at',
+        ]));
     }
 
     /**
@@ -467,7 +583,7 @@ final class FlushClaimTest extends SignalsTestCase
     }
 
     /** @return array{inputs: list<array{id: string, properties: array<string, mixed>}>} */
-    private static function decodedBody(mixed $fake): array
+    private static function decodedBody(HubspotFake $fake): array
     {
         /** @var array{inputs: list<array{id: string, properties: array<string, mixed>}>} $body */
         $body = json_decode((string) $fake->recordedRequests()[0]['request']->getBody(), true);

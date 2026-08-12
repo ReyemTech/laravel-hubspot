@@ -35,6 +35,7 @@ use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\Signals\BoundModelReader;
 use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
+use ReyemTech\Hubspot\Signals\FlushClaims;
 use ReyemTech\Hubspot\Signals\IdentityResolver;
 use ReyemTech\Hubspot\Signals\SignalMap;
 use ReyemTech\Hubspot\Signals\SignalRecorder;
@@ -331,6 +332,26 @@ final class ServiceProvider extends BaseServiceProvider
             SignalStore::class,
             fn (Application $app): SignalStore => self::resolveSignalStore($app),
         );
+
+        // The subject-level flush claim (D-06, revised 2026-08-12). Shared, like WebhookEventStore
+        // and SignalStore above: holds no transport Hubspot::fake() would ever need to invalidate,
+        // only a database connection. hubspot.signals.flush_lease and .enabled are read once, at
+        // resolution -- both plain scalars (config:cache-safe), not credentials.
+        $this->app->singleton(FlushClaims::class, function (Application $app): FlushClaims {
+            $config = $app->make('config');
+
+            /** @var int $leaseSeconds */
+            $leaseSeconds = $config->get('hubspot.signals.flush_lease');
+
+            /** @var bool $featureEnabled */
+            $featureEnabled = $config->get('hubspot.signals.enabled');
+
+            return new FlushClaims(
+                $app->make(DatabaseManager::class)->connection(),
+                $leaseSeconds,
+                $featureEnabled,
+            );
+        });
     }
 
     /**

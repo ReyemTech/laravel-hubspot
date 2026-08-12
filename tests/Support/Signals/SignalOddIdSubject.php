@@ -16,6 +16,14 @@ use Illuminate\Database\Eloquent\Model;
  * `FlushSignalsJobTest` binds this ONE class to two different `id_property` names across two
  * separate tests (`hubspot.models` is keyed by model class, so only one binding per class is
  * expressible at a time) -- never both in the same test.
+ *
+ * Also carries a real, ordinary `email` column -- a SECOND model class bound to the SAME
+ * `(contacts, email)` pair {@see SignalSubject} binds to, needed to prove the within-group sort
+ * compares the FULL `(subject_type, subject_id)` tuple rather than either half alone (two model
+ * classes can share one subject id space, e.g. both auto-incrementing from 1).
+ *
+ * @property int $id
+ * @property string|null $email
  */
 final class SignalOddIdSubject extends Model
 {

@@ -602,6 +602,18 @@ return [
     |   exactly `true` -- so a typo fails your application's boot, rather
     |   than silently dropping the buffered attribution this feature exists
     |   to protect, the first time a flush runs.
+    | - flush_lease: seconds a subject's flush claim holds before it is
+    |   considered abandoned and becomes re-claimable (D-06, revised
+    |   2026-08-12). Mirrors 'webhooks' -> claim_lease above in shape and
+    |   reasoning -- a worker that dies mid-flush costs a delay of at most
+    |   this many seconds, never a subject permanently stranded. The claim
+    |   is what stops two overlapping flushes (the identify()-triggered one
+    |   and the scheduled one) from both writing the same subject's roll-up
+    |   at once, which absolute roll-up values alone do NOT make safe: they
+    |   make a RETRY of the same input idempotent, not two workers computing
+    |   over different row sets. Plain scalar only, here and everywhere in
+    |   this file -- `php artisan config:cache` serialises with
+    |   var_export(), which throws on a closure.
     |
     | The `properties` recorded against a signal are the consumer's OWN
     | customers' behavioural data. This package writes to HubSpot only what
@@ -614,6 +626,7 @@ return [
         'enabled' => (bool) env('HUBSPOT_SIGNALS', false),
         'store' => env('HUBSPOT_SIGNAL_STORE', 'local'),
         'trail_payload' => (bool) env('HUBSPOT_SIGNAL_TRAIL_PAYLOAD', false),
+        'flush_lease' => 900,
         'map' => [
             //
         ],

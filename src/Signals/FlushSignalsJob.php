@@ -14,6 +14,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
 use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
@@ -71,13 +72,26 @@ use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
  * succeeds. A job that throws between the confirmed write and the trail append leaves `flushed_at`
  * unset, so a retry redoes idempotent work rather than losing the trail permanently.
  *
- * ## No claim or lease in this task, and none is claimed
+ * ## The subject-level atomic claim (D-06, revised 2026-08-12)
  *
- * Plan 06-06's own Task 2 adds the subject-level atomic claim D-06 (revised 2026-08-12) requires
- * for two flushes racing each other. Absolute roll-up values (D-10, D-40) make a RETRY of the same
- * input idempotent; they do NOT make two workers computing over DIFFERENT row sets safe -- that is
- * this file's own next task, not this one. Write nothing here claiming overlapping flushes are
- * safe: they are not yet.
+ * Absolute roll-up values (D-10, D-40) make a RETRY of the SAME input idempotent; they do NOT make
+ * two workers computing over DIFFERENT row sets safe -- a later-computed, correct value can be
+ * overwritten by an earlier worker's stale one, permanently, with no unflushed rows left to repair
+ * it (the exact trace `06-CONTEXT.md` D-06 works through). Scheduler `withoutOverlapping()` does
+ * not close this either: the lock covers the command, while SIG-06 requires `identify()` to
+ * dispatch a flush that races it.
+ *
+ * `Signals\FlushClaims::claim()` is taken for EVERY subject before anything is computed for it --
+ * a `Held` subject is skipped entirely (no roll-up computed, no record built, no row marked
+ * flushed, no exception) -- and released once that subject's write has been decided (confirmed,
+ * rejected, or never sent because it had nothing to flush), in a `finally` so a throwing subject
+ * does not strand the claim for a whole lease. The claim is per subject, not per flush: a job that
+ * loses subject S to another worker still writes subject T in the same run. The one gap a
+ * `finally` cannot close -- the gateway call itself throwing before the per-subject release loop
+ * ever runs -- is the lease's own backstop, not a second `finally`; see
+ * `FlushClaimTest::test_a_job_that_throws_mid_flush_leaves_the_claim_recoverable_through_the_lease()`.
+ *
+ * @see FlushClaims for the claim mechanism itself.
  */
 final class FlushSignalsJob implements ShouldQueue
 {
@@ -102,17 +116,25 @@ final class FlushSignalsJob implements ShouldQueue
         RollUpCalculator $calculator,
         SignalMap $map,
         SignalStore $store,
+        FlushClaims $claims,
     ): void {
         if ($this->subjects === []) {
             return;
         }
 
-        $groups = self::buildGroups($this->subjects, $connection, $bindings, $calculator, $map);
+        // Stable across a queue driver's own retries of THIS job (the underlying queue job's own
+        // id, unchanged across --tries), so a worker retrying a job whose claim it still holds is
+        // not blocked by its own claim. Falls back to a random value when run outside a real queue
+        // worker -- a direct app()->call([$job, 'handle']), as this phase's own test suite does
+        // throughout.
+        $token = $this->job?->getJobId() ?? (string) Str::uuid();
+
+        $groups = self::buildGroups($this->subjects, $connection, $bindings, $calculator, $map, $claims, $token);
 
         ksort($groups);
 
         foreach ($groups as $group) {
-            self::sendGroup($group, $connection, $gateway, $store);
+            self::sendGroup($group, $connection, $gateway, $store, $claims, $token);
         }
     }
 
@@ -121,6 +143,13 @@ final class FlushSignalsJob implements ShouldQueue
      * value, and buckets the result by `(objectType, idProperty)` -- everything Task 1's own
      * docblock section "Grouped before it is chunked" describes, extracted out of `handle()` purely
      * to keep its own cyclomatic complexity under phpcs's ceiling of 10.
+     *
+     * A claim is taken for EVERY subject before anything else runs for it. A `Held` subject is
+     * skipped outright. Every other exit from a subject's own iteration -- no rows, nothing
+     * computed, a deleted model, a blank `id_property` value, or the duplicate-identifier throw --
+     * releases the claim it just took, in a `finally`, because there is nothing left for the
+     * second loop to release it for. A subject that DOES carry into a group keeps its claim; the
+     * caller's second loop releases it once that subject's write has been decided.
      *
      * @param  list<array{subjectType: class-string, subjectId: string}>  $subjects
      * @return array<string, array{
@@ -142,71 +171,88 @@ final class FlushSignalsJob implements ShouldQueue
         BoundModelReader $bindings,
         RollUpCalculator $calculator,
         SignalMap $map,
+        FlushClaims $claims,
+        string $token,
     ): array {
         $groups = [];
 
         foreach ($subjects as ['subjectType' => $subjectType, 'subjectId' => $subjectId]) {
-            $binding = $bindings->for($subjectType);
-
-            /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}> $rows */
-            $rows = $connection->table('hubspot_signals')
-                ->where('subject_type', $subjectType)
-                ->where('subject_id', $subjectId)
-                ->get(['id', 'signal_name', 'properties', 'occurred_at', 'flushed_at'])
-                ->all();
-
-            if ($rows === []) {
+            if ($claims->claim($subjectType, $subjectId, $token) === SubjectFlushClaim::Held) {
                 continue;
             }
 
-            $properties = self::computeAcrossSignalNames($calculator, $map, $rows);
+            $carriedForward = false;
 
-            if ($properties === []) {
-                continue;
+            try {
+                $binding = $bindings->for($subjectType);
+
+                /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}> $rows */
+                $rows = $connection->table('hubspot_signals')
+                    ->where('subject_type', $subjectType)
+                    ->where('subject_id', $subjectId)
+                    ->get(['id', 'signal_name', 'properties', 'occurred_at', 'flushed_at'])
+                    ->all();
+
+                if ($rows === []) {
+                    continue;
+                }
+
+                $properties = self::computeAcrossSignalNames($calculator, $map, $rows);
+
+                if ($properties === []) {
+                    continue;
+                }
+
+                $model = self::reloadedModel($subjectType, $subjectId);
+
+                if (! $model instanceof Model) {
+                    // A subject deleted between dispatch and handle() -- skipped silently rather
+                    // than failing the whole batch. Its rows stay unflushed for a later flush to
+                    // repair.
+                    continue;
+                }
+
+                $idValue = self::idPropertyValue($model, $binding->idProperty);
+
+                if ($idValue === null) {
+                    continue;
+                }
+
+                $groupKey = $binding->objectType.'|'.$binding->idProperty;
+
+                $groups[$groupKey] ??= [
+                    'objectType' => $binding->objectType,
+                    'idProperty' => $binding->idProperty,
+                    'subjects' => [],
+                ];
+
+                if (array_key_exists($idValue, $groups[$groupKey]['subjects'])) {
+                    $existing = $groups[$groupKey]['subjects'][$idValue];
+
+                    throw ConfigurationException::duplicateSignalSubjectIdentifier(
+                        $binding->objectType,
+                        $binding->idProperty,
+                        $idValue,
+                        $existing['subjectType'].'#'.$existing['subjectId'],
+                        $subjectType.'#'.$subjectId,
+                    );
+                }
+
+                $groups[$groupKey]['subjects'][$idValue] = [
+                    'id' => $idValue,
+                    'properties' => $properties,
+                    'subjectType' => $subjectType,
+                    'subjectId' => $subjectId,
+                    'rows' => $rows,
+                    'rowIds' => array_map(static fn (object $row): int => $row->id, $rows),
+                ];
+
+                $carriedForward = true;
+            } finally {
+                if (! $carriedForward) {
+                    $claims->release($subjectType, $subjectId, $token);
+                }
             }
-
-            $model = self::reloadedModel($subjectType, $subjectId);
-
-            if (! $model instanceof Model) {
-                // A subject deleted between dispatch and handle() -- skipped silently rather than
-                // failing the whole batch. Its rows stay unflushed for a later flush to repair.
-                continue;
-            }
-
-            $idValue = self::idPropertyValue($model, $binding->idProperty);
-
-            if ($idValue === null) {
-                continue;
-            }
-
-            $groupKey = $binding->objectType.'|'.$binding->idProperty;
-
-            $groups[$groupKey] ??= [
-                'objectType' => $binding->objectType,
-                'idProperty' => $binding->idProperty,
-                'subjects' => [],
-            ];
-
-            if (array_key_exists($idValue, $groups[$groupKey]['subjects'])) {
-                $existing = $groups[$groupKey]['subjects'][$idValue];
-
-                throw ConfigurationException::duplicateSignalSubjectIdentifier(
-                    $binding->objectType,
-                    $binding->idProperty,
-                    $idValue,
-                    $existing['subjectType'].'#'.$existing['subjectId'],
-                    $subjectType.'#'.$subjectId,
-                );
-            }
-
-            $groups[$groupKey]['subjects'][$idValue] = [
-                'id' => $idValue,
-                'properties' => $properties,
-                'subjectType' => $subjectType,
-                'subjectId' => $subjectId,
-                'rows' => $rows,
-                'rowIds' => array_map(static fn (object $row): int => $row->id, $rows),
-            ];
         }
 
         return $groups;
@@ -229,8 +275,14 @@ final class FlushSignalsJob implements ShouldQueue
      *     }>,
      * }  $group
      */
-    private static function sendGroup(array $group, Connection $connection, ObjectGatewayContract $gateway, SignalStore $store): void
-    {
+    private static function sendGroup(
+        array $group,
+        Connection $connection,
+        ObjectGatewayContract $gateway,
+        SignalStore $store,
+        FlushClaims $claims,
+        string $token,
+    ): void {
         $subjects = array_values($group['subjects']);
 
         usort(
@@ -270,27 +322,34 @@ final class FlushSignalsJob implements ShouldQueue
             }
 
             foreach ($chunk as $subjectRecord) {
-                if (! in_array($subjectRecord['id'], $confirmedIds, true)) {
-                    // Not confirmed -- left unflushed. The next flush recomputes an absolute
-                    // value over the full set, exactly like a retry.
-                    continue;
-                }
+                try {
+                    if (! in_array($subjectRecord['id'], $confirmedIds, true)) {
+                        // Not confirmed -- left unflushed. The next flush recomputes an absolute
+                        // value over the full set, exactly like a retry.
+                        continue;
+                    }
 
-                foreach ($subjectRecord['rows'] as $row) {
-                    $store->append(
-                        $row->id,
-                        $subjectRecord['subjectType'],
-                        $subjectRecord['subjectId'],
-                        $row->signal_name,
-                        self::decodeProperties($row->properties),
-                        new DateTimeImmutable($row->occurred_at),
-                    );
-                }
+                    foreach ($subjectRecord['rows'] as $row) {
+                        $store->append(
+                            $row->id,
+                            $subjectRecord['subjectType'],
+                            $subjectRecord['subjectId'],
+                            $row->signal_name,
+                            self::decodeProperties($row->properties),
+                            new DateTimeImmutable($row->occurred_at),
+                        );
+                    }
 
-                $connection->table('hubspot_signals')
-                    ->whereIn('id', $subjectRecord['rowIds'])
-                    ->whereNull('flushed_at')
-                    ->update(['flushed_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+                    $connection->table('hubspot_signals')
+                        ->whereIn('id', $subjectRecord['rowIds'])
+                        ->whereNull('flushed_at')
+                        ->update(['flushed_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+                } finally {
+                    // The subject's write has been decided (confirmed and trailed, or left
+                    // unconfirmed) -- the claim is released regardless, so a throwing append()
+                    // does not strand it for a whole lease.
+                    $claims->release($subjectRecord['subjectType'], $subjectRecord['subjectId'], $token);
+                }
             }
         }
     }
