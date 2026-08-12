@@ -9,6 +9,7 @@ use Illuminate\Database\Connection;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
+use InvalidArgumentException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
 
@@ -50,6 +51,15 @@ final class LocalSignalStore implements SignalStore
 {
     public const TABLE = 'hubspot_signal_trail';
 
+    /**
+     * The width `database/migrations/signals/..._create_hubspot_signal_trail_table.php` bounds
+     * `subject_type`, `subject_id` and `signal_name` to. Bounded here, in BYTES, before the INSERT
+     * -- the PR #71 rule that a column this package constrains gets its check at the point data
+     * enters, rather than truncating the value or letting the database reject it after the caller
+     * believes the append succeeded.
+     */
+    private const int MAX_COLUMN_LENGTH = 191;
+
     public function __construct(
         private readonly Connection $connection,
         // hubspot.signals.trail_payload -- false by default, mirroring
@@ -80,6 +90,11 @@ final class LocalSignalStore implements SignalStore
         array $properties,
         DateTimeInterface $occurredAt,
     ): void {
+        self::unsigned($signalId);
+        self::bounded($subjectType, 'subjectType');
+        self::bounded($subjectId, 'subjectId');
+        self::bounded($signalName, 'signalName');
+
         $now = Carbon::now();
 
         $this->guarded(function () use (
@@ -114,6 +129,59 @@ final class LocalSignalStore implements SignalStore
                 // workers could both observe "no row" and both proceed).
             }
         });
+    }
+
+    /**
+     * `hubspot_signal_id` is an UNSIGNED column. A negative value is rejected by MySQL in strict
+     * mode and silently accepted by PostgreSQL and SQLite, which have no unsigned integer type and
+     * take the column as a signed `bigint` -- so leaving this unchecked would let the SAME
+     * correctly-formed call behave differently across this package's support matrix, mirroring
+     * `Webhooks\NormalizedWebhookEvent::unsigned()`'s identical PR #71 reasoning.
+     */
+    private static function unsigned(int $signalId): void
+    {
+        if ($signalId < 0) {
+            throw new InvalidArgumentException(sprintf(
+                'LocalSignalStore::append() was given hubspot_signal_id %d, and '
+                .'hubspot_signal_trail stores it in an unsigned column. A negative value is '
+                .'refused by MySQL and silently accepted by PostgreSQL and SQLite, so it is '
+                .'refused here on every driver alike.',
+                $signalId,
+            ));
+        }
+    }
+
+    /**
+     * Refuses a value this table cannot hold rather than truncating it, and refuses a NUL byte
+     * outright -- mirrors `SignalRecorder::bounded()`/`NormalizedWebhookEvent::bounded()`'s
+     * identical reasoning. A truncated value is written successfully and wrong, which is the
+     * failure mode this package exists to prevent; PostgreSQL refuses a NUL byte in a
+     * `text`/`varchar` value regardless, so an accepted one is the same acknowledged-then-lost
+     * failure on the other two supported drivers.
+     *
+     * `strlen()`, not `mb_strlen()` -- the column width is a BYTE width, not a character count.
+     */
+    private static function bounded(string $value, string $field): void
+    {
+        if (str_contains($value, "\0")) {
+            throw new InvalidArgumentException(sprintf(
+                'A signal trail entry\'s "%s" contains a NUL byte, which PostgreSQL refuses in a '
+                .'text/varchar value outright. Rejecting it here rather than letting the database '
+                .'reject it after the caller believes the append succeeded.',
+                $field,
+            ));
+        }
+
+        if (strlen($value) > self::MAX_COLUMN_LENGTH) {
+            throw new InvalidArgumentException(sprintf(
+                'A signal trail entry\'s "%s" is %d bytes, which exceeds the %d-byte column width '
+                .'hubspot_signal_trail stores it at. Rejecting it here rather than truncating it '
+                .'keeps a value that cannot be stored from being recorded as if it had been.',
+                $field,
+                strlen($value),
+                self::MAX_COLUMN_LENGTH,
+            ));
+        }
     }
 
     /**

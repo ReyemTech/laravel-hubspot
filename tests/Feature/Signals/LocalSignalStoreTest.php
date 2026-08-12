@@ -323,7 +323,7 @@ final class LocalSignalStoreTest extends TestCase
 
         self::assertSame(
             (string) $topOfRange,
-            (string) DB::table('hubspot_signal_trail')->value('hubspot_signal_id'),
+            (string) DB::table('hubspot_signal_trail')->value('hubspot_signal_id'), // @phpstan-ignore-line cast.string
         );
     }
 
