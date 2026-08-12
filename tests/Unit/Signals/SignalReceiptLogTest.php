@@ -6,7 +6,9 @@ namespace ReyemTech\Hubspot\Tests\Unit\Signals;
 
 use Illuminate\Support\Carbon;
 use PHPUnit\Framework\AssertionFailedError;
+use ReyemTech\Hubspot\Testing\RequestLog;
 use ReyemTech\Hubspot\Testing\SignalReceiptLog;
+use ReyemTech\Hubspot\Testing\WebhookReceiptLog;
 use ReyemTech\Hubspot\Tests\Support\FailedAssertion;
 use ReyemTech\Hubspot\Tests\TestCase;
 
@@ -16,7 +18,7 @@ use ReyemTech\Hubspot\Tests\TestCase;
  * here, rather than only through the fake, so a failure names the log's own defect rather than a
  * wiring mistake three layers up.
  *
- * Mirrors {@see \ReyemTech\Hubspot\Testing\WebhookReceiptLog}'s own shape: a private array per
+ * Mirrors {@see WebhookReceiptLog}'s own shape: a private array per
  * concern, a `record*()` writer, and one assertion method per fact, each filtering to matching
  * entries and asserting existence before asserting a field-level subset.
  */
@@ -59,7 +61,7 @@ final class SignalReceiptLogTest extends TestCase
 
     /**
      * Two recorded entries that BETWEEN THEM carry every expected field, but neither one alone,
-     * must not satisfy this — the same rule {@see \ReyemTech\Hubspot\Testing\RequestLog::assertSynced()}
+     * must not satisfy this — the same rule {@see RequestLog::assertSynced()}
      * already carries (Codex, PR #20).
      */
     public function test_assert_signal_recorded_fails_when_the_expected_subset_is_split_across_two_entries(): void
@@ -105,7 +107,7 @@ final class SignalReceiptLogTest extends TestCase
     }
 
     /**
-     * The Codex P1 lesson {@see \ReyemTech\Hubspot\Testing\RequestLog::assertSynced()} already
+     * The Codex P1 lesson {@see RequestLog::assertSynced()} already
      * carries, reproduced for a single property/value pair: record A carries the PROPERTY with the
      * WRONG value, record B carries the expected VALUE under an unrelated property name. An
      * implementation that checked "was this property ever present" and "was this value ever
