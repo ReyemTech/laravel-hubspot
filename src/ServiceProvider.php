@@ -300,10 +300,14 @@ final class ServiceProvider extends BaseServiceProvider
         // SignalRecorder is above: the container has no default resolution for a plain
         // `Illuminate\Database\Connection` type-hint, only for `DatabaseManager`.
         $this->app->singleton(IdentityResolver::class, function (Application $app): IdentityResolver {
+            /** @var bool $featureEnabled */
+            $featureEnabled = $app->make('config')->get('hubspot.signals.enabled');
+
             return new IdentityResolver(
                 $app->make(DatabaseManager::class)->connection(),
                 $app->make(BoundModelReader::class),
                 $app->make(Dispatcher::class),
+                $featureEnabled,
             );
         });
     }

@@ -11,22 +11,29 @@ use ReyemTech\Hubspot\Exceptions\AssociationTypeException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Exceptions\HubspotException;
 use ReyemTech\Hubspot\Exceptions\ObjectTypeException;
+use ReyemTech\Hubspot\Exceptions\SignalException;
 use ReyemTech\Hubspot\Gateway\AssociationCategory;
 use ReyemTech\Hubspot\Gateway\ExceptionTranslator;
 use ReyemTech\Hubspot\Tests\TestCase;
 use RuntimeException;
 
 /**
- * Task 1 (02-02): completes the typed exception hierarchy to all four members rooted at
+ * Task 1 (02-02): completes the typed exception hierarchy to four members rooted at
  * `HubspotException` (STANDARDS §9, design spec §9). Every message names the fix, not just the
  * fault (D-18) -- proven here by asserting on message content, not merely on the exception
  * class, since named-constructor message content is a common surviving-mutant source.
+ *
+ * **Grown to a FIFTH member, `SignalException`, in 06-03 (SIG-05).** STANDARDS §9 states "no
+ * fifth member without cause" -- `Hubspot::identify()`'s D-02 and D-09 refusals are that cause,
+ * recorded in 06-03-PLAN.md's own objective: `SignalException` "as the fifth member of the
+ * hierarchy" is the plan's stated output, not an accidental addition this test failed to catch.
  */
 mutates(
     ApiException::class,
     AssociationTypeException::class,
     ConfigurationException::class,
     ObjectTypeException::class,
+    SignalException::class,
 );
 
 final class ExceptionHierarchyTest extends TestCase
@@ -52,13 +59,14 @@ final class ExceptionHierarchyTest extends TestCase
         throw new RuntimeException('ReyemTech\\Hubspot\\ PSR-4 prefix is not registered.');
     }
 
-    public function test_the_hierarchy_has_exactly_four_members_and_no_more_no_fewer(): void
+    public function test_the_hierarchy_has_exactly_five_members_and_no_more_no_fewer(): void
     {
         $expected = [
             ApiException::class,
             AssociationTypeException::class,
             ConfigurationException::class,
             ObjectTypeException::class,
+            SignalException::class,
         ];
         sort($expected);
 
@@ -88,17 +96,18 @@ final class ExceptionHierarchyTest extends TestCase
         self::assertSame(
             $expected,
             $actual,
-            'Expected exactly the four locked hierarchy members under src/Exceptions/ -- a fifth '
+            'Expected exactly the five locked hierarchy members under src/Exceptions/ -- a sixth '
             .'member (or a lost one) is a deliberate design change, not a silent addition.',
         );
     }
 
-    public function test_each_member_is_individually_catchable_and_all_four_are_catchable_via_hubspot_exception(): void
+    public function test_each_member_is_individually_catchable_and_all_five_are_catchable_via_hubspot_exception(): void
     {
         $configurationException = ConfigurationException::missingToken();
         $objectTypeException = ObjectTypeException::unmappable('p_widgets');
         $associationTypeException = AssociationTypeException::directionNotResolvable('contacts', 'companies');
         $apiException = ApiException::connectionFailure(new RuntimeException('boom'));
+        $signalException = SignalException::missingIdPropertyValue('App\\Models\\Contact', '1', 'email');
 
         try {
             throw $configurationException;
@@ -124,7 +133,13 @@ final class ExceptionHierarchyTest extends TestCase
             self::assertSame($apiException, $caught);
         }
 
-        foreach ([$configurationException, $objectTypeException, $associationTypeException, $apiException] as $exception) {
+        try {
+            throw $signalException;
+        } catch (SignalException $caught) {
+            self::assertSame($signalException, $caught);
+        }
+
+        foreach ([$configurationException, $objectTypeException, $associationTypeException, $apiException, $signalException] as $exception) {
             try {
                 throw $exception;
             } catch (HubspotException $caught) {
