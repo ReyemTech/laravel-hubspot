@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot;
 
 use Closure;
+use DateTimeInterface;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Database\Eloquent\Model;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Signals\IdentityResolver;
+use ReyemTech\Hubspot\Signals\SignalRecorder;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
 use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
@@ -120,6 +123,31 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
     public function associationDefinitions(): AssociationDefinitionsGatewayContract
     {
         return $this->container->make(AssociationDefinitionsGatewayContract::class);
+    }
+
+    /**
+     * Records a behavioural signal against an anonymous visitor id. Issues zero HTTP requests
+     * (SIG-02) -- delegates to `Signals\SignalRecorder`, which holds no `Gateway` reference at all.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    public function signal(
+        string $name,
+        string $visitorId,
+        array $properties = [],
+        ?DateTimeInterface $occurredAt = null,
+    ): void {
+        $this->container->make(SignalRecorder::class)->record($name, $visitorId, $properties, $occurredAt);
+    }
+
+    /**
+     * Binds a visitor id to a subject, backfilling every buffered signal that visitor id has
+     * recorded, then dispatches the batched HubSpot write (SIG-05). Delegates to
+     * `Signals\IdentityResolver`.
+     */
+    public function identify(string $visitorId, Model $subject): void
+    {
+        $this->container->make(IdentityResolver::class)->identify($visitorId, $subject);
     }
 
     /**

@@ -88,6 +88,8 @@ use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
  * @method static ObjectGatewayContract objects()
  * @method static AssociationGatewayContract associations()
  * @method static AssociationDefinitionsGatewayContract associationDefinitions()
+ * @method static void signal(string $name, string $visitorId, array<string, mixed> $properties = [], ?\DateTimeInterface $occurredAt = null)
+ * @method static void identify(string $visitorId, \Illuminate\Database\Eloquent\Model $subject)
  * @method static HubspotFake fake(array<string, CannedResponse|CannedConnectionFailure> $responses = [])
  * @method static CannedResponse response(array<string, mixed> $body, int $status = 200)
  * @method static CannedConnectionFailure connectionFailure()

@@ -599,4 +599,58 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'than a configuration one.',
         );
     }
+
+    /**
+     * A model passed to `Signals\IdentityResolver::identify()` has no entry in `hubspot.models` --
+     * mirroring `unboundSyncModel()`'s throw-on-miss precedent (Claude's Discretion, 06-CONTEXT.md).
+     * `Signals\BoundModelReader::for()` is the single resolution point every Signals collaborator
+     * that needs a subject's binding reaches (`IdentityResolver::identify()`,
+     * `FlushSignalsJob::handle()`).
+     *
+     * Deliberately its OWN factory, not a reuse of `unboundSyncModel()`: that message names
+     * `ReyemTech\Hubspot\Sync\SyncsToHubspot`, a `Sync`-specific concept that has nothing to do with
+     * why a Signals caller reached this state -- `Signals` reads the same `hubspot.models` config
+     * key but never imports a `Sync` class (D-01, R5/R7), and the message text must not leak the
+     * trait it never required.
+     */
+    public static function unboundSignalSubject(string $modelClass): self
+    {
+        return new self(sprintf(
+            '%s was passed to Hubspot::identify() but has no entry in hubspot.models. Add one '
+            .'naming the HubSpot object it resolves to and the property it upserts on, for '
+            .'example \'%s\' => [\'object\' => \'contacts\', \'id_property\' => \'email\']. This '
+            .'package never guesses which object type an unbound subject belongs to.',
+            $modelClass,
+            $modelClass,
+        ));
+    }
+
+    /**
+     * `HUBSPOT_SIGNALS=true` is set but the `hubspot_signals` table this package owns has never
+     * been created. Raised by `Signals\SignalRecorder` in place of the driver's own
+     * `SQLSTATE[42S02]`, mirroring `missingWebhookEventsTable()`'s shape exactly: name the table,
+     * name `php artisan migrate`, and pre-empt the publish question, because every other Laravel
+     * package that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingSignalsTable(bool $featureEnabled = true): self
+    {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis -- the identical reasoning missingWebhookEventsTable() already carries for
+        // HOOK-03.
+        if (! $featureEnabled) {
+            return new self(
+                'Recording a signal requires HUBSPOT_SIGNALS=true, and it is currently false. The '
+                .'"hubspot_signals" table is where every buffered signal is written, so recording '
+                .'cannot run without it. Set HUBSPOT_SIGNALS=true and run `php artisan migrate` '
+                .'(+ `php artisan config:cache` if you cache config). Nothing needs publishing '
+                .'first: this package loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+            );
+        }
+
+        return new self(
+            'HUBSPOT_SIGNALS is true but the "hubspot_signals" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+        );
+    }
 }
