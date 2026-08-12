@@ -284,19 +284,21 @@ in no released tag and the column is written but never read back by package code
   3. Every merge verb is provable with no HTTP, no database and no fake, because `RollUpCalculator` has no dependencies at all: `first_wins:<field>` returns the earliest value and is never overwritten once set, `last_wins:<field>` the most recent, `increment` the count of matching signals, `sum:<field>` a numeric total — plus a closure receiving the subject's matching signals. There is no `overwrite` verb.
   4. One flush issues **one batch property write per `(objectType, idProperty)` chunk** — `sum(ceil(groupSize / 100))` requests, which for one subject is one — regardless of how many signals buffered, and never one request per subject. Running the same flush twice produces the same property values: roll-ups are absolute values computed from the buffer, never read back from HubSpot, so a queue **retry** cannot double-count. Two **overlapping** flushes cannot lose an update either, but that is a separate mechanism and not a consequence of absoluteness — a subject-level atomic claim serializes calculate-and-write per subject, and the loser skips that subject leaving its rows unflushed. The `first_wins:source|reconcile` modifier performs at most one read per subject, ever, recorded on the row so it never repeats.
      *Amended 2026-08-12 (PR #81 review). The grouping is forced by `upsertMany()`'s signature, which carries one object type and one id property per request; `REQUIREMENTS.md` SIG-06's "issues **one** batch property write" predates that reading and wants the same one-line amendment — its intent, "not N", is what the grouping preserves.*
+
   5. `HUBSPOT_SIGNALS=false` (the default) leaves the package with no migration and no new table, so zero-migration install is intact; setting it true without migrating produces `HUBSPOT_SIGNALS=true but table 'hubspot_signals' does not exist — run 'php artisan migrate'.` rather than a raw SQL failure. `assertSignalRecorded()`, `assertSignalFlushed()` and `assertPropertyRolledUp()` are available on the fake, with `occurred_at` from a frozen Carbon and visitor ids from a counter.
 
-**Plans**: 8 plans, in 6 waves
+**Plans**: 8/8 plans executed, in 6 waves
 
 Plans:
-- [ ] 06-01-PLAN.md — Tracer: one signal to one buffer row to one grouped batched write, plus SIG-01's gated migration (wave 1)
-- [ ] 06-02-PLAN.md — Signal map, closed four-verb vocabulary, boot-time validation (wave 2)
-- [ ] 06-03-PLAN.md — `identify()`, subject backfill, `SignalException` (wave 2)
-- [ ] 06-04-PLAN.md — `RollUpCalculator`, all four verbs, pure function (wave 3)
-- [ ] 06-05-PLAN.md — `SignalStore` contract and the `local` driver (wave 3)
-- [ ] 06-06-PLAN.md — `FlushSignalsJob`: grouped by `(objectType, idProperty)` then chunked at 100, and the subject-level atomic claim (wave 4)
-- [ ] 06-07-PLAN.md — `reconcile` at most once per subject, and `hubspot:signals:flush` (wave 5)
-- [ ] 06-08-PLAN.md — Signal assertions on the fake, determinism (wave 6)
+
+- [x] 06-01-PLAN.md — Tracer: one signal to one buffer row to one grouped batched write, plus SIG-01's gated migration (wave 1)
+- [x] 06-02-PLAN.md — Signal map, closed four-verb vocabulary, boot-time validation (wave 2)
+- [x] 06-03-PLAN.md — `identify()`, subject backfill, `SignalException` (wave 2)
+- [x] 06-04-PLAN.md — `RollUpCalculator`, all four verbs, pure function (wave 3)
+- [x] 06-05-PLAN.md — `SignalStore` contract and the `local` driver (wave 3)
+- [x] 06-06-PLAN.md — `FlushSignalsJob`: grouped by `(objectType, idProperty)` then chunked at 100, and the subject-level atomic claim (wave 4)
+- [x] 06-07-PLAN.md — `reconcile` at most once per subject, and `hubspot:signals:flush` (wave 5)
+- [x] 06-08-PLAN.md — Signal assertions on the fake, determinism (wave 6)
 
 **Blocking prerequisite found at plan time:** architecture rule **R5 does not admit `Illuminate`**,
 unlike R2/R3/R4. Every `src/Signals/` class needs `Illuminate\Support\Collection`,
@@ -315,6 +317,7 @@ and the flush work no longer fits one plan.
   so nothing repairs it. A subject-level atomic claim around calculate-and-write now ships in 06-06,
   decided on an affected row count, and rows are marked flushed by explicit id so a mid-flush insert
   survives to repair the next run.
+
 - **D-05 (P2, unsendable batches).** "Chunk at 100 across subjects" was written against a Phase 4
   precedent's prose rather than against
   `ObjectGatewayContract::upsertMany(string $objectType, string $idProperty, array $records)`, which
@@ -344,6 +347,7 @@ and the flush work no longer fits one plan.
      tables this prune inherits, from 06-06 and 06-05 respectively: the subject-level flush-claim
      table (released rows persist rather than delete, per `FlushClaims::release()`), and the `local`
      driver's own event trail.*
+
   5. The attribution property-name convention is documented with a worked `paid_landing` example (`hs_first_touch_gclid`, `hs_first_touch_source`, `hs_first_touch_at`, `hs_first_landing_page`), and a first-touch value recorded before a later branded or direct visit is provably not overwritten by it.
 
 **Plans**: TBD
@@ -464,7 +468,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. Registry & Stores | 3/3 | Complete | 2026-07-29 |
 | 4. Model Sync | 9/9 | Complete | 2026-08-03 |
 | 5. Inbound Webhooks | 5/5 | Complete    | 2026-08-06 |
-| 6. Signals Core | 0/TBD | Not started | - |
+| 6. Signals Core | 8/8 | In Progress|  |
 | 7. Signal Stores & Attribution | 0/TBD | Not started | - |
 | 8. Frontend & Meetings Embed | 0/TBD | Not started | - |
 | 9. Adoption & Release | 0/TBD | Not started | - |
