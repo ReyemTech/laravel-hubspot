@@ -1,0 +1,188 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ReyemTech\Hubspot\Tests\Feature\Signals;
+
+use ReflectionMethod;
+use ReyemTech\Hubspot\Facades\Hubspot;
+use ReyemTech\Hubspot\HubspotManager;
+use ReyemTech\Hubspot\Testing\HubspotFake;
+use ReyemTech\Hubspot\Testing\SignalReceiptLog;
+use ReyemTech\Hubspot\Tests\Support\Signals\SignalsTestCase;
+use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
+use RuntimeException;
+
+/**
+ * SIG-08: `assertSignalRecorded()`, `assertSignalFlushed()` and `assertPropertyRolledUp()`, wired
+ * through `HubspotManager` and `HubspotFake` the same way `assertWebhookHandled()` already is --
+ * see `Testing\SignalReceiptLog` for what each one actually reads and fails with.
+ */
+final class FakeAssertionsTest extends SignalsTestCase
+{
+    private function threePricingViews(string $visitorId): void
+    {
+        Hubspot::signal('pricing_page_viewed', $visitorId, ['source' => 'google_ads']);
+        Hubspot::signal('pricing_page_viewed', $visitorId, ['source' => 'google_ads']);
+        Hubspot::signal('pricing_page_viewed', $visitorId, ['source' => 'google_ads']);
+    }
+
+    public function test_a_recorded_signal_is_asserted_recorded_through_the_facade(): void
+    {
+        Hubspot::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+
+        Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed');
+    }
+
+    /**
+     * The shared-instance guarantee: asserting through the value `Hubspot::fake()` returned reads
+     * the SAME log the recorder wrote to.
+     */
+    public function test_asserting_through_the_value_fake_returned_reads_the_same_log_the_recorder_wrote_to(): void
+    {
+        $fake = Hubspot::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+
+        $fake->assertSignalRecorded('visitor-1', 'pricing_page_viewed', ['source' => 'google_ads']);
+    }
+
+    public function test_identify_plus_a_flush_makes_signal_flushed_and_property_rolled_up_pass(): void
+    {
+        Hubspot::fake();
+        $this->threePricingViews('visitor-1');
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+        Hubspot::identify('visitor-1', $subject);
+
+        Hubspot::assertSignalFlushed($subject);
+        Hubspot::assertPropertyRolledUp($subject, 'pricing_page_views', '3');
+    }
+
+    /**
+     * `assertRequestCount()` -- the existing mechanism, no new one -- proves the flush issued one
+     * batched write for the single subject/group this test covers.
+     */
+    public function test_assert_request_count_proves_the_flush_issued_one_batched_write(): void
+    {
+        Hubspot::fake();
+        $this->threePricingViews('visitor-1');
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+        Hubspot::identify('visitor-1', $subject);
+
+        Hubspot::assertRequestCount(1);
+    }
+
+    /**
+     * A production process, where no fake is ever installed, accumulates no receipts -- the same
+     * `isFaked()` gate `recordWebhookHandled()` already uses (T-06-32).
+     */
+    public function test_signal_with_no_fake_installed_records_nothing(): void
+    {
+        Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+
+        Hubspot::fake();
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('No HubSpot fake installed');
+
+        // No receipt was ever recorded for visitor-1 under the fake just installed -- the write
+        // above happened with no fake bound, so nothing was captured.
+        Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed');
+    }
+
+    /**
+     * `flushState()` clears the signal log alongside `$fake`, `$syncingSuppressed` and
+     * `$webhookReceipts` -- a second Octane request must assert nothing from the first (T-06-34).
+     */
+    public function test_flush_state_clears_the_signal_log_alongside_the_other_three_properties(): void
+    {
+        Hubspot::fake();
+        Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+
+        app(HubspotManager::class)->flushState();
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('No HubSpot fake installed');
+
+        Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed');
+    }
+
+    /**
+     * The fake is fresh on a second `Hubspot::fake()` call, but the canonical log is not -- the
+     * same guarantee `HubspotManager::fake()`'s own docblock already states for `$webhookReceipts`.
+     */
+    public function test_a_second_fake_call_in_one_process_still_reads_the_canonical_log(): void
+    {
+        Hubspot::fake();
+        Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+
+        Hubspot::fake();
+
+        Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed');
+    }
+
+    /**
+     * T-06-37 (backwards compatibility): `signalReceipts` is appended LAST with a default,
+     * asserted by reflection over the parameter list and the required-argument count -- what
+     * roave's own compatibility check reads.
+     */
+    public function test_the_released_constructor_signature_remains_a_strict_prefix(): void
+    {
+        $reflection = new ReflectionMethod(HubspotFake::class, '__construct');
+
+        self::assertSame(
+            ['container', 'responses', 'replacing', 'webhookReceipts', 'signalReceipts'],
+            array_map(static fn (\ReflectionParameter $parameter): string => $parameter->getName(), $reflection->getParameters()),
+        );
+
+        self::assertSame(2, $reflection->getNumberOfRequiredParameters());
+
+        $lastParameter = $reflection->getParameters()[array_key_last($reflection->getParameters())];
+        self::assertTrue($lastParameter->isDefaultValueAvailable());
+        self::assertSame('signalReceipts', $lastParameter->getName());
+
+        // The released v0.6.0 shape still constructs.
+        $container = app();
+        $fakeA = new HubspotFake($container, []);
+        $fakeB = new HubspotFake($container, [], $fakeA);
+
+        self::assertInstanceOf(HubspotFake::class, $fakeA);
+        self::assertInstanceOf(HubspotFake::class, $fakeB);
+    }
+
+    public function test_assert_signal_recorded_with_no_fake_installed_throws_the_same_runtime_error(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('No HubSpot fake installed. Call Hubspot::fake() before making assertions.');
+
+        Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed');
+    }
+
+    /**
+     * The inbound signal log and the outbound Guzzle request history stay disjoint -- a recorded
+     * signal never appears in `assertSynced()`'s source and vice versa (SignalReceiptLog's own
+     * docblock reasoning, reused).
+     */
+    public function test_the_inbound_signal_log_and_the_outbound_request_history_stay_disjoint(): void
+    {
+        Hubspot::fake();
+        $this->threePricingViews('visitor-1');
+
+        // Buffered signals never leave the process (SIG-02) -- nothing has synced yet, even though
+        // three signals were already recorded.
+        Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed');
+        Hubspot::assertNothingSynced();
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+        Hubspot::identify('visitor-1', $subject);
+
+        // The flush's own outbound write is what assertSynced() reads -- the signal log separately
+        // records only that the subject WAS flushed, not the wire body assertSynced() inspects.
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '3']);
+        Hubspot::assertSignalFlushed($subject);
+    }
+}
