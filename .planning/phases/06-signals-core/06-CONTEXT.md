@@ -56,19 +56,48 @@ anything in `Frontend`.
   registers **no** schedule itself. Matches the `hubspot:webhooks:prune` precedent and keeps the
   default install inert. Frequency, queue, overlap and environment stay the consumer's decisions.
 
-- **D-05:** A scheduled flush **batches across subjects, chunked at 100**, rather than one job per
-  subject. Both halves already exist and are tested: Phase 4's chunked identity-aware transport at
-  exactly this grain, and Phase 2's treatment of HTTP 207 as partial success, so one bad record does
-  not sink the other 99. This is the only reading of SIG-06's "not N" that stays true as volume
-  grows.
+- **D-05 (revised 2026-08-12):** A scheduled flush **groups pending subjects by
+  `(objectType, idProperty)` and chunks each group at 100**, rather than one job per subject.
+  Request count is `sum(ceil(groupSize / 100))`, and that is the number SIG-06's
+  `assertRequestCount` is written against — not a flat one.
+  **The grouping is not a refinement, it is a correctness requirement.**
+  `Gateway\Contracts\ObjectGatewayContract::upsertMany(string $objectType, string $idProperty, array $records)`
+  (line 93) carries **one** object type and **one** id property per request, so a chunk assembled from
+  arbitrary subjects cannot be sent at all. The first draft of this decision said "chunk at 100
+  across subjects" and skipped the grouping; that was wrong against the real signature.
+  Phase 2's treatment of HTTP 207 as partial success still applies within a chunk, so one bad record
+  does not sink the other 99. Phase 4's batch job is the SHAPE to copy and **not** a class to import —
+  it lives in `Sync`, which `Signals` may not depend on.
 
-- **D-06:** Overlapping and retried flushes are made harmless **by construction, not by
-  coordination**. Each event-trail entry is keyed on the `hubspot_signals` row id it came from, so
-  re-appending is a no-op; `reconcile` is gated on the `reconciled_at` column the schema already
-  carries; roll-ups are already absolute (D-40). **No claim/lease is introduced.** This is the
-  lesson Phase 5 paid for — deduplication keyed on an identity rather than on timing.
-  — **Reversibility:** one-way — the trail's unique key ships in the `local` driver's migration;
-  changing it later needs a migration against installed data.
+- **D-06 (revised 2026-08-12):** Overlapping and retried flushes are made safe by **trail
+  idempotence PLUS subject-level serialization** — the first draft claimed idempotence alone was
+  enough, and it is not.
+
+  Unchanged and still correct: each event-trail entry is keyed on the `hubspot_signals` row id it
+  came from, so re-appending is a no-op; `reconcile` is gated on `reconciled_at`; roll-ups are
+  absolute (D-40).
+
+  **What the first draft got wrong.** Absolute values are idempotent under a *retry of the same
+  input*. They are not idempotent under *two workers computing over different row sets*, which is
+  exactly what an identify-triggered flush racing the scheduled one produces:
+
+  ```
+  Worker A reads rows {1,2}     -> count = 2
+  Worker B reads rows {1,2,3}   -> count = 3, writes 3, marks 1,2,3 flushed
+  Worker A writes 2             -> overwrites 3 with a stale value, permanently
+  ```
+
+  Nothing repairs it, because every row is already flushed. Trail dedup and `reconciled_at` do not
+  order the **property write**. Scheduler `withoutOverlapping()` does not close it either — the lock
+  covers the command, and SIG-06 *requires* `identify()` to dispatch a flush that races it.
+
+  **The fix:** a subject-level atomic claim around calculate-and-write. A conditional UPDATE claims
+  a subject's unflushed rows; the worker that affects zero rows claims nothing and skips that
+  subject. This is the affected-row-count pattern `Webhooks\Stores\DatabaseWebhookEventStore`
+  already uses for lease recovery — decided on affected rows, never read-then-write. It is
+  per-subject, so it does not serialize the whole flush.
+  — **Reversibility:** one-way — the trail's unique key and the claim column ship in migrations;
+  changing either later needs a migration against installed data.
 
 ### Signal map and validation
 
@@ -193,7 +222,17 @@ anything in `Frontend`.
 <specifics>
 ## Specific Ideas
 
-**Two items need recording as amendments, not absorbed silently.**
+**Three items need recording as amendments, not absorbed silently.**
+
+0. **D-05 and D-06 were revised on 2026-08-12 after automated review of PR #81 found a P1.** Both
+   original readings are preserved above rather than quietly replaced, because the mistake is
+   instructive: "absolute values make retries safe" was generalised into "absolute values make
+   concurrency safe", and those are different claims. A retry recomputes the *same* input; two
+   overlapping flushes compute *different* inputs and the later write can be overwritten by an
+   earlier worker's stale one. Any future decision that reaches for idempotence instead of
+   coordination should be asked which of the two it actually establishes. The companion error in
+   D-05 was citing a Phase 4 precedent without checking the signature it would be called through —
+   `upsertMany()` takes one object type and one id property, so ungrouped chunks were unsendable.
 
 1. **Spec §6 / SIG-03's closure-in-config breaks `php artisan config:cache`.** Laravel cannot
    serialize a closure in a config file — it fails with *"Your configuration files are not
