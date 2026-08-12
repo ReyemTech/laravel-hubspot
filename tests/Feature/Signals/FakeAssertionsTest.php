@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 
+use InvalidArgumentException;
+use PHPUnit\Framework\AssertionFailedError;
 use ReflectionMethod;
+use ReflectionParameter;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\HubspotManager;
 use ReyemTech\Hubspot\Testing\HubspotFake;
-use ReyemTech\Hubspot\Testing\SignalReceiptLog;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalsTestCase;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 use RuntimeException;
@@ -82,15 +84,17 @@ final class FakeAssertionsTest extends SignalsTestCase
      */
     public function test_signal_with_no_fake_installed_records_nothing(): void
     {
+        // No fake bound yet -- a production process, in this respect.
         Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
 
         Hubspot::fake();
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('No HubSpot fake installed');
+        // A fake now IS installed, with a fresh log -- but nothing was ever captured for the call
+        // above, because no fake was bound when it ran. The assertion itself must therefore fail
+        // (proving the log is empty), not merely refuse for lack of an installed fake.
+        $this->expectException(AssertionFailedError::class);
+        $this->expectExceptionMessage("Expected signal 'pricing_page_viewed' to have been recorded for visitor 'visitor-1', but none was.");
 
-        // No receipt was ever recorded for visitor-1 under the fake just installed -- the write
-        // above happened with no fake bound, so nothing was captured.
         Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed');
     }
 
@@ -133,15 +137,17 @@ final class FakeAssertionsTest extends SignalsTestCase
     public function test_the_released_constructor_signature_remains_a_strict_prefix(): void
     {
         $reflection = new ReflectionMethod(HubspotFake::class, '__construct');
+        $parameters = $reflection->getParameters();
 
         self::assertSame(
             ['container', 'responses', 'replacing', 'webhookReceipts', 'signalReceipts'],
-            array_map(static fn (\ReflectionParameter $parameter): string => $parameter->getName(), $reflection->getParameters()),
+            array_map(static fn (ReflectionParameter $parameter): string => $parameter->getName(), $parameters),
         );
 
         self::assertSame(2, $reflection->getNumberOfRequiredParameters());
 
-        $lastParameter = $reflection->getParameters()[array_key_last($reflection->getParameters())];
+        $lastParameter = end($parameters);
+        self::assertNotFalse($lastParameter);
         self::assertTrue($lastParameter->isDefaultValueAvailable());
         self::assertSame('signalReceipts', $lastParameter->getName());
 
@@ -184,5 +190,56 @@ final class FakeAssertionsTest extends SignalsTestCase
         // records only that the subject WAS flushed, not the wire body assertSynced() inspects.
         Hubspot::assertSynced('contacts', ['pricing_page_views' => '3']);
         Hubspot::assertSignalFlushed($subject);
+    }
+
+    /**
+     * `assertSignalFlushed()`/`assertPropertyRolledUp()` accept a bare `'SubjectType#subjectId'`
+     * string as well as a `Model` -- the shorthand for a caller with no model instance in hand.
+     * Coverage-driven: {@see test_identify_plus_a_flush_makes_signal_flushed_and_property_rolled_up_pass()}
+     * only exercises the `Model` branch.
+     */
+    public function test_assert_signal_flushed_accepts_a_string_subject_identity(): void
+    {
+        Hubspot::fake();
+        $this->threePricingViews('visitor-1');
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+        Hubspot::identify('visitor-1', $subject);
+
+        $identity = SignalSubject::class.'#'.((string) $subject->getKey()); // @phpstan-ignore-line cast.string
+
+        Hubspot::assertSignalFlushed($identity);
+        Hubspot::assertPropertyRolledUp($identity, 'pricing_page_views', '3');
+    }
+
+    /**
+     * `recordSignalFlushed()`'s own `isFaked()` gate (T-06-32), covered independently of
+     * `recordSignalBuffered()`'s identical guard above -- `FlushSignalsJob` only ever reaches this
+     * call after a real gateway write, so the no-fake path is exercised directly through the
+     * facade rather than through a flush that would otherwise need real HubSpot credentials.
+     */
+    public function test_record_signal_flushed_with_no_fake_installed_records_nothing(): void
+    {
+        Hubspot::recordSignalFlushed('App\\Models\\Lead', '1', ['pricing_page_views' => '3']);
+
+        Hubspot::fake();
+
+        $this->expectException(AssertionFailedError::class);
+
+        Hubspot::assertSignalFlushed('App\\Models\\Lead#1');
+    }
+
+    /**
+     * A string subject identity with no `'#'` throws naming the expected format, rather than
+     * silently misreading the whole string as the subject type with an empty id.
+     */
+    public function test_a_malformed_string_subject_identity_throws_naming_the_expected_format(): void
+    {
+        Hubspot::fake();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage("'SubjectType#subjectId'");
+
+        Hubspot::assertSignalFlushed('not-a-valid-identity');
     }
 }

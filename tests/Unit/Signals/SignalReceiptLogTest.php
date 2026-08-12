@@ -90,6 +90,27 @@ final class SignalReceiptLogTest extends TestCase
         self::assertStringContainsString('2', $message);
     }
 
+    public function test_assert_signal_flushed_passes_with_an_expected_property_subset_carried_by_one_record(): void
+    {
+        $log = new SignalReceiptLog;
+        $log->recordFlushed('App\\Models\\Lead', '1', ['pricing_page_views' => '3', 'first_touch_source' => 'google_ads']);
+
+        $log->assertSignalFlushed('App\\Models\\Lead', '1', ['pricing_page_views' => '3', 'first_touch_source' => 'google_ads']);
+    }
+
+    public function test_assert_property_rolled_up_names_that_the_property_was_never_recorded_when_absent_entirely(): void
+    {
+        $log = new SignalReceiptLog;
+        $log->recordFlushed('App\\Models\\Lead', '1', ['first_touch_source' => 'google_ads']);
+
+        $message = FailedAssertion::messageOf(
+            fn () => $log->assertPropertyRolledUp('App\\Models\\Lead', '1', 'pricing_page_views', '3'),
+        );
+
+        self::assertStringContainsString('pricing_page_views', $message);
+        self::assertStringContainsString('not recorded', $message);
+    }
+
     public function test_assert_property_rolled_up_passes_for_a_carried_value_and_fails_naming_property_expected_and_actual(): void
     {
         $log = new SignalReceiptLog;

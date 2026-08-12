@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Signals\Contracts\SignalReceiptRecorder;
 use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
 
 /**
@@ -98,6 +99,14 @@ use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
  * this file under STANDARDS §6b's 500-line cap. It runs per group, inside the claim and before that
  * group's write, between {@see self::buildGroups()} and {@see self::sendGroup()} below.
  *
+ * ## The flush receipt (SIG-08)
+ *
+ * `Signals\Contracts\SignalReceiptRecorder::recordSignalFlushed()` is called per subject in
+ * `sendGroup()` ONLY after that subject's write is confirmed by the response AND its trail is
+ * appended -- a receipt records that work FINISHED, never that it merely started, mirroring the
+ * identical rule `Webhooks\Contracts\WebhookReceiptRecorder`'s own docblock states. No-op unless a
+ * fake is installed, per that contract's own gate.
+ *
  * @see FlushClaims for the claim mechanism itself.
  * @see SignalReconciler for the reconcile read.
  */
@@ -125,6 +134,7 @@ final class FlushSignalsJob implements ShouldQueue
         SignalMap $map,
         SignalStore $store,
         FlushClaims $claims,
+        SignalReceiptRecorder $receipts,
     ): void {
         if ($this->subjects === []) {
             return;
@@ -144,7 +154,7 @@ final class FlushSignalsJob implements ShouldQueue
         foreach ($groups as $group) {
             $group = SignalReconciler::reconcile($group, $connection, $gateway);
 
-            self::sendGroup($group, $connection, $gateway, $store, $claims, $token);
+            self::sendGroup($group, $connection, $gateway, $store, $claims, $token, $receipts);
         }
     }
 
@@ -295,6 +305,7 @@ final class FlushSignalsJob implements ShouldQueue
         SignalStore $store,
         FlushClaims $claims,
         string $token,
+        SignalReceiptRecorder $receipts,
     ): void {
         $subjects = array_values($group['subjects']);
 
@@ -357,6 +368,13 @@ final class FlushSignalsJob implements ShouldQueue
                         ->whereIn('id', $subjectRecord['rowIds'])
                         ->whereNull('flushed_at')
                         ->update(['flushed_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+
+                    // Reported only after the write is confirmed AND the trail appended -- SIG-08.
+                    $receipts->recordSignalFlushed(
+                        $subjectRecord['subjectType'],
+                        $subjectRecord['subjectId'],
+                        $subjectRecord['properties'],
+                    );
                 } finally {
                     // The subject's write has been decided (confirmed and trailed, or left
                     // unconfirmed) -- the claim is released regardless, so a throwing append()

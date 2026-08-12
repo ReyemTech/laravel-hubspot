@@ -85,6 +85,30 @@ use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
  * public and callable through this facade, and a custom long-lived worker is the one case where
  * calling it by hand is the right thing to do.
  *
+ * `assertSignalRecorded()`, `assertSignalFlushed()` and `assertPropertyRolledUp()` (SIG-08) read
+ * the SAME kind of INBOUND receipt log `assertWebhookHandled()` does -- a signal is buffered and
+ * flushed entirely inside this process, so neither borrows the outbound Guzzle history every other
+ * assertion above reads, and neither satisfies `assertRequestCount()`:
+ *
+ * ```php
+ * Hubspot::fake();
+ * Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+ * Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed', ['source' => 'google_ads']);
+ *
+ * Hubspot::identify('visitor-1', $lead);
+ * Hubspot::assertSignalFlushed($lead);
+ * Hubspot::assertPropertyRolledUp($lead, 'pricing_page_views', '1');
+ * ```
+ *
+ * `assertPropertyRolledUp()` requires that ONE flushed record carried the property with the
+ * expected value, mirroring `assertSynced()`'s one-record rule -- never a value assembled by
+ * checking the property's presence and the value's presence as two independent facts.
+ *
+ * `recordSignalBuffered()` and `recordSignalFlushed()` are `Signals\Contracts\SignalReceiptRecorder`'s
+ * two methods, advertised here for the same reason `recordWebhookHandled()` is: public and callable
+ * through this facade, even though `SignalRecorder`/`FlushSignalsJob` are their only intended
+ * callers.
+ *
  * @method static ObjectGatewayContract objects()
  * @method static AssociationGatewayContract associations()
  * @method static AssociationDefinitionsGatewayContract associationDefinitions()
@@ -99,6 +123,11 @@ use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
  * @method static void assertAssociated(\ReyemTech\Hubspot\Gateway\AssociationPair $pair, ?string $label = null)
  * @method static void recordWebhookHandled(NormalizedWebhookEvent $event)
  * @method static void assertWebhookHandled(string $eventKey, array<string, mixed>|string $expected = [])
+ * @method static void recordSignalBuffered(string $visitorId, string $signalName, array<string, mixed> $properties, \DateTimeInterface $occurredAt)
+ * @method static void recordSignalFlushed(string $subjectType, string $subjectId, array<string, mixed> $properties)
+ * @method static void assertSignalRecorded(string $visitorId, string $signalName, array<string, mixed> $expected = [])
+ * @method static void assertSignalFlushed(string|\Illuminate\Database\Eloquent\Model $subject, array<string, mixed> $expected = [])
+ * @method static void assertPropertyRolledUp(string|\Illuminate\Database\Eloquent\Model $subject, string $property, string $value)
  * @method static void flushState()
  * @method static bool syncingSuppressed()
  * @method static bool isFaked()

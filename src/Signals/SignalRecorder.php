@@ -10,6 +10,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
+use ReyemTech\Hubspot\Signals\Contracts\SignalReceiptRecorder;
 
 /**
  * `Hubspot::signal()`'s implementation -- SIG-02's zero-HTTP proof lives here in the fact that this
@@ -24,6 +25,11 @@ use ReyemTech\Hubspot\Exceptions\ConfigurationException;
  * `Webhooks\Stores\DatabaseWebhookEventStore::guarded()`'s exact shape: a missing-table
  * `QueryException` is translated into a directed `ConfigurationException`, and every other
  * database failure is left alone.
+ *
+ * `record()` reports through `SignalReceiptRecorder` (SIG-08) AFTER the INSERT succeeds -- a
+ * receipt records that work FINISHED, never that it merely started -- so `Hubspot::fake()`'s
+ * `assertSignalRecorded()` can prove a buffered signal without either issuing HTTP or reading the
+ * database back.
  */
 final class SignalRecorder
 {
@@ -39,6 +45,7 @@ final class SignalRecorder
     public function __construct(
         private readonly Connection $connection,
         private readonly SignalMap $map,
+        private readonly SignalReceiptRecorder $receipts,
         // Carried only so the missing-table error can describe the state the operator is actually
         // in -- ServiceProvider decides whether this class is reachable at all; by the time a
         // query runs, the answer here only shapes the diagnosis. Mirrors
@@ -84,6 +91,11 @@ final class SignalRecorder
                 'updated_at' => $now,
             ]);
         });
+
+        // Reported only after the INSERT above succeeds -- a receipt records that work FINISHED,
+        // never that it merely started (SIG-08). No-op unless a fake is installed, per
+        // `SignalReceiptRecorder`'s own contract.
+        $this->receipts->recordSignalBuffered($visitorId, $name, $properties, $occurredAt ?? $now);
     }
 
     /**

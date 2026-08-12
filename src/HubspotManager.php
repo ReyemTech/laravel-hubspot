@@ -12,6 +12,7 @@ use ReyemTech\Hubspot\Gateway\AssociationPair;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationDefinitionsGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\AssociationGatewayContract;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Signals\Contracts\SignalReceiptRecorder;
 use ReyemTech\Hubspot\Signals\IdentityResolver;
 use ReyemTech\Hubspot\Signals\SignalRecorder;
 use ReyemTech\Hubspot\Sync\ModelBindings;
@@ -20,6 +21,7 @@ use ReyemTech\Hubspot\Testing\CannedConnectionFailure;
 use ReyemTech\Hubspot\Testing\CannedResponse;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Testing\RequestLog;
+use ReyemTech\Hubspot\Testing\SignalReceiptLog;
 use ReyemTech\Hubspot\Testing\WebhookReceiptLog;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookReceiptRecorder;
 use ReyemTech\Hubspot\Webhooks\NormalizedWebhookEvent;
@@ -30,13 +32,13 @@ use RuntimeException;
  * (not `Gateway`) — it must never name a `HubSpot\*` SDK class (R1); a single reference here
  * would break the rule in a layer that is not allowed to carry it.
  *
- * Implements `Webhooks\Contracts\WebhookReceiptRecorder` for the identical reason it implements
- * `Sync\SyncStateContract` (see that interface's own docblock): `Webhooks` may not depend on
- * `ReyemTech\Hubspot\Testing` (R4), so the layer that needs the capability declares the port and this
- * composition root implements it. This is the SECOND instance of that same inversion, not a new
- * pattern.
+ * Implements `Webhooks\Contracts\WebhookReceiptRecorder` and `Signals\Contracts\SignalReceiptRecorder`
+ * for the identical reason it implements `Sync\SyncStateContract` (see that interface's own
+ * docblock): `Webhooks`/`Signals` may not depend on `ReyemTech\Hubspot\Testing` (R4/R5), so the
+ * layer that needs the capability declares the port and this composition root implements it.
+ * `SignalReceiptRecorder` is the THIRD instance of that same inversion, not a new pattern.
  */
-final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
+final class HubspotManager implements SignalReceiptRecorder, SyncStateContract, WebhookReceiptRecorder
 {
     private ?HubspotFake $fake = null;
 
@@ -60,10 +62,20 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
      */
     private WebhookReceiptLog $webhookReceipts;
 
+    /**
+     * The canonical inbound receipt log `Hubspot::assertSignalRecorded()`,
+     * `assertSignalFlushed()` and `assertPropertyRolledUp()` read (SIG-08) -- owned HERE on the
+     * identical terms as `$webhookReceipts` above: every `fake()` call hands the SAME instance to
+     * the fresh `HubspotFake` it constructs, so a consumer asserting through the value
+     * `Hubspot::fake()` returned reads this identical log.
+     */
+    private SignalReceiptLog $signalReceipts;
+
     public function __construct(private readonly Container $container)
     {
         $this->syncingSuppressed = false;
         $this->webhookReceipts = new WebhookReceiptLog;
+        $this->signalReceipts = new SignalReceiptLog;
     }
 
     /**
@@ -82,6 +94,10 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
      * `$webhookReceipts` is reset for the identical Octane reason as `$fake` and
      * `$syncingSuppressed`: a worker that carried inbound receipts forward would let one request's
      * handled webhook satisfy `assertWebhookHandled()` on a request that never received it.
+     *
+     * `$signalReceipts` is reset for the identical reason (T-06-34): a worker that carried signal
+     * receipts forward would let one request's recorded or flushed signal satisfy an assertion on
+     * a request that never made it.
      */
     public function flushState(): void
     {
@@ -94,6 +110,7 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
         $this->fake = null;
         $this->syncingSuppressed = false;
         $this->webhookReceipts = new WebhookReceiptLog;
+        $this->signalReceipts = new SignalReceiptLog;
     }
 
     public function objects(): ObjectGatewayContract
@@ -193,6 +210,7 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
             $responses,
             $this->fake,
             webhookReceipts: $this->webhookReceipts,
+            signalReceipts: $this->signalReceipts,
         );
     }
 
@@ -286,6 +304,59 @@ final class HubspotManager implements SyncStateContract, WebhookReceiptRecorder
     public function assertWebhookHandled(string $eventKey, string|array $expected = []): void
     {
         $this->fakeOrFail()->assertWebhookHandled($eventKey, $expected);
+    }
+
+    /**
+     * `Signals\Contracts\SignalReceiptRecorder`. Records only while a fake is installed -- reusing
+     * the existing {@see self::isFaked()} question, on the identical terms as
+     * `recordWebhookHandled()` above -- so a production process, where no fake is ever bound,
+     * accumulates none of its own customers' behavioural data (T-06-32).
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    public function recordSignalBuffered(string $visitorId, string $signalName, array $properties, DateTimeInterface $occurredAt): void
+    {
+        if (! $this->isFaked()) {
+            return;
+        }
+
+        $this->signalReceipts->recordBuffered($visitorId, $signalName, $properties, $occurredAt);
+    }
+
+    /**
+     * `Signals\Contracts\SignalReceiptRecorder`. See {@see self::recordSignalBuffered()} for the
+     * identical `isFaked()` gate.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    public function recordSignalFlushed(string $subjectType, string $subjectId, array $properties): void
+    {
+        if (! $this->isFaked()) {
+            return;
+        }
+
+        $this->signalReceipts->recordFlushed($subjectType, $subjectId, $properties);
+    }
+
+    /**
+     * @param  array<string, mixed>  $expected
+     */
+    public function assertSignalRecorded(string $visitorId, string $signalName, array $expected = []): void
+    {
+        $this->fakeOrFail()->assertSignalRecorded($visitorId, $signalName, $expected);
+    }
+
+    /**
+     * @param  array<string, mixed>  $expected
+     */
+    public function assertSignalFlushed(string|Model $subject, array $expected = []): void
+    {
+        $this->fakeOrFail()->assertSignalFlushed($subject, $expected);
+    }
+
+    public function assertPropertyRolledUp(string|Model $subject, string $property, string $value): void
+    {
+        $this->fakeOrFail()->assertPropertyRolledUp($subject, $property, $value);
     }
 
     /**

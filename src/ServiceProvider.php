@@ -35,6 +35,7 @@ use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\Signals\BoundModelReader;
 use ReyemTech\Hubspot\Signals\Console\FlushSignalsCommand;
+use ReyemTech\Hubspot\Signals\Contracts\SignalReceiptRecorder;
 use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
 use ReyemTech\Hubspot\Signals\FlushClaims;
 use ReyemTech\Hubspot\Signals\IdentityResolver;
@@ -180,6 +181,10 @@ final class ServiceProvider extends BaseServiceProvider
         // the port, `HubspotManager` implements it. See `Webhooks\Contracts\WebhookReceiptRecorder`.
         $this->app->bind(WebhookReceiptRecorder::class, HubspotManager::class);
 
+        // The THIRD instance of that same inversion, for R5's identical reason: `Signals` declares
+        // the port, `HubspotManager` implements it. See `Signals\Contracts\SignalReceiptRecorder`.
+        $this->app->bind(SignalReceiptRecorder::class, HubspotManager::class);
+
         // Read fresh from config by every collaborator that resolves it (HubspotObserver,
         // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport
         // Hubspot::fake() would ever need to invalidate, unlike the gateways below.
@@ -295,6 +300,7 @@ final class ServiceProvider extends BaseServiceProvider
             return new SignalRecorder(
                 $app->make(DatabaseManager::class)->connection(),
                 $app->make(SignalMap::class),
+                $app->make(SignalReceiptRecorder::class),
                 $featureEnabled,
             );
         });
