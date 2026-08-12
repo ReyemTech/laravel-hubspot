@@ -351,6 +351,191 @@ final class RollUpCalculatorTest extends TestCase
         ], $result);
     }
 
+    public function test_first_wins_tie_break_resolves_to_the_lower_id(): void
+    {
+        $calculator = new RollUpCalculator;
+        $tie = new DateTimeImmutable('2026-01-01 12:00:00');
+
+        $result = $calculator->compute(
+            self::toArrays([
+                new BufferedSignal(5, 'pricing_page_viewed', ['source' => 'from_id_5'], $tie),
+                new BufferedSignal(2, 'pricing_page_viewed', ['source' => 'from_id_2'], $tie),
+            ]),
+            ['first_touch_source' => self::rule('first_wins:source')],
+        );
+
+        self::assertSame(['first_touch_source' => 'from_id_2'], $result);
+    }
+
+    public function test_last_wins_tie_break_resolves_to_the_higher_id(): void
+    {
+        $calculator = new RollUpCalculator;
+        $tie = new DateTimeImmutable('2026-01-01 12:00:00');
+
+        $result = $calculator->compute(
+            self::toArrays([
+                new BufferedSignal(5, 'pricing_page_viewed', ['source' => 'from_id_5'], $tie),
+                new BufferedSignal(2, 'pricing_page_viewed', ['source' => 'from_id_2'], $tie),
+            ]),
+            ['most_recent_source' => self::rule('last_wins:source')],
+        );
+
+        self::assertSame(['most_recent_source' => 'from_id_5'], $result);
+    }
+
+    /**
+     * A three-way tie proves the rule is a TOTAL order, not a pairwise comparison that happens to
+     * work for two.
+     */
+    public function test_a_three_way_tie_resolves_as_a_total_order(): void
+    {
+        $calculator = new RollUpCalculator;
+        $tie = new DateTimeImmutable('2026-01-01 12:00:00');
+
+        $signals = self::toArrays([
+            new BufferedSignal(7, 'pricing_page_viewed', ['source' => 'from_id_7'], $tie),
+            new BufferedSignal(1, 'pricing_page_viewed', ['source' => 'from_id_1'], $tie),
+            new BufferedSignal(4, 'pricing_page_viewed', ['source' => 'from_id_4'], $tie),
+        ]);
+
+        $first = $calculator->compute($signals, ['s' => self::rule('first_wins:source')]);
+        $last = $calculator->compute($signals, ['s' => self::rule('last_wins:source')]);
+
+        self::assertSame(['s' => 'from_id_1'], $first);
+        self::assertSame(['s' => 'from_id_7'], $last);
+    }
+
+    public function test_output_is_identical_regardless_of_input_order(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $signals = self::toArrays([
+            new BufferedSignal(1, 'purchase', ['source' => 'google_ads', 'amount' => '10'], new DateTimeImmutable('2026-01-01')),
+            new BufferedSignal(2, 'purchase', ['source' => 'direct', 'amount' => '5'], new DateTimeImmutable('2026-01-02')),
+            new BufferedSignal(3, 'purchase', ['source' => 'referral', 'amount' => '2.5'], new DateTimeImmutable('2026-01-03')),
+        ]);
+
+        $rules = [
+            'first_touch_source' => self::rule('first_wins:source'),
+            'most_recent_source' => self::rule('last_wins:source'),
+            'purchase_count' => self::rule('increment'),
+            'lifetime_value' => self::rule('sum:amount'),
+        ];
+
+        $ascending = $calculator->compute($signals, $rules);
+
+        // A fixed, non-trivial permutation of the same three signals -- not a re-sort, a shuffle.
+        $shuffled = [$signals[2], $signals[0], $signals[1]];
+
+        self::assertSame($ascending, $calculator->compute($shuffled, $rules));
+    }
+
+    public function test_a_strictly_descending_input_produces_the_same_first_wins_value_as_ascending(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $ascending = self::toArrays([
+            new BufferedSignal(1, 'pricing_page_viewed', ['source' => 'google_ads'], new DateTimeImmutable('2026-01-01')),
+            new BufferedSignal(2, 'pricing_page_viewed', ['source' => 'direct'], new DateTimeImmutable('2026-01-02')),
+            new BufferedSignal(3, 'pricing_page_viewed', ['source' => 'referral'], new DateTimeImmutable('2026-01-03')),
+        ]);
+        $descending = array_reverse($ascending);
+
+        $rule = ['first_touch_source' => self::rule('first_wins:source')];
+
+        self::assertSame(
+            $calculator->compute($ascending, $rule),
+            $calculator->compute($descending, $rule),
+        );
+        self::assertSame(['first_touch_source' => 'google_ads'], $calculator->compute($descending, $rule));
+    }
+
+    public function test_an_empty_signal_collection_returns_an_empty_array(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $result = $calculator->compute([], ['pricing_page_views' => self::rule('increment')]);
+
+        self::assertSame([], $result);
+    }
+
+    public function test_a_single_signal_produces_the_same_value_for_first_and_last_wins(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $signal = (new BufferedSignal(1, 'pricing_page_viewed', ['source' => 'google_ads'], new DateTimeImmutable('2026-01-01')))->toArray();
+
+        $result = $calculator->compute([$signal], [
+            'first_touch_source' => self::rule('first_wins:source'),
+            'most_recent_source' => self::rule('last_wins:source'),
+            'pricing_page_views' => self::rule('increment'),
+        ]);
+
+        self::assertSame([
+            'first_touch_source' => 'google_ads',
+            'most_recent_source' => 'google_ads',
+            'pricing_page_views' => '1',
+        ], $result);
+    }
+
+    /**
+     * A signal name that never fired for the subject means the collection `compute()` receives for
+     * it is empty -- exactly what a caller looping `SignalMap::names()` would pass for a name with
+     * zero buffered rows. Multiple properties here (unlike the single-rule empty-collection test
+     * above) prove every one of them is omitted, not just whichever was checked first.
+     */
+    public function test_rules_for_a_signal_absent_from_the_buffer_contribute_no_keys(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $result = $calculator->compute([], [
+            'first_touch_source' => self::rule('first_wins:source'),
+            'most_recent_source' => self::rule('last_wins:source'),
+            'demo_requests' => self::rule('increment'),
+            'lifetime_value' => self::rule('sum:amount'),
+        ]);
+
+        self::assertSame([], $result);
+    }
+
+    /**
+     * 2**53, the largest integer a 64-bit float represents exactly. A value one past it already
+     * loses precision at the point PHP casts the numeric STRING to a float, before any addition
+     * happens -- proven directly: `(float) "9007199254740993" === 9007199254740992.0`.
+     */
+    public function test_a_sum_that_would_lose_precision_as_a_float_is_refused(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $signals = self::toArrays([
+            new BufferedSignal(1, 'purchase', ['amount' => '9007199254740992'], new DateTimeImmutable('2026-01-01')),
+            new BufferedSignal(2, 'purchase', ['amount' => '1'], new DateTimeImmutable('2026-01-02')),
+        ]);
+
+        $this->expectException(\OverflowException::class);
+
+        $calculator->compute($signals, ['lifetime_value' => self::rule('sum:amount')]);
+    }
+
+    /**
+     * PHP's default float-to-string cast switches to scientific notation once a value exceeds
+     * `precision` (14) significant digits -- confirmed directly: `(string) 1.0E+15 === "1.0E+15"`.
+     * HubSpot receives property values as strings and would store that exponent form verbatim.
+     */
+    public function test_a_large_sum_is_rendered_as_a_plain_decimal_never_scientific_notation(): void
+    {
+        $calculator = new RollUpCalculator;
+
+        $signals = self::toArrays([
+            new BufferedSignal(1, 'purchase', ['amount' => '500000000000000'], new DateTimeImmutable('2026-01-01')),
+            new BufferedSignal(2, 'purchase', ['amount' => '500000000000000'], new DateTimeImmutable('2026-01-02')),
+        ]);
+
+        $result = $calculator->compute($signals, ['lifetime_value' => self::rule('sum:amount')]);
+
+        self::assertSame(['lifetime_value' => '1000000000000000'], $result);
+    }
+
     /**
      * @param  list<BufferedSignal>  $signals
      * @return list<array{
