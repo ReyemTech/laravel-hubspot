@@ -15,6 +15,7 @@ use ReyemTech\Hubspot\Signals\FlushSignalsJob;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalCompanySubject;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalIntakeSubject;
+use ReyemTech\Hubspot\Tests\Support\Signals\SignalOddIdSubject;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalsTestCase;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 
@@ -39,6 +40,11 @@ final class FlushSignalsJobTest extends SignalsTestCase
         Schema::create('signal_intake_subjects', function (Blueprint $table): void {
             $table->id();
             $table->string('intake_email');
+            $table->timestamps();
+        });
+
+        Schema::create('signal_odd_id_subjects', function (Blueprint $table): void {
+            $table->id();
             $table->timestamps();
         });
     }
@@ -102,7 +108,10 @@ final class FlushSignalsJobTest extends SignalsTestCase
     {
         $fake = Hubspot::fake();
 
-        config(['hubspot.models' => array_merge(config('hubspot.models'), [
+        /** @var array<class-string, array{object: string, id_property: string}> $existingModels */
+        $existingModels = config('hubspot.models');
+
+        config(['hubspot.models' => array_merge($existingModels, [
             SignalIntakeSubject::class => ['object' => 'contacts', 'id_property' => 'intake_email'],
         ])]);
 
@@ -125,10 +134,10 @@ final class FlushSignalsJobTest extends SignalsTestCase
             self::assertCount(1, $body['inputs']);
         }
 
-        $ids = array_map(
-            static fn (array $entry): string => json_decode((string) $entry['request']->getBody(), true)['inputs'][0]['id'],
-            $fake->recordedRequests(),
-        );
+        $ids = [
+            self::decodedBody($fake, 0)['inputs'][0]['id'],
+            self::decodedBody($fake, 1)['inputs'][0]['id'],
+        ];
         self::assertContains('lead@example.com', $ids);
         self::assertContains('intake@example.com', $ids);
     }
@@ -155,10 +164,10 @@ final class FlushSignalsJobTest extends SignalsTestCase
 
         Hubspot::assertRequestCount(2);
 
-        $sizes = array_map(
-            static fn (array $entry): int => count(json_decode((string) $entry['request']->getBody(), true)['inputs']),
-            $fake->recordedRequests(),
-        );
+        $sizes = [
+            count(self::decodedBody($fake, 0)['inputs']),
+            count(self::decodedBody($fake, 1)['inputs']),
+        ];
         sort($sizes);
         self::assertSame([1, 100], $sizes);
     }
@@ -403,6 +412,84 @@ final class FlushSignalsJobTest extends SignalsTestCase
         );
     }
 
+    public function test_a_blank_id_property_value_at_flush_time_is_skipped_silently(): void
+    {
+        Hubspot::fake();
+        $subject = SignalSubject::query()->create(['email' => 'blank@example.com']);
+        $this->insertBoundSignal('visitor-blank', $subject, 'pricing_page_viewed');
+
+        // Blanked out AFTER identify()'s own D-02 check would have refused it -- the value can
+        // change between binding and flush.
+        DB::table('signal_subjects')->where('id', $subject->getKey())->update(['email' => '   ']);
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+        self::assertNull(
+            DB::table('hubspot_signals')->where('visitor_id', 'visitor-blank')->value('flushed_at'),
+        );
+    }
+
+    /**
+     * `idPropertyValue()`'s `is_scalar($value) => (string) $value` branch -- a real column can
+     * never produce this (every bound column in this suite is a `string()` column), so this binds
+     * {@see SignalOddIdSubject}'s computed, non-persisted `numeric_id` accessor instead.
+     */
+    public function test_a_non_string_scalar_id_property_value_is_cast_to_a_string(): void
+    {
+        $fake = Hubspot::fake();
+        config(['hubspot.models' => [
+            SignalOddIdSubject::class => ['object' => 'contacts', 'id_property' => 'numeric_id'],
+        ]]);
+
+        $subject = SignalOddIdSubject::query()->create();
+        $this->insertBoundSignal('visitor-numeric-id', $subject, 'pricing_page_viewed');
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        Hubspot::assertRequestCount(1);
+        self::assertSame('42', self::decodedBody($fake, 0)['inputs'][0]['id']);
+    }
+
+    /**
+     * `idPropertyValue()`'s `default => null` branch -- the subject is skipped exactly like a
+     * blank value, never reaching the request.
+     */
+    public function test_a_non_scalar_id_property_value_is_skipped_silently(): void
+    {
+        Hubspot::fake();
+        config(['hubspot.models' => [
+            SignalOddIdSubject::class => ['object' => 'contacts', 'id_property' => 'list_id'],
+        ]]);
+
+        $subject = SignalOddIdSubject::query()->create();
+        $this->insertBoundSignal('visitor-list-id', $subject, 'pricing_page_viewed');
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+    }
+
+    /**
+     * `idPropertyValue()`'s `$value === null => null` branch, distinct from a blank STRING --
+     * every real column in this suite is `NOT NULL`, so this is the only way to construct a
+     * genuine `null`.
+     */
+    public function test_a_null_id_property_value_is_skipped_silently(): void
+    {
+        Hubspot::fake();
+        config(['hubspot.models' => [
+            SignalOddIdSubject::class => ['object' => 'contacts', 'id_property' => 'null_id'],
+        ]]);
+
+        $subject = SignalOddIdSubject::query()->create();
+        $this->insertBoundSignal('visitor-null-id', $subject, 'pricing_page_viewed');
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        Hubspot::assertRequestCount(0);
+    }
+
     public function test_a_large_sum_roll_up_is_sent_as_a_plain_decimal_string(): void
     {
         Hubspot::fake();
@@ -418,7 +505,11 @@ final class FlushSignalsJobTest extends SignalsTestCase
 
         app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
 
-        Hubspot::assertSynced('contacts', ['total_deal_value' => '123456789012.500000']);
+        // RollUpCalculator::renderFloat() trims trailing zeros after its %.6F render -- the
+        // property this asserts is what actually crosses the wire, not an intermediate format.
+        // The load-bearing fact this test pins is the ABSENCE of scientific notation, which PHP's
+        // bare (string) cast switches to past 14 significant digits.
+        Hubspot::assertSynced('contacts', ['total_deal_value' => '123456789012.5']);
     }
 
     /**
@@ -530,7 +621,7 @@ final class FlushSignalsJobTest extends SignalsTestCase
     // -- helpers -------------------------------------------------------------------------------
 
     /** @return array{subjectType: class-string, subjectId: string} */
-    private function subjectEntry(SignalSubject|SignalCompanySubject|SignalIntakeSubject $subject): array
+    private function subjectEntry(SignalSubject|SignalCompanySubject|SignalIntakeSubject|SignalOddIdSubject $subject): array
     {
         return ['subjectType' => $subject::class, 'subjectId' => (string) $subject->getKey()]; // @phpstan-ignore-line cast.string
     }
@@ -538,7 +629,7 @@ final class FlushSignalsJobTest extends SignalsTestCase
     /** @param array<string, mixed> $properties */
     private function insertBoundSignal(
         string $visitorId,
-        SignalSubject|SignalCompanySubject|SignalIntakeSubject $subject,
+        SignalSubject|SignalCompanySubject|SignalIntakeSubject|SignalOddIdSubject $subject,
         string $signalName,
         array $properties = [],
     ): void {
@@ -593,7 +684,7 @@ final class FlushSignalsJobTest extends SignalsTestCase
         return $body;
     }
 
-    /** @return list<array{path: string, body: mixed}> */
+    /** @return array<int, array{path: string, body: mixed}> */
     private static function allBodies(HubspotFake $fake): array
     {
         return array_map(

@@ -9,11 +9,14 @@ use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Connection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
 
 /**
  * The only outbound HTTP path in this phase (SIG-06). Resolves each subject's HubSpot object type
@@ -21,7 +24,7 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
  * `RollUpCalculator` (D-10: over every buffered row, flushed included), and writes through
  * `Gateway\Contracts\ObjectGatewayContract::upsertMany()` -- never the singular `upsert()`, whose
  * strict `records()` accessor throws on any 207 partial failure and would abandon every subject
- * that succeeded alongside one that failed (T-06-03).
+ * that succeeded alongside one that failed (T-06-25).
  *
  * ## Grouped before it is chunked, and that ordering is a correctness requirement (D-05, revised
  * 2026-08-12)
@@ -31,34 +34,50 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
  * `(objectType, idProperty)` pair is unsendable, not merely inefficient (T-06-38). Records are
  * grouped by that pair first, each group is `array_chunk()`ed at 100 second, and one
  * `upsertMany()` call is issued per chunk. The number of requests one flush issues is therefore
- * `sum(ceil(groupSize / 100))` over the groups it covers -- for this tracer's one subject that is
- * exactly 1.
+ * `sum(ceil(groupSize / 100))` over the groups it covers. Groups are iterated in a deterministic
+ * order (the group key, sorted) and records within a group are sorted by
+ * `(subject_type, subject_id)`, so a replayed flush sends byte-identical bodies in an identical
+ * sequence (SIG-06 ordering edge).
+ *
+ * ## The record `id` is the subject's live `id_property` VALUE, never its local primary key
+ *
+ * `upsertMany()`'s `id` field is the value HubSpot upserts ON -- an email address, a domain -- not
+ * an identifier local to this application. Each subject's live Eloquent model is reloaded fresh
+ * inside `handle()` (mirroring `Sync\SyncHubspotObjectsBatchJob::reloadedModels()`'s shape) and its
+ * `id_property` attribute read directly, exactly the value `IdentityResolver::identify()`'s own
+ * D-02 check already reads at bind time. A subject whose model was deleted between dispatch and
+ * `handle()`, or whose `id_property` attribute has since gone blank, is skipped silently rather
+ * than failing the whole batch (SIG-06 stale-payload edge) -- there is no value left to upsert on,
+ * and its rows stay unflushed for a later flush to repair once the data is fixed.
+ *
+ * Two distinct subjects resolving to the SAME `id_property` value in the SAME group are refused
+ * with {@see ConfigurationException::duplicateSignalSubjectIdentifier()} before any request for
+ * that group is issued (T-06-26) -- HubSpot would otherwise merge two people's roll-ups into one
+ * record and report success. The same value under two DIFFERENT id properties is not a collision
+ * (SIG-06 adjacency edge): the check is scoped to the group.
  *
  * ## Marked flushed by explicit row id, never by a blanket subject-scoped UPDATE (D-06, T-06-39)
  *
- * Exactly the `hubspot_signals.id` values a group's roll-up calculation actually read are marked
- * `flushed_at`, with `WHERE id IN (...) AND flushed_at IS NULL`. A row inserted for the subject
- * between the read and the write therefore stays unflushed and repairs the value on the next
- * flush -- the half of D-06's lost-update scenario this plan can fix without a coordination
- * primitive.
+ * Exactly the `hubspot_signals.id` values a subject's own roll-up calculation read are marked
+ * `flushed_at`, with `WHERE id IN (...) AND flushed_at IS NULL` -- scoped per SUBJECT, not per
+ * group, and only for a subject the batch response actually confirmed. A row inserted for the
+ * subject between the read and the write therefore stays unflushed and repairs the value on the
+ * next flush.
  *
- * ## No claim or lease in this plan, and none is claimed
+ * ## Trail append precedes the flushed-at write, per subject the batch confirmed
  *
- * Plan 06-06 adds the subject-level atomic claim D-06 (revised 2026-08-12) requires for two
- * flushes racing each other. This plan does not need one: `identify()` is the only dispatcher until
- * `hubspot:signals:flush` ships in 06-07, so there is no second flush to race. This is a
- * functionality gap, not an architectural one, and is left unimplemented rather than half-answered
- * with a docblock claiming a safety property that is not yet true.
+ * A subject's own buffered rows are appended to the configured `Contracts\SignalStore` ONLY after
+ * `upsertMany()` confirms that subject's record, and `flushed_at` is set ONLY after that append
+ * succeeds. A job that throws between the confirmed write and the trail append leaves `flushed_at`
+ * unset, so a retry redoes idempotent work rather than losing the trail permanently.
  *
- * ## Rules are resolved per signal name, not once across the whole map (06-04)
+ * ## No claim or lease in this task, and none is claimed
  *
- * `RollUpCalculator::compute()` (06-04) does not filter its `$signals` argument by signal name --
- * scoping a call to one signal's rows is the CALLER's responsibility, mirroring
- * `SignalMap::rulesFor()`'s own per-name scope. This job therefore calls `compute()` once PER
- * signal name present in a subject's buffered rows, filtering those rows to that name and reading
- * that name's properties through `SignalMap::rulesFor()`, then merges the per-name property arrays
- * into the one combined array a subject's `upsertMany()` record carries. A subject that fired two
- * different signal names contributes properties from both in the same write.
+ * Plan 06-06's own Task 2 adds the subject-level atomic claim D-06 (revised 2026-08-12) requires
+ * for two flushes racing each other. Absolute roll-up values (D-10, D-40) make a RETRY of the same
+ * input idempotent; they do NOT make two workers computing over DIFFERENT row sets safe -- that is
+ * this file's own next task, not this one. Write nothing here claiming overlapping flushes are
+ * safe: they are not yet.
  */
 final class FlushSignalsJob implements ShouldQueue
 {
@@ -82,22 +101,51 @@ final class FlushSignalsJob implements ShouldQueue
         ObjectGatewayContract $gateway,
         RollUpCalculator $calculator,
         SignalMap $map,
+        SignalStore $store,
     ): void {
         if ($this->subjects === []) {
             return;
         }
 
-        /**
-         * @var array<string, array{
-         *     objectType: string,
-         *     idProperty: string,
-         *     records: list<array{id: string, properties: array<string, string>}>,
-         *     rowIds: list<int>,
-         * }> $groups
-         */
+        $groups = self::buildGroups($this->subjects, $connection, $bindings, $calculator, $map);
+
+        ksort($groups);
+
+        foreach ($groups as $group) {
+            self::sendGroup($group, $connection, $gateway, $store);
+        }
+    }
+
+    /**
+     * Reads every subject's buffered rows, computes its roll-up, resolves its live `id_property`
+     * value, and buckets the result by `(objectType, idProperty)` -- everything Task 1's own
+     * docblock section "Grouped before it is chunked" describes, extracted out of `handle()` purely
+     * to keep its own cyclomatic complexity under phpcs's ceiling of 10.
+     *
+     * @param  list<array{subjectType: class-string, subjectId: string}>  $subjects
+     * @return array<string, array{
+     *     objectType: string,
+     *     idProperty: string,
+     *     subjects: array<string, array{
+     *         id: string,
+     *         properties: array<string, string>,
+     *         subjectType: string,
+     *         subjectId: string,
+     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}>,
+     *         rowIds: list<int>,
+     *     }>,
+     * }>
+     */
+    private static function buildGroups(
+        array $subjects,
+        Connection $connection,
+        BoundModelReader $bindings,
+        RollUpCalculator $calculator,
+        SignalMap $map,
+    ): array {
         $groups = [];
 
-        foreach ($this->subjects as ['subjectType' => $subjectType, 'subjectId' => $subjectId]) {
+        foreach ($subjects as ['subjectType' => $subjectType, 'subjectId' => $subjectId]) {
             $binding = $bindings->for($subjectType);
 
             /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}> $rows */
@@ -117,54 +165,171 @@ final class FlushSignalsJob implements ShouldQueue
                 continue;
             }
 
+            $model = self::reloadedModel($subjectType, $subjectId);
+
+            if (! $model instanceof Model) {
+                // A subject deleted between dispatch and handle() -- skipped silently rather than
+                // failing the whole batch. Its rows stay unflushed for a later flush to repair.
+                continue;
+            }
+
+            $idValue = self::idPropertyValue($model, $binding->idProperty);
+
+            if ($idValue === null) {
+                continue;
+            }
+
             $groupKey = $binding->objectType.'|'.$binding->idProperty;
 
             $groups[$groupKey] ??= [
                 'objectType' => $binding->objectType,
                 'idProperty' => $binding->idProperty,
-                'records' => [],
-                'rowIds' => [],
+                'subjects' => [],
             ];
 
-            $groups[$groupKey]['records'][] = ['id' => $subjectId, 'properties' => $properties];
+            if (array_key_exists($idValue, $groups[$groupKey]['subjects'])) {
+                $existing = $groups[$groupKey]['subjects'][$idValue];
 
-            foreach ($rows as $row) {
-                $groups[$groupKey]['rowIds'][] = $row->id;
+                throw ConfigurationException::duplicateSignalSubjectIdentifier(
+                    $binding->objectType,
+                    $binding->idProperty,
+                    $idValue,
+                    $existing['subjectType'].'#'.$existing['subjectId'],
+                    $subjectType.'#'.$subjectId,
+                );
             }
+
+            $groups[$groupKey]['subjects'][$idValue] = [
+                'id' => $idValue,
+                'properties' => $properties,
+                'subjectType' => $subjectType,
+                'subjectId' => $subjectId,
+                'rows' => $rows,
+                'rowIds' => array_map(static fn (object $row): int => $row->id, $rows),
+            ];
         }
 
-        foreach ($groups as $group) {
-            foreach (array_chunk($group['records'], 100) as $chunk) {
-                $result = $gateway->upsertMany($group['objectType'], $group['idProperty'], $chunk);
+        return $groups;
+    }
 
-                // recordsDespitePartialFailure(), never records() -- see the class docblock. The
-                // confirmed records themselves have no consumer yet in this task -- the local
-                // trail store's append() ships in 06-05 -- so reading through this accessor here
-                // is solely what stops a 207 partial failure from throwing and abandoning every
-                // subject that DID succeed in the same chunk. Errors are logged the same way
-                // SyncHubspotObjectsBatchJob::logErrors() reports a rejected batch record.
-                $confirmed = $result->recordsDespitePartialFailure();
+    /**
+     * One `(objectType, idProperty)` group: sorted, chunked at 100, one `upsertMany()` call per
+     * chunk, and the append-then-mark-flushed write per subject the response confirmed.
+     *
+     * @param  array{
+     *     objectType: string,
+     *     idProperty: string,
+     *     subjects: array<string, array{
+     *         id: string,
+     *         properties: array<string, string>,
+     *         subjectType: string,
+     *         subjectId: string,
+     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}>,
+     *         rowIds: list<int>,
+     *     }>,
+     * }  $group
+     */
+    private static function sendGroup(array $group, Connection $connection, ObjectGatewayContract $gateway, SignalStore $store): void
+    {
+        $subjects = array_values($group['subjects']);
 
-                Log::info('HubSpot signal roll-up flush wrote a batch.', [
+        usort(
+            $subjects,
+            static fn (array $a, array $b): int => [$a['subjectType'], $a['subjectId']] <=> [$b['subjectType'], $b['subjectId']],
+        );
+
+        foreach (array_chunk($subjects, 100) as $chunk) {
+            $sendChunk = array_map(
+                static fn (array $subjectRecord): array => [
+                    'id' => $subjectRecord['id'],
+                    'properties' => $subjectRecord['properties'],
+                ],
+                $chunk,
+            );
+
+            $result = $gateway->upsertMany($group['objectType'], $group['idProperty'], $sendChunk);
+
+            // recordsDespitePartialFailure(), never records() -- see the class docblock. A
+            // 207 partial failure must not throw and abandon every subject that DID succeed
+            // in the same chunk.
+            $confirmed = $result->recordsDespitePartialFailure();
+            $confirmedIds = array_map(static fn ($object): string => $object->id, $confirmed);
+
+            Log::info('HubSpot signal roll-up flush wrote a batch.', [
+                'object_type' => $group['objectType'],
+                'confirmed' => count($confirmed),
+                'errors' => count($result->errors()),
+            ]);
+
+            foreach ($result->errors() as $error) {
+                Log::error('HubSpot rejected a signal roll-up write.', [
                     'object_type' => $group['objectType'],
-                    'confirmed' => count($confirmed),
-                    'errors' => count($result->errors()),
+                    'category' => $error->category,
+                    'status' => $error->status,
                 ]);
-
-                foreach ($result->errors() as $error) {
-                    Log::error('HubSpot rejected a signal roll-up write.', [
-                        'object_type' => $group['objectType'],
-                        'category' => $error->category,
-                        'status' => $error->status,
-                    ]);
-                }
             }
 
-            $connection->table('hubspot_signals')
-                ->whereIn('id', $group['rowIds'])
-                ->whereNull('flushed_at')
-                ->update(['flushed_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+            foreach ($chunk as $subjectRecord) {
+                if (! in_array($subjectRecord['id'], $confirmedIds, true)) {
+                    // Not confirmed -- left unflushed. The next flush recomputes an absolute
+                    // value over the full set, exactly like a retry.
+                    continue;
+                }
+
+                foreach ($subjectRecord['rows'] as $row) {
+                    $store->append(
+                        $row->id,
+                        $subjectRecord['subjectType'],
+                        $subjectRecord['subjectId'],
+                        $row->signal_name,
+                        self::decodeProperties($row->properties),
+                        new DateTimeImmutable($row->occurred_at),
+                    );
+                }
+
+                $connection->table('hubspot_signals')
+                    ->whereIn('id', $subjectRecord['rowIds'])
+                    ->whereNull('flushed_at')
+                    ->update(['flushed_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+            }
         }
+    }
+
+    /**
+     * @param  class-string  $subjectType
+     */
+    private static function reloadedModel(string $subjectType, string $subjectId): ?Model
+    {
+        /** @var Model $model */
+        $model = new $subjectType;
+
+        $model = $model->newQueryWithoutScopes()->find($subjectId);
+
+        return $model instanceof Model ? $model : null;
+    }
+
+    /**
+     * The subject's live `id_property` attribute, or `null` when it is missing, non-scalar, or
+     * blank -- the identical D-02 check `IdentityResolver::refuseBlankIdPropertyValue()` already
+     * applies at bind time, reapplied here because the value can have changed since.
+     */
+    private static function idPropertyValue(Model $model, string $idProperty): ?string
+    {
+        /** @var mixed $value */
+        $value = $model->getAttribute($idProperty);
+
+        $stringValue = match (true) {
+            $value === null => null,
+            is_string($value) => $value,
+            is_scalar($value) => (string) $value,
+            default => null,
+        };
+
+        if ($stringValue === null || trim($stringValue) === '') {
+            return null;
+        }
+
+        return $stringValue;
     }
 
     /**

@@ -109,9 +109,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             '%s is bound to HubSpot with id_property "%s", but its $hubspotMap does not produce '
             .'that key. Add an entry to $hubspotMap that maps "%s" to one of the model\'s own '
             .'attributes, so the upsert has a value to converge on.',
-            $modelClass,
-            $idProperty,
-            $idProperty,
+            $modelClass, $idProperty, $idProperty,
         ));
     }
 
@@ -120,8 +118,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
         return new self(sprintf(
             '%s has multiple unlinked models with the same %s. A HubSpot batch upsert response cannot '
             .'establish which local model owns that identifier, so this package refuses to guess.',
-            $modelClass,
-            $idProperty,
+            $modelClass, $idProperty,
         ));
     }
 
@@ -130,8 +127,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
         return new self(sprintf(
             '%s has multiple linked models for the same HubSpot %s record. A batch update cannot '
             .'safely correlate its response, so correct the duplicate hubspot_object_links rows before retrying.',
-            $modelClass,
-            $objectType,
+            $modelClass, $objectType,
         ));
     }
 
@@ -149,8 +145,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'Add one naming the HubSpot object it syncs to and the property it upserts on, for '
             .'example \'%s\' => [\'object\' => \'contacts\', \'id_property\' => \'email\']. This '
             .'package never guesses which object type an unbound model belongs to.',
-            $modelClass,
-            $modelClass,
+            $modelClass, $modelClass,
         ));
     }
 
@@ -289,8 +284,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'resolved to %d. Nothing was pruned: a retention of zero or less puts the cutoff at '
             .'or after the present moment, so this command would delete every handled record '
             .'rather than the ones past retention -- and those records are what make a HubSpot '
-            .'redelivery a no-op. Note that a blank or non-numeric value becomes 0.',
-            $retentionDays,
+            .'redelivery a no-op. Note that a blank or non-numeric value becomes 0.', $retentionDays,
         ));
     }
 
@@ -372,8 +366,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'because that component would deploy and then silently receive nothing. Remove the '
             .'declaration and add this subscription in HubSpot directly, or use the legacy_public '
             .'app model, whose API reconciliation has no such gap.',
-            $eventType,
-            $section,
+            $eventType, $section,
         ));
     }
 
@@ -638,27 +631,16 @@ final class ConfigurationException extends LogicException implements HubspotExce
      * email of "a@b.c" on contacts and a domain of "a@b.c" on companies) identifies two different
      * records and is never a collision this factory is thrown for.
      */
-    public static function duplicateSignalSubjectIdentifier(
-        string $objectType,
-        string $idProperty,
-        string $value,
-        string $firstSubject,
-        string $secondSubject,
-    ): self {
+    public static function duplicateSignalSubjectIdentifier(string $objectType, string $idProperty, string $value, string $firstSubject, string $secondSubject): self
+    {
         return new self(sprintf(
-            'Two signal subjects resolved to the same HubSpot %s "%s" value "%s" in one flush: %s '
-            .'and %s. A batch upsert has no way to express two different local subjects converging '
-            .'on one HubSpot record, and merging them silently would attribute one person\'s '
-            .'buffered behaviour to another. This package refuses the whole batch for this group '
-            .'rather than guessing which subject actually owns "%s" -- correct the "%s" value on '
-            .'one of the two subjects before the next flush.',
-            $objectType,
-            $idProperty,
-            $value,
-            $firstSubject,
-            $secondSubject,
-            $value,
-            $idProperty,
+            'Two signal subjects resolved to the same HubSpot %s "%s" value "%s" in one flush: %s and %s. '
+            .'A batch upsert has no way to express two different local subjects converging on one HubSpot '
+            .'record, and merging them silently would attribute one person\'s buffered behaviour to '
+            .'another. This package refuses the whole batch for this group rather than guessing which '
+            .'subject actually owns "%s" -- correct the "%s" value on one of the two subjects before the '
+            .'next flush.',
+            $objectType, $idProperty, $value, $firstSubject, $secondSubject, $value, $idProperty,
         ));
     }
 
@@ -935,11 +917,10 @@ final class ConfigurationException extends LogicException implements HubspotExce
     public static function invalidSignalFlushLease(int $leaseSeconds): self
     {
         return new self(sprintf(
-            'hubspot.signals.flush_lease must be a whole number of seconds of at least 1, but is '
-            .'%d. A lease of zero or less makes a claim taken moments ago read as already expired, '
-            .'so an overlapping flush could reclaim a subject still being written and overwrite '
-            .'its correct roll-up value with a stale one. Note that a blank or non-numeric value '
-            .'becomes 0.',
+            'hubspot.signals.flush_lease must be a whole number of seconds of at least 1, but is %d. '
+            .'A lease of zero or less makes a claim taken moments ago read as already expired, so an '
+            .'overlapping flush could reclaim a subject still being written and overwrite its correct '
+            .'roll-up value with a stale one. Note that a blank or non-numeric value becomes 0.',
             $leaseSeconds,
         ));
     }
@@ -957,19 +938,19 @@ final class ConfigurationException extends LogicException implements HubspotExce
         // no diagnosis -- the identical reasoning missingSignalTrailTable() already carries.
         if (! $featureEnabled) {
             return new self(
-                'Claiming a subject for flush requires HUBSPOT_SIGNALS=true, and it is currently '
-                .'false. The "hubspot_signal_flush_claims" table is what stops two overlapping '
-                .'flushes from writing the same subject twice, so claiming cannot run without it. '
-                .'Set HUBSPOT_SIGNALS=true and run `php artisan migrate` (+ `php artisan '
-                .'config:cache` if you cache config). Nothing needs publishing first: this package '
-                .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+                'Claiming a subject for flush requires HUBSPOT_SIGNALS=true, and it is currently false. '
+                .'The "hubspot_signal_flush_claims" table is what stops two overlapping flushes from '
+                .'writing the same subject twice, so claiming cannot run without it. Set '
+                .'HUBSPOT_SIGNALS=true and run `php artisan migrate` (+ `php artisan config:cache` if '
+                .'you cache config). Nothing needs publishing first: this package loads its own '
+                .'migrations whenever HUBSPOT_SIGNALS=true.',
             );
         }
 
         return new self(
-            'HUBSPOT_SIGNALS is true but the "hubspot_signal_flush_claims" table does not exist. '
-            .'Run `php artisan migrate` to create it. Nothing needs publishing first: this package '
-            .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+            'HUBSPOT_SIGNALS is true but the "hubspot_signal_flush_claims" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package loads '
+            .'its own migrations whenever HUBSPOT_SIGNALS=true.',
         );
     }
 }
