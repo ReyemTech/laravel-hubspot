@@ -832,4 +832,33 @@ final class ConfigurationException extends LogicException implements HubspotExce
             $mapObjectType,
         ));
     }
+
+    /**
+     * `HUBSPOT_SIGNALS=true` is set but the `hubspot_signal_trail` table this package owns has
+     * never been created. Raised by `Signals\Stores\LocalSignalStore` in place of the driver's own
+     * `SQLSTATE[42S02]`, mirroring `missingSignalsTable()`'s shape exactly: name the table, name
+     * `php artisan migrate`, and pre-empt the publish question, because every other Laravel package
+     * that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingSignalTrailTable(bool $featureEnabled = true): self
+    {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis -- the identical reasoning missingSignalsTable() already carries for SIG-01.
+        if (! $featureEnabled) {
+            return new self(
+                'Appending to the signal trail requires HUBSPOT_SIGNALS=true, and it is currently '
+                .'false. The "hubspot_signal_trail" table is where each buffered signal\'s flush '
+                .'is recorded, so appending cannot run without it. Set HUBSPOT_SIGNALS=true and '
+                .'run `php artisan migrate` (+ `php artisan config:cache` if you cache config). '
+                .'Nothing needs publishing first: this package loads its own migrations whenever '
+                .'HUBSPOT_SIGNALS=true.',
+            );
+        }
+
+        return new self(
+            'HUBSPOT_SIGNALS is true but the "hubspot_signal_trail" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+        );
+    }
 }

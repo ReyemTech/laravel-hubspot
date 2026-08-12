@@ -96,7 +96,8 @@ final class LocalSignalStoreTest extends TestCase
 
         $row = DB::table('hubspot_signal_trail')->first();
 
-        self::assertSame(1, (int) $row->hubspot_signal_id);
+        self::assertNotNull($row);
+        self::assertSame(1, (int) $row->hubspot_signal_id); // @phpstan-ignore-line cast.int
         self::assertSame('App\\Models\\Contact', $row->subject_type);
         self::assertSame('42', $row->subject_id);
         self::assertSame('pricing_page_viewed', $row->signal_name);
