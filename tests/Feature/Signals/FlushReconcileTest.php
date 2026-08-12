@@ -105,11 +105,14 @@ final class FlushReconcileTest extends SignalsTestCase
 
     public function test_the_reads_value_wins_over_the_buffer_when_the_portal_already_holds_one(): void
     {
+        // `id` is HubSpot's own internal record id -- never the submitted `email` back again
+        // (PR #82 review) -- and `properties` echoes `email` back, which is what
+        // `SignalReconciler` now correlates the record to its subject on.
         $fake = Hubspot::fake([
             'contacts' => Hubspot::response([
                 'status' => 'COMPLETE',
                 'results' => [
-                    ['id' => 'reconcile-wins@example.com', 'properties' => ['first_touch_source' => 'portal-value']],
+                    ['id' => '900', 'properties' => ['email' => 'reconcile-wins@example.com', 'first_touch_source' => 'portal-value']],
                 ],
             ]),
         ]);
@@ -126,11 +129,14 @@ final class FlushReconcileTest extends SignalsTestCase
 
     public function test_the_buffers_value_is_used_when_the_portal_holds_nothing(): void
     {
+        // `id` is HubSpot's own internal record id -- never the submitted `email` back again
+        // (PR #82 review). `properties` echoes `email` back for correlation, but carries nothing
+        // for `first_touch_source`, which is the "portal holds nothing" this test exercises.
         $fake = Hubspot::fake([
             'contacts' => Hubspot::response([
                 'status' => 'COMPLETE',
                 'results' => [
-                    ['id' => 'reconcile-buffer@example.com', 'properties' => []],
+                    ['id' => '901', 'properties' => ['email' => 'reconcile-buffer@example.com']],
                 ],
             ]),
         ]);
@@ -402,8 +408,9 @@ final class FlushReconcileTest extends SignalsTestCase
         // The RAW wire shape -- a re-indexed list serialises as a JSON array; a gapped
         // (non-list) array serialises as a JSON object. json_decode()'ing first and inspecting
         // the resulting PHP array would hide exactly this difference, since PHP re-keys either
-        // shape into an ordinary array on the way back in.
-        self::assertMatchesRegularExpression('/"properties":\["[^"]+","[^"]+"\]/', $rawBody);
+        // shape into an ordinary array on the way back in. Three elements, not two: the id
+        // property ('email') rides along too (PR #82 review) -- see SignalReconciler.
+        self::assertMatchesRegularExpression('/"properties":\["[^"]+","[^"]+","[^"]+"\]/', $rawBody);
 
         // Likewise `inputs`: $chunk is keyed by the subject's own id VALUE (an email, never a
         // sequential index), and array_map() alone preserves those STRING keys -- HubSpot's batch
@@ -416,7 +423,7 @@ final class FlushReconcileTest extends SignalsTestCase
         $readBody = json_decode($rawBody, true);
 
         sort($readBody['properties']);
-        self::assertSame(['first_touch_medium', 'first_touch_source'], $readBody['properties']);
+        self::assertSame(['email', 'first_touch_medium', 'first_touch_source'], $readBody['properties']);
     }
 
     /**

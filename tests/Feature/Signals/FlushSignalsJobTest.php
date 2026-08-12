@@ -275,10 +275,13 @@ final class FlushSignalsJobTest extends SignalsTestCase
         $this->insertBoundSignal('visitor-bad', $bad, 'pricing_page_viewed');
         $this->insertBoundSignal('visitor-good', $good, 'pricing_page_viewed');
 
+        // `id` is HubSpot's own internal record id -- NEVER the submitted `email` back again
+        // (PR #82 review) -- and `properties` echoes the `email` this fix now writes alongside
+        // the roll-up, which is what `FlushSignalsJob` correlates the confirmation on.
         Hubspot::fake(['contacts' => Hubspot::response([
             'status' => 'COMPLETE',
             'results' => [
-                ['id' => 'good@example.com', 'properties' => ['pricing_page_views' => '1']],
+                ['id' => '451', 'properties' => ['pricing_page_views' => '1', 'email' => 'good@example.com']],
             ],
             'errors' => [[
                 'message' => 'The record was rejected.',
@@ -321,7 +324,7 @@ final class FlushSignalsJobTest extends SignalsTestCase
 
         $this->insertBoundSignal('visitor-order-a', $contactA, 'pricing_page_viewed');
         $this->insertBoundSignal('visitor-order-b', $contactB, 'pricing_page_viewed');
-        $this->insertBoundSignal('visitor-order-c', $company, 'pricing_page_viewed');
+        $this->insertBoundSignal('visitor-order-c', $company, 'pricing_page_viewed_company');
 
         // Deliberately out of the expected output order, to prove the job -- not the caller --
         // is what sorts.
@@ -388,6 +391,43 @@ final class FlushSignalsJobTest extends SignalsTestCase
         Hubspot::assertRequestCount(0);
     }
 
+    /**
+     * D-03's runtime half (PR #82 review, T-06-P82-3): `pricing_page_viewed` is declared for
+     * `contacts` in the base map, and `SignalCompanySubject` is bound to `companies` -- boot
+     * validation (D-07) cannot catch this, because it only proves SOME bound model claims
+     * `contacts`, never that THIS subject is the wrong one. The signal is refused rather than
+     * silently written to `companies` (the exact defect `SignalMap::objectTypeFor()` existing but
+     * never being called let through).
+     */
+    public function test_a_signal_declared_for_one_object_type_buffered_against_a_different_ones_subject_throws(): void
+    {
+        Hubspot::fake();
+        $company = SignalCompanySubject::query()->create(['domain' => 'mismatched.example.com']);
+        $this->insertBoundSignal('visitor-mismatched', $company, 'pricing_page_viewed');
+
+        try {
+            app()->call([new FlushSignalsJob([$this->subjectEntry($company)]), 'handle']);
+
+            self::fail('Expected a signalSubjectObjectTypeMismatch ConfigurationException.');
+        } catch (ConfigurationException $exception) {
+            self::assertSame(
+                sprintf(
+                    'hubspot.signals.map["pricing_page_viewed"] declares object type "contacts", but '
+                    .'subject %s resolved to "companies" through hubspot.models -- refusing to flush '
+                    .'this signal\'s properties there. A signal\'s declared object type and the '
+                    .'object type its subject resolves to must match, or a roll-up computed for one '
+                    .'HubSpot object would be written to a different one. Record "pricing_page_viewed" '
+                    .'only for subjects bound to "contacts" in hubspot.models, or add a separate '
+                    .'hubspot.signals.map entry declaring "companies" for subjects of that kind.',
+                    SignalCompanySubject::class.'#'.$company->getKey(), // @phpstan-ignore-line cast.string
+                ),
+                $exception->getMessage(),
+            );
+        }
+
+        Hubspot::assertRequestCount(0);
+    }
+
     public function test_the_same_value_under_two_different_id_properties_is_not_a_collision(): void
     {
         Hubspot::fake();
@@ -395,7 +435,7 @@ final class FlushSignalsJobTest extends SignalsTestCase
         $company = SignalCompanySubject::query()->create(['domain' => 'shared@example.com']);
 
         $this->insertBoundSignal('visitor-shared-1', $contact, 'pricing_page_viewed');
-        $this->insertBoundSignal('visitor-shared-2', $company, 'pricing_page_viewed');
+        $this->insertBoundSignal('visitor-shared-2', $company, 'pricing_page_viewed_company');
 
         app()->call([new FlushSignalsJob([
             $this->subjectEntry($contact),
@@ -652,7 +692,10 @@ final class FlushSignalsJobTest extends SignalsTestCase
 
         for ($i = 1; $i <= $count; $i++) {
             $company = SignalCompanySubject::query()->create(['domain' => "{$prefix}-{$i}.example.com"]);
-            $this->insertBoundSignal("visitor-{$prefix}-{$i}", $company, 'pricing_page_viewed');
+            // A DIFFERENT signal name than contactsWithSignals() uses -- D-03's runtime check
+            // (PR #82 review) refuses 'pricing_page_viewed' (declared `contacts`) against a
+            // `companies`-bound subject; SignalsTestCase's base map declares this entry for it.
+            $this->insertBoundSignal("visitor-{$prefix}-{$i}", $company, 'pricing_page_viewed_company');
             $entries[] = $this->subjectEntry($company);
         }
 

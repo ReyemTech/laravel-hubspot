@@ -35,6 +35,7 @@ final class SignalTracerTest extends SignalsTestCase
     {
         config(['hubspot.signals.map' => [
             'pricing_page_viewed' => [
+                'object' => 'contacts',
                 'properties' => [
                     'pricing_page_views' => 'increment',
                 ],
@@ -146,13 +147,27 @@ final class SignalTracerTest extends SignalsTestCase
     public function test_two_subjects_in_different_groups_issue_two_requests_from_one_job(): void
     {
         Hubspot::fake();
+        // Two DIFFERENT signal names, one per object type -- D-03's runtime check refuses one
+        // signal name declared for a single object type when it is buffered against a subject
+        // bound to a different one, so a `companies` subject cannot share `incrementMap()`'s
+        // `contacts`-declared 'pricing_page_viewed' name here.
         $this->incrementMap();
+
+        /** @var array<string, mixed> $existingMap */
+        $existingMap = config('hubspot.signals.map');
+
+        config(['hubspot.signals.map' => array_merge($existingMap, [
+            'pricing_page_viewed_company' => [
+                'object' => 'companies',
+                'properties' => ['pricing_page_views' => 'increment'],
+            ],
+        ])]);
 
         $contact = SignalSubject::query()->create(['email' => 'a@example.com']);
         $company = SignalCompanySubject::query()->create(['domain' => 'example.com']);
 
         $this->insertBoundSignal('visitor-a', $contact, 'pricing_page_viewed');
-        $this->insertBoundSignal('visitor-b', $company, 'pricing_page_viewed');
+        $this->insertBoundSignal('visitor-b', $company, 'pricing_page_viewed_company');
 
         $job = new FlushSignalsJob([
             ['subjectType' => SignalSubject::class, 'subjectId' => (string) $contact->getKey()], // @phpstan-ignore-line cast.string
@@ -332,8 +347,8 @@ final class SignalTracerTest extends SignalsTestCase
     {
         Hubspot::fake();
         config(['hubspot.signals.map' => [
-            'pricing_page_viewed' => ['properties' => ['pricing_page_views' => 'increment']],
-            'demo_requested' => ['properties' => ['demo_requests' => 'increment']],
+            'pricing_page_viewed' => ['object' => 'contacts', 'properties' => ['pricing_page_views' => 'increment']],
+            'demo_requested' => ['object' => 'contacts', 'properties' => ['demo_requests' => 'increment']],
         ]]);
 
         $subject = SignalSubject::query()->create(['email' => 'only-one-signal@example.com']);
@@ -357,7 +372,7 @@ final class SignalTracerTest extends SignalsTestCase
     {
         Hubspot::fake();
         config(['hubspot.signals.map' => [
-            'pricing_page_viewed' => ['properties' => ['first_touch_source' => 'first_wins:source']],
+            'pricing_page_viewed' => ['object' => 'contacts', 'properties' => ['first_touch_source' => 'first_wins:source']],
         ]]);
 
         $subject = SignalSubject::query()->create(['email' => 'first-touch@example.com']);

@@ -53,9 +53,21 @@ class SignalsTestCase extends TestCase
         // 'pricing_page_viewed' rather than reporting an unknown signal name for a call meant to
         // exercise buffering, byte-bounding or identify() -- matching the shape
         // SignalTracerTest::incrementMap() already sets locally for its own FlushSignalsJob tests.
+        // 'pricing_page_viewed_company' is a SEPARATE entry, not a shared one -- D-03's runtime
+        // check (PR #82 review) refuses a signal name declared for one object type when it is
+        // buffered against a subject bound to a different one, so a test exercising a
+        // SignalCompanySubject alongside a SignalSubject in the same map cannot reuse
+        // 'pricing_page_viewed' for both. Same property name, two signal names, one per object
+        // type -- harmless duplication, never a collision `SignalMap` needs to police.
         $config->set('hubspot.signals.map', [
             'pricing_page_viewed' => [
                 'object' => 'contacts',
+                'properties' => [
+                    'pricing_page_views' => 'increment',
+                ],
+            ],
+            'pricing_page_viewed_company' => [
+                'object' => 'companies',
                 'properties' => [
                     'pricing_page_views' => 'increment',
                 ],

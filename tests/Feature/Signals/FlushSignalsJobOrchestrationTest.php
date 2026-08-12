@@ -148,7 +148,10 @@ final class FlushSignalsJobOrchestrationTest extends SignalsTestCase
 
         $this->insertBoundSignal('visitor-order-a', $contactA, 'pricing_page_viewed');
         $this->insertBoundSignal('visitor-order-b', $contactB, 'pricing_page_viewed');
-        $this->insertBoundSignal('visitor-order-c', $company, 'pricing_page_viewed');
+        // A DIFFERENT signal name than the contacts above -- D-03's runtime check (PR #82 review)
+        // refuses 'pricing_page_viewed' (declared `contacts`) against a `companies`-bound
+        // subject; SignalsTestCase's base map declares this entry for it.
+        $this->insertBoundSignal('visitor-order-c', $company, 'pricing_page_viewed_company');
 
         app()->call([new FlushSignalsJob([
             $this->subjectEntry($contactB), // higher PK, but handed to the job FIRST
