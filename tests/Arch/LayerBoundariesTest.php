@@ -74,9 +74,8 @@ arch('R1: Gateway is the only layer that may reference HubSpot\* SDK classes')->
  * exactly where it is: it is merged, tested and harmless, and rewriting it to match the widened rule
  * would be churn.
  *
- * R5 has not needed `Illuminate` yet — `Signals` has not needed it, and that is now the whole of
- * what this sentence says. R4 gained it 2026-08-06 — see the note directly above its `arch()` call
- * below. (R3 gained it 2026-07-30, below.)
+ * R5 gained it 2026-08-12 (06-01, SIG-01) — see the note directly above its `arch()` call below.
+ * R4 gained it 2026-08-06. (R3 gained it 2026-07-30, below.)
  */
 
 // @phpstan-ignore method.notFound, method.nonObject
@@ -176,8 +175,41 @@ arch('R3: Sync may depend only on Registry, Gateway, the package exceptions and 
 // @phpstan-ignore method.notFound, method.nonObject
 arch('R4: Webhooks may depend only on Registry, Gateway, the package exceptions and the framework')->expect('ReyemTech\Hubspot\Webhooks')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions', 'Illuminate']);
 
+/*
+ * R5 additionally allows `Illuminate`, added 2026-08-12 (06-01, SIG-01).
+ *
+ * **R5 is a rule about this package's INTERNAL layering, never about keeping the framework out.**
+ * `Signals` must not reach into `Sync`, `Webhooks` or `Gateway` internals, because those
+ * dependencies are what turn six layers into one — exactly the argument R2's 2026-07-29, R3's
+ * 2026-07-30 and R4's 2026-08-06 amendments already made, applied here for the same reason and
+ * mirrored in the same shape: one array-append, one rule-description rename, no allow-list to
+ * maintain per layer.
+ *
+ * The concrete cost of NOT widening it: `Illuminate\Contracts\Config\Repository` in
+ * `BoundModelReader`, `Illuminate\Bus\Batchable`/`Illuminate\Contracts\Queue\ShouldQueue`/
+ * `Illuminate\Queue\InteractsWithQueue`/`Illuminate\Queue\SerializesModels` in `FlushSignalsJob`,
+ * and `Illuminate\Database\Connection` in `SignalRecorder` and `IdentityResolver` — a
+ * package-owned port over config, the queue and the database, invented solely to satisfy a lint
+ * rule, in a package whose entire purpose is Laravel integration. `illuminate/database`,
+ * `illuminate/queue`, `illuminate/bus`, `illuminate/contracts` and `illuminate/collections` are
+ * already declared production `require`s, so naming any of them here installs nothing and admits
+ * nothing that was not already shipped.
+ *
+ * This widens no LAYER boundary. R5's own committed violation fixture,
+ * `tests/Arch/Fixtures/R5/SignalsDependsOnFrontend.php`, is reused unchanged and still makes the
+ * rule go red under `scripts/ci/verify-arch-rules-fire.sh`, because the boundary it violates —
+ * `Signals` reaching into `Frontend` — is the boundary R5 is actually for, and is untouched. R7
+ * (Signals may not depend on Sync or Webhooks) is likewise untouched and still carries the peer
+ * rule under `tests/Arch/Fixtures/R7/SignalsDependsOnSync.php`.
+ *
+ * The widening's other half — that R5 still rejects `HubSpot\*` from `Signals`, so this is
+ * narrower than "allow anything outside the package" — is proven separately by
+ * `SeamFixtures/Signals/SignalsUsingTheSdkDirectly.php` and its guard test in
+ * `tests/Arch/ResolverSeamTest.php`.
+ */
+
 // @phpstan-ignore method.notFound, method.nonObject
-arch('R5: Signals may depend only on Registry, Gateway and the package exceptions')->expect('ReyemTech\Hubspot\Signals')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions']);
+arch('R5: Signals may depend only on Registry, Gateway, the package exceptions and the framework')->expect('ReyemTech\Hubspot\Signals')->toOnlyUse(['ReyemTech\Hubspot\Registry', 'ReyemTech\Hubspot\Gateway', 'ReyemTech\Hubspot\Exceptions', 'Illuminate']);
 
 // R6's positive allowlist names the intended public facade FQCN
 // (ReyemTech\Hubspot\Facades\Hubspot), which does not exist until Phase 2 ships it

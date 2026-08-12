@@ -519,4 +519,43 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Signals
+    |--------------------------------------------------------------------------
+    |
+    | Behavioural signal buffering (SIG-01 … SIG-08): an application records a
+    | signal against an anonymous visitor id, binds it to a person once an
+    | identity appears, and HubSpot receives one batched property write --
+    | with no API call ever occurring in a request lifecycle.
+    |
+    | - enabled: gates the `hubspot_signals` migration exactly the way
+    |   `webhooks.enabled` above gates its own table -- a bare `composer
+    |   require` registers no migration path until this is true.
+    |   HUBSPOT_SIGNALS=true with no table throws a ConfigurationException
+    |   naming the table and `php artisan migrate`.
+    | - store: HUBSPOT_SIGNAL_STORE, the event-trail driver (SIG-07). 'local'
+    |   is the only driver this phase ships, and is the default because it is
+    |   the only one that works on any portal with no new credential.
+    | - map: signal name -> HubSpot property roll-up rules (SIG-03, SIG-04).
+    |   Plain scalars and arrays only, here and everywhere in this file --
+    |   `php artisan config:cache` serialises with var_export(), which
+    |   throws on a closure, so the merge vocabulary's escape hatch names an
+    |   invokable CLASS-STRING rather than a closure (D-08).
+    |
+    | The `properties` recorded against a signal are the consumer's OWN
+    | customers' behavioural data. This package writes to HubSpot only what
+    | the map's roll-up rules read -- the same concern `webhooks.audit_payload`
+    | above names, and a retention or persistence default here would be an
+    | opt-OUT data decision made on somebody else's behalf.
+    |
+    */
+    'signals' => [
+        'enabled' => (bool) env('HUBSPOT_SIGNALS', false),
+        'store' => env('HUBSPOT_SIGNAL_STORE', 'local'),
+        'map' => [
+            //
+        ],
+    ],
+
 ];
