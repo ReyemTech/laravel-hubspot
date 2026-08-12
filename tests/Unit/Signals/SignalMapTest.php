@@ -23,6 +23,10 @@ mutates(SignalMap::class);
  */
 final class SignalMapTest extends TestCase
 {
+    /**
+     * @param  array<string, mixed>  $signalsMap
+     * @param  array<class-string, array<string, mixed>>  $models
+     */
     private function map(array $signalsMap, array $models = []): SignalMap
     {
         $config = new Repository([
@@ -35,6 +39,9 @@ final class SignalMapTest extends TestCase
         return new SignalMap($config, new BoundModelReader($config));
     }
 
+    /**
+     * @return array<class-string, array<string, mixed>>
+     */
     private function contactsBinding(): array
     {
         return [SignalSubject::class => ['object' => 'contacts', 'id_property' => 'email']];
@@ -42,6 +49,8 @@ final class SignalMapTest extends TestCase
 
     public function test_a_well_formed_map_with_mixed_verbs_validates_without_throwing(): void
     {
+        $this->expectNotToPerformAssertions();
+
         $map = $this->map([
             'pricing_page_viewed' => [
                 'object' => 'contacts',
@@ -66,15 +75,13 @@ final class SignalMapTest extends TestCase
         ], $this->contactsBinding());
 
         $map->validate();
-
-        self::assertTrue(true);
     }
 
     public function test_an_empty_map_validates_without_throwing(): void
     {
-        $this->map([])->validate();
+        $this->expectNotToPerformAssertions();
 
-        self::assertTrue(true);
+        $this->map([])->validate();
     }
 
     public function test_an_unset_map_key_behaves_identically_to_an_empty_map(): void
@@ -228,6 +235,8 @@ final class SignalMapTest extends TestCase
 
     public function test_a_map_object_spelled_differently_from_the_binding_still_validates(): void
     {
+        $this->expectNotToPerformAssertions();
+
         $map = $this->map([
             'pricing_page_viewed' => [
                 'object' => 'Contacts',
@@ -236,8 +245,6 @@ final class SignalMapTest extends TestCase
         ], $this->contactsBinding());
 
         $map->validate();
-
-        self::assertTrue(true);
     }
 
     public function test_rules_for_returns_merge_rules_keyed_by_property(): void

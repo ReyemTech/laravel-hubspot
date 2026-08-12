@@ -759,4 +759,77 @@ final class ConfigurationException extends LogicException implements HubspotExce
         ));
     }
 
+    /**
+     * A `hubspot.signals.map` entry's `object` key is missing entirely, or its `properties` key is
+     * present but not an array. Thrown by `Signals\SignalMap::validate()` before any per-property
+     * declaration is parsed -- a structurally malformed entry has no properties worth parsing yet.
+     *
+     * A fifth factory beyond the four SIG-03/D-08/D-03 primarily motivate (06-02-PLAN.md's
+     * `unknownSignalName`, `unknownSignalMergeVerb`, `invalidSignalCalculator`,
+     * `signalObjectTypeMismatch`): STANDARDS §9 requires every caller-facing fault to be a
+     * directed message naming the actual fix rather than a raw `TypeError` from destructuring a
+     * malformed array, and none of those four factories' signatures fit a whole-entry shape fault.
+     */
+    public static function invalidSignalMapEntry(string $signalName, string $reason): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"] is not a valid signal declaration: %s. Each entry must be '
+            .'an array with an "object" key naming the HubSpot object type this signal\'s '
+            .'subject belongs to, and a "properties" key mapping each HubSpot property to a '
+            .'merge-rule declaration, for example [\'object\' => \'contacts\', \'properties\' '
+            .'=> [\'pricing_view_count\' => \'increment\']].',
+            $signalName,
+            $reason,
+        ));
+    }
+
+    /**
+     * `hubspot.signals.map` has no entry named the given signal. Thrown by
+     * `Signals\SignalMap::objectTypeFor()`/`rulesFor()` on a miss, and by `Signals\SignalRecorder::
+     * record()` BEFORE anything else runs (`Hubspot::signal()`'s first check) -- an unmapped
+     * signal name is refused before it is bounded in bytes or written to the buffer, because a
+     * name the map does not recognise can never be flushed to HubSpot regardless of how well
+     * formed the call otherwise is.
+     *
+     * @param  list<string>  $validNames
+     */
+    public static function unknownSignalName(string $given, array $validNames): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map has no entry named "%s". %s Add an entry for "%s" to '
+            .'hubspot.signals.map, or correct the signal name passed to Hubspot::signal().',
+            $given,
+            $validNames === []
+                ? 'No signal names are mapped at all yet.'
+                : sprintf('The mapped names are: %s.', implode(', ', $validNames)),
+            $given,
+        ));
+    }
+
+    /**
+     * A `hubspot.signals.map` entry's `object` key names an object type no `hubspot.models`
+     * binding claims (D-03). Thrown by `Signals\SignalMap::validate()`, from `ServiceProvider::
+     * boot()`'s `bootSignalMap()` -- boot-checkable because "is this object type claimed by some
+     * bound model" needs no runtime subject, unlike the flush-time write itself.
+     *
+     * Both sides are compared after `Registry\HubspotObjectType::normalise()`, so `$mapObjectType`
+     * and `$boundObjectType` are always already-canonical values -- a spelling difference like
+     * "Contacts" vs "contacts" is never what triggered this.
+     */
+    public static function signalObjectTypeMismatch(string $signalName, string $mapObjectType, string $boundObjectType, string $modelClass): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"] declares object type "%s", but no hubspot.models binding '
+            .'claims it -- the closest configured binding is %s, bound to "%s". Add a '
+            .'hubspot.models entry naming "%s", or correct the map\'s "object" key so it names '
+            .'an object type a binding actually claims. Both sides are compared after '
+            .'Registry\HubspotObjectType::normalise(), so a spelling difference like "Contacts" '
+            .'vs "contacts" is never the cause.',
+            $signalName,
+            $mapObjectType,
+            $modelClass,
+            $boundObjectType,
+            $mapObjectType,
+        ));
+    }
 }
