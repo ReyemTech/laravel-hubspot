@@ -35,6 +35,7 @@ use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
 use ReyemTech\Hubspot\Signals\BoundModelReader;
 use ReyemTech\Hubspot\Signals\IdentityResolver;
+use ReyemTech\Hubspot\Signals\SignalMap;
 use ReyemTech\Hubspot\Signals\SignalRecorder;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
@@ -272,6 +273,12 @@ final class ServiceProvider extends BaseServiceProvider
         // Hubspot::fake() would ever need to invalidate, on the same terms as ModelBindings above.
         $this->app->singleton(BoundModelReader::class);
 
+        // Config-and-BoundModelReader-only, on the same "no transport to invalidate" terms as
+        // BoundModelReader itself. Auto-wired: SignalMap's constructor asks for
+        // Illuminate\Contracts\Config\Repository (bound to 'config' by the framework) and
+        // Signals\BoundModelReader (bound above), so no closure is needed.
+        $this->app->singleton(SignalMap::class);
+
         // Shared, like WebhookEventStore above: this class holds no transport Hubspot::fake()
         // would ever need to invalidate, only a database connection.
         // `hubspot.signals.enabled` is read once, at resolution -- a plain scalar
@@ -283,6 +290,7 @@ final class ServiceProvider extends BaseServiceProvider
 
             return new SignalRecorder(
                 $app->make(DatabaseManager::class)->connection(),
+                $app->make(SignalMap::class),
                 $featureEnabled,
             );
         });
@@ -354,6 +362,7 @@ final class ServiceProvider extends BaseServiceProvider
         $this->publishes($publishable, 'hubspot-migrations');
 
         $this->bootModelBindings();
+        $this->bootSignalMap();
     }
 
     /**
@@ -390,6 +399,42 @@ final class ServiceProvider extends BaseServiceProvider
 
             $modelClass::observe(HubspotObserver::class);
         }
+    }
+
+    /**
+     * D-07: validates `hubspot.signals.map` at BOOT, guarded by an explicit `=== true` check
+     * against `hubspot.signals.enabled` -- so the cost of validation lands only on an install that
+     * opted in, and is zero otherwise.
+     *
+     * **Deliberately NOT unconditional, unlike `bootModelBindings()` above.** That method can run
+     * unconditionally only because `hubspot.models` defaults to `[]`, which makes `ModelBindings::
+     * validate()` a harmless no-op loop over zero entries. An unset `hubspot.signals.map` is a
+     * DIFFERENT kind of default: a real, valid "signals are off" state that this package must not
+     * pay for, whereas `hubspot.models` being empty by default is a genuinely unconfigured feature
+     * with nothing to validate either way. Both end up as no-ops today, but for different reasons,
+     * and only one of those reasons survives a consumer setting `hubspot.signals.enabled = false`
+     * while STILL declaring a map for later -- exactly the case
+     * `SignalMapBootTest::test_disabled_with_a_broken_map_boots_without_throwing()` pins.
+     *
+     * **Why D-07 diverges from `Webhooks\HandlerMap::validate()`, which runs at JOB time, not
+     * boot.** A bad `hubspot.webhooks.handlers` entry costs exactly one webhook claim -- the item
+     * is redelivered by HubSpot and the fix is one worker cycle away. A bad `hubspot.signals.map`
+     * entry is worse: it silently drops the BUFFERED ATTRIBUTION this whole feature exists to
+     * protect, discovered only when a flush fails or never fires at all. Fail-fast at boot is
+     * worth more here than the parallel decision was worth in `Webhooks`.
+     *
+     * `=== true`, never a `(bool)` cast: `hubspot.signals.enabled` reaching here as the string
+     * `'1'` from a misconfigured `.env` reader must NOT enable validation, the same strict-identity
+     * reasoning `migrationGroups()` already states for the identical config key
+     * (`SignalMapBootTest::test_a_truthy_non_bool_enabled_value_does_not_validate_and_boots()`).
+     */
+    private function bootSignalMap(): void
+    {
+        if ($this->app->make('config')->get('hubspot.signals.enabled') !== true) {
+            return;
+        }
+
+        $this->app->make(SignalMap::class)->validate();
     }
 
     /**

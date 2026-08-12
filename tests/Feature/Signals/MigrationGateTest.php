@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Schema;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\ServiceProvider;
 use ReyemTech\Hubspot\Signals\SignalRecorder;
+use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 use ReyemTech\Hubspot\Tests\TestCase;
 
 mutates(ServiceProvider::class);
@@ -52,14 +53,34 @@ final class MigrationGateTest extends TestCase
      */
     protected function defineEnvironment($app): void
     {
+        /** @var ConfigRepository $config */
+        $config = $app->make('config');
+
+        // 06-02 gates Hubspot::signal() on SignalMap::knows() before anything else runs -- every
+        // test in this file calls record('pricing_page_viewed', ...), so it needs to be mapped
+        // regardless of $this->signalsEnabled, or every call here would report an unknown signal
+        // name instead of exercising the migration-gate behaviour this file exists to test.
+        $config->set('hubspot.signals.map', [
+            'pricing_page_viewed' => [
+                'object' => 'contacts',
+                'properties' => [
+                    'pricing_page_views' => 'increment',
+                ],
+            ],
+        ]);
+
         if (! $this->signalsEnabled) {
             return;
         }
 
-        /** @var ConfigRepository $config */
-        $config = $app->make('config');
-
         $config->set('hubspot.signals.enabled', true);
+
+        // Boot-time SignalMap::validate() (D-07) runs only when enabled -- and D-03 requires the
+        // map's declared object type be claimed by some hubspot.models binding, so one is added
+        // here purely to keep boot green. Nothing in this file constructs a SignalSubject.
+        $config->set('hubspot.models', [
+            SignalSubject::class => ['object' => 'contacts', 'id_property' => 'email'],
+        ]);
     }
 
     /**

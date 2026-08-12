@@ -17,15 +17,27 @@ mutates(SignalRecorder::class);
  * `hubspot.signals.map` throws `ConfigurationException::unknownSignalName()` and writes no row,
  * BEFORE the byte-bounding check that already existed -- proven directly by combining both faults
  * in one call and observing which exception wins.
+ *
+ * The two failure-path tests resolve `SignalRecorder` from the container rather than calling
+ * `Hubspot::signal()` -- mirrors `MigrationGateTest::recorder()`'s identical precedent: PHPStan's
+ * dead-catch analysis trusts the `Hubspot` facade's `@method static void signal(...)` docblock
+ * (no `@throws`) as authoritative, and flags `catch (ConfigurationException)` around a facade call
+ * as unreachable even though the concrete implementation genuinely throws it. The happy-path test
+ * still calls the facade, since nothing there is caught.
  */
 final class SignalRecorderTest extends SignalsTestCase
 {
+    private function recorder(): SignalRecorder
+    {
+        return app(SignalRecorder::class);
+    }
+
     public function test_an_unmapped_signal_name_throws_and_writes_no_row(): void
     {
         Hubspot::fake();
 
         try {
-            Hubspot::signal('never_mapped', 'visitor-1');
+            $this->recorder()->record('never_mapped', 'visitor-1');
 
             self::fail('Expected a ConfigurationException for an unmapped signal name.');
         } catch (ConfigurationException $exception) {
@@ -57,7 +69,7 @@ final class SignalRecorderTest extends SignalsTestCase
         $overLongUnmappedName = str_repeat('a', 192);
 
         try {
-            Hubspot::signal($overLongUnmappedName, 'visitor-1');
+            $this->recorder()->record($overLongUnmappedName, 'visitor-1');
 
             self::fail('Expected a ConfigurationException naming the unmapped signal.');
         } catch (ConfigurationException $exception) {

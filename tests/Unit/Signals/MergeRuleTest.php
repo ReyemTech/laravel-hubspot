@@ -95,6 +95,27 @@ final class MergeRuleTest extends TestCase
         MergeRule::fromDeclaration('pricing_page_views', 'increment|reconcile', 'pricing_page_viewed');
     }
 
+    public function test_a_modifier_other_than_reconcile_throws(): void
+    {
+        $this->expectException(ConfigurationException::class);
+
+        MergeRule::fromDeclaration('source', 'first_wins:source|garbage', 'pricing_page_viewed');
+    }
+
+    public function test_bare_first_wins_with_no_field_throws(): void
+    {
+        $this->expectException(ConfigurationException::class);
+
+        MergeRule::fromDeclaration('source', 'first_wins', 'pricing_page_viewed');
+    }
+
+    public function test_bare_last_wins_with_no_field_throws(): void
+    {
+        $this->expectException(ConfigurationException::class);
+
+        MergeRule::fromDeclaration('source', 'last_wins', 'pricing_page_viewed');
+    }
+
     public function test_a_calculator_class_string_parses_to_calculator_and_the_invokable_marker(): void
     {
         $rule = MergeRule::fromDeclaration('intent_score', IntentScore::class, 'demo_requested');

@@ -195,6 +195,23 @@ final class SignalMapTest extends TestCase
         }
     }
 
+    /**
+     * `unknownSignalName()`'s zero-mapped-names branch, distinct from the test above: an entirely
+     * empty map has no mapped names to list, so the message says so rather than rendering an
+     * empty list.
+     */
+    public function test_object_type_for_on_an_entirely_empty_map_names_that_nothing_is_mapped(): void
+    {
+        try {
+            $this->map([])->objectTypeFor('unmapped_name');
+
+            self::fail('Expected a ConfigurationException for an unmapped signal name.');
+        } catch (ConfigurationException $exception) {
+            self::assertStringContainsString('unmapped_name', $exception->getMessage());
+            self::assertStringContainsString('No signal names are mapped', $exception->getMessage());
+        }
+    }
+
     public function test_object_type_for_returns_the_normalised_object_type(): void
     {
         $lower = $this->map([
@@ -230,6 +247,29 @@ final class SignalMapTest extends TestCase
             self::assertStringContainsString('deal_value_seen', $exception->getMessage());
             self::assertStringContainsString('deals', $exception->getMessage());
             self::assertStringContainsString('contacts', $exception->getMessage());
+        }
+    }
+
+    /**
+     * `representativeBinding()`'s empty-bindings branch: `hubspot.models` has no entries at all,
+     * so there is no representative binding to name -- distinct from the test above, where a
+     * binding exists but does not claim the map's declared object type.
+     */
+    public function test_a_map_object_with_no_bindings_configured_at_all_throws(): void
+    {
+        try {
+            $this->map([
+                'deal_value_seen' => [
+                    'object' => 'deals',
+                    'properties' => ['deal_value_total' => 'sum:value'],
+                ],
+            ], [])->validate();
+
+            self::fail('Expected a ConfigurationException for zero configured bindings.');
+        } catch (ConfigurationException $exception) {
+            self::assertStringContainsString('deal_value_seen', $exception->getMessage());
+            self::assertStringContainsString('deals', $exception->getMessage());
+            self::assertStringContainsString('(none)', $exception->getMessage());
         }
     }
 

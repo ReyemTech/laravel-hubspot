@@ -46,6 +46,22 @@ class SignalsTestCase extends TestCase
             SignalCompanySubject::class => ['object' => 'companies', 'id_property' => 'domain'],
         ]);
 
+        // 06-02 gates Hubspot::signal() on SignalMap::knows() before anything else runs (SIG-03
+        // Task 3), and hubspot.signals.enabled=true above means ServiceProvider::bootSignalMap()
+        // (D-07) validates whatever map is declared here at application boot. Declared once, at
+        // the base, so every test in this file's family gets a validatable map for
+        // 'pricing_page_viewed' rather than reporting an unknown signal name for a call meant to
+        // exercise buffering, byte-bounding or identify() -- matching the shape
+        // SignalTracerTest::incrementMap() already sets locally for its own FlushSignalsJob tests.
+        $config->set('hubspot.signals.map', [
+            'pricing_page_viewed' => [
+                'object' => 'contacts',
+                'properties' => [
+                    'pricing_page_views' => 'increment',
+                ],
+            ],
+        ]);
+
         // Explicit rather than relied upon: SyncTestCase's own docblock states the identical
         // reason. `identify()` dispatching FlushSignalsJob has to run synchronously end to end in
         // one process for these tests to observe its effect, and that is a stated fact about the

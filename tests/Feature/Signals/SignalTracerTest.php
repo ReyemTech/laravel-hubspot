@@ -262,6 +262,33 @@ final class SignalTracerTest extends SignalsTestCase
     }
 
     /**
+     * A subject WITH buffered rows, but a map declaring no properties for ANY signal (an empty
+     * `hubspot.signals.map`), computes zero roll-up properties (`RollUpCalculator::compute()`
+     * over zero rules returns `[]`) -- distinct from the no-rows case above, where there is
+     * nothing to compute over at all. The subject is skipped before any group is built, and its
+     * rows stay unflushed for the next flush to repair once the map is fixed.
+     */
+    public function test_a_subject_whose_computed_properties_are_empty_is_skipped(): void
+    {
+        Hubspot::fake();
+        config(['hubspot.signals.map' => []]);
+
+        $subject = SignalSubject::query()->create(['email' => 'empty-properties@example.com']);
+        $this->insertBoundSignal('visitor-empty-properties', $subject, 'pricing_page_viewed');
+
+        $job = new FlushSignalsJob([
+            ['subjectType' => SignalSubject::class, 'subjectId' => (string) $subject->getKey()], // @phpstan-ignore-line cast.string
+        ]);
+        app()->call([$job, 'handle']);
+
+        Hubspot::assertRequestCount(0);
+
+        $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-empty-properties')->first();
+        self::assertNotNull($row);
+        self::assertNull($row->flushed_at);
+    }
+
+    /**
      * T-06-03: `recordsDespitePartialFailure()` is read alongside `errors()`, never the strict
      * `records()` accessor -- a 207 must not abandon the confirmed half of a chunk. Mirrors
      * `BatchSyncCorrelationTest::test_a_207_keeps_the_returned_records_linked_and_logs_package_controlled_rejection_diagnostics()`'s

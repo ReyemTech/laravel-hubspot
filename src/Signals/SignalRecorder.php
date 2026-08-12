@@ -15,6 +15,11 @@ use ReyemTech\Hubspot\Exceptions\ConfigurationException;
  * `Hubspot::signal()`'s implementation -- SIG-02's zero-HTTP proof lives here in the fact that this
  * class holds no `Gateway` reference at all. One INSERT into `hubspot_signals`, nothing more.
  *
+ * **`record()` asks `SignalMap::knows()` before it bounds or writes anything** (06-02 Task 3, SIG-03):
+ * an unmapped signal name throws `ConfigurationException::unknownSignalName()` and writes no row.
+ * This check runs BEFORE the byte-bounding check below, so a caller with two mistakes at once hears
+ * about the one that makes the call meaningless first.
+ *
  * Every public method routes through {@see self::guarded()}, mirroring
  * `Webhooks\Stores\DatabaseWebhookEventStore::guarded()`'s exact shape: a missing-table
  * `QueryException` is translated into a directed `ConfigurationException`, and every other
@@ -33,6 +38,7 @@ final class SignalRecorder
 
     public function __construct(
         private readonly Connection $connection,
+        private readonly SignalMap $map,
         // Carried only so the missing-table error can describe the state the operator is actually
         // in -- ServiceProvider decides whether this class is reachable at all; by the time a
         // query runs, the answer here only shapes the diagnosis. Mirrors
@@ -49,6 +55,14 @@ final class SignalRecorder
         array $properties = [],
         ?DateTimeInterface $occurredAt = null,
     ): void {
+        // The map check runs BEFORE anything else -- even the byte-bounding check below (06-02
+        // Task 3). A caller with two mistakes at once hears about the one that makes the call
+        // meaningless first: a name the map does not recognise can never be flushed to HubSpot
+        // regardless of how well formed the rest of the call is.
+        if (! $this->map->knows($name)) {
+            throw ConfigurationException::unknownSignalName($name, $this->map->names());
+        }
+
         self::bounded($visitorId, 'visitorId');
         self::bounded($name, 'signalName');
 

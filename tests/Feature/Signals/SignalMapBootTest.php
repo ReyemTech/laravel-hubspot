@@ -6,7 +6,6 @@ namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Foundation\Application;
-use Illuminate\Support\Facades\Artisan;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\ServiceProvider;
 use ReyemTech\Hubspot\Tests\Support\Signals\IntentScore;
@@ -79,6 +78,7 @@ final class SignalMapBootTest extends TestCase
 
         if (str_starts_with($name, 'test_enabled_with_no_map_key_at_all_boots')) {
             $config->set('hubspot.signals.enabled', true);
+
             // Deliberately no hubspot.signals.map write -- the shipped config default, [], applies.
             return;
         }
@@ -167,24 +167,48 @@ final class SignalMapBootTest extends TestCase
         self::assertNull($this->bootException);
     }
 
+    /**
+     * `Illuminate\Foundation\Console\ConfigCacheCommand::getFreshConfiguration()` bootstraps a
+     * WHOLE FRESH `Application` by `require`ing the skeleton's own `bootstrap/app.php` --
+     * constructing that second `Application` instance calls `Container::setInstance()`, which
+     * SWAPS THE GLOBAL CONTAINER SINGLETON the `config()`/`app()` helpers resolve through, for the
+     * remainder of the PHP process. Literally invoking `Artisan::call('config:cache')` inside a
+     * Testbench test therefore corrupts every later `config()`/`app()` call in the same test run,
+     * in this test and every one that follows it -- confirmed empirically (the swapped app has no
+     * knowledge of this test's runtime `config()->set()` calls, so a `config('hubspot.signals.map')`
+     * read immediately afterward returns null). `Tests\Feature\Sync\SyncSuppressionTest::
+     * test_the_config_file_contains_nothing_config_cache_cannot_serialise()` establishes the
+     * established, safe pattern this test follows instead: reproduce
+     * `ConfigCacheCommand::handle()`'s own serialisation mechanism directly --
+     * `'<?php return '.var_export($config, true).';'` written to a file and `require`d back --
+     * against THIS test's actual, already-resolved config value. That is exactly what
+     * `php artisan config:cache` performs against a real consumer's application; only the
+     * container-swap side effect is intentionally not reproduced.
+     */
     public function test_config_cache_succeeds_against_an_invokable_class_string_map(): void
     {
         self::assertNull($this->bootException);
 
+        /** @var array<string, mixed> $map */
+        $map = app('config')->get('hubspot.signals.map');
+
+        $exported = var_export($map, true);
+
+        self::assertStringNotContainsString('Closure::__set_state', $exported);
+
+        $tempFile = tempnam(sys_get_temp_dir(), 'hubspot_signals_map_cache_');
+        self::assertNotFalse($tempFile);
+
         try {
-            $exitCode = Artisan::call('config:cache');
+            file_put_contents($tempFile, '<?php return '.$exported.';'.PHP_EOL);
 
-            self::assertSame(0, $exitCode);
+            $roundTripped = require $tempFile;
 
-            /** @var array<string, mixed> $cachedMap */
-            $cachedMap = config('hubspot.signals.map');
-
-            self::assertSame(
-                IntentScore::class,
-                $cachedMap['demo_requested']['properties']['intent_score'],
-            );
+            // Whole-structure equality, not a single leaf: proves the round trip lost nothing,
+            // including the invokable class-string this test exists to exercise.
+            self::assertEquals($map, $roundTripped);
         } finally {
-            Artisan::call('config:clear');
+            unlink($tempFile);
         }
     }
 }

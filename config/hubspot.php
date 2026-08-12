@@ -537,11 +537,54 @@ return [
     | - store: HUBSPOT_SIGNAL_STORE, the event-trail driver (SIG-07). 'local'
     |   is the only driver this phase ships, and is the default because it is
     |   the only one that works on any portal with no new credential.
-    | - map: signal name -> HubSpot property roll-up rules (SIG-03, SIG-04).
-    |   Plain scalars and arrays only, here and everywhere in this file --
-    |   `php artisan config:cache` serialises with var_export(), which
-    |   throws on a closure, so the merge vocabulary's escape hatch names an
-    |   invokable CLASS-STRING rather than a closure (D-08).
+    | - map: signal name -> object type + HubSpot property roll-up rules
+    |   (SIG-03, SIG-04). Plain scalars and arrays only, here and everywhere
+    |   in this file -- `php artisan config:cache` serialises with
+    |   var_export(), which throws on a closure, so the merge vocabulary's
+    |   escape hatch names an invokable CLASS-STRING rather than a closure
+    |   (D-08).
+    |
+    |   Each entry is an 'object' key (the HubSpot object type this signal's
+    |   subject belongs to -- must be claimed by a hubspot.models binding,
+    |   D-03) and a 'properties' key mapping each HubSpot property to a
+    |   merge-rule declaration, one entry per verb in the closed four-verb
+    |   vocabulary plus the class-string escape hatch:
+    |
+    |       'map' => [
+    |           'pricing_page_viewed' => [
+    |               'object' => 'contacts',
+    |               'properties' => [
+    |                   // first_wins:<field> -- the EARLIEST matching signal's value of
+    |                   // <field>, never overwritten once set.
+    |                   'first_touch_source' => 'first_wins:source',
+    |                   // last_wins:<field> -- the MOST RECENT matching signal's value.
+    |                   'last_pricing_view' => 'last_wins:occurred_at',
+    |                   // increment -- a count of matching signals. Takes no field.
+    |                   'pricing_view_count' => 'increment',
+    |                   // sum:<field> -- the sum of a numeric field across matching signals.
+    |                   'total_deal_value' => 'sum:value',
+    |                   // An invokable class-string (D-08) for the rare case the four verbs
+    |                   // do not cover: App\Signals\IntentScore::__invoke(Collection $signals)
+    |                   // receives every matching signal and returns the property value.
+    |                   'intent_score' => App\Signals\IntentScore::class,
+    |               ],
+    |           ],
+    |       ],
+    |
+    |   'first_wins' and 'last_wins' accept an optional '|reconcile' modifier
+    |   ('first_wins:source|reconcile') -- performs at most ONE read per
+    |   subject, ever, to reconcile the stored value against what HubSpot
+    |   already holds; 'sum' and 'increment' reject the modifier outright.
+    |
+    |   An unknown signal name, an unknown merge verb -- there is no
+    |   'overwrite'; 'last_wins' is the closest equivalent -- or a
+    |   class-string that does not exist or does not implement
+    |   ReyemTech\Hubspot\Signals\Contracts\SignalCalculator throws a
+    |   ConfigurationException naming the offending value and the fix. This
+    |   map is validated at BOOT (D-07), guarded on 'enabled' above being
+    |   exactly `true` -- so a typo fails your application's boot, rather
+    |   than silently dropping the buffered attribution this feature exists
+    |   to protect, the first time a flush runs.
     |
     | The `properties` recorded against a signal are the consumer's OWN
     | customers' behavioural data. This package writes to HubSpot only what
