@@ -105,10 +105,10 @@ final class MergeRuleTest extends TestCase
         self::assertFalse($rule->reconciles());
     }
 
-    public function test_a_nonexistent_namespaced_class_string_throws_naming_the_calculator_interface(): void
+    public function test_a_nonexistent_namespaced_class_string_throws_naming_the_class(): void
     {
         $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessageMatches('/SignalCalculator/');
+        $this->expectExceptionMessageMatches('/NoSuchCalculator/');
 
         MergeRule::fromDeclaration(
             'intent_score',
@@ -176,7 +176,6 @@ final class MergeRuleTest extends TestCase
     public function test_a_null_declaration_throws_naming_the_property(): void
     {
         try {
-            /** @phpstan-ignore-next-line argument.type -- deliberately handing a null declaration */
             MergeRule::fromDeclaration('pricing_page_views', null, 'pricing_page_viewed');
 
             self::fail('Expected a ConfigurationException for a null declaration.');

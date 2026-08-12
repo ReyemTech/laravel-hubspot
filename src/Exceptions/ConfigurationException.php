@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Exceptions;
 
+use Closure;
 use LogicException;
+use ReyemTech\Hubspot\Signals\Contracts\SignalCalculator;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 
 /**
@@ -653,4 +655,108 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
         );
     }
+
+    /**
+     * A `hubspot.signals.map` property declaration is neither one of `MergeRule::validVerbs()`'s
+     * four verbs nor a valid shape of that verb (missing a required field, carrying a field the
+     * verb rejects, or carrying the `|reconcile` modifier on a verb that does not accept it).
+     * Thrown by `Signals\MergeRule::fromDeclaration()` -- the single parser of a merge-rule
+     * declaration (STANDARDS §6b) -- so every caller that resolves a map, at boot (`SignalMap`) or
+     * at roll-up time (`RollUpCalculator`, 06-04), reports the same directed message.
+     *
+     * `$given` is always the FULL raw declaration string, never just an extracted verb token: a
+     * shape fault like `"increment:anything"` names a recognised verb used the wrong way, and
+     * showing only the wrong part loses the field the operator wrote by mistake.
+     *
+     * @param  list<string>  $validVerbs
+     */
+    public static function unknownSignalMergeVerb(string $given, string $signalName, string $property, array $validVerbs): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"]["%s"] declares "%s", which is not a valid merge-rule '
+            .'declaration. The merge vocabulary is closed to exactly four verbs: %s -- there is '
+            .'no "overwrite" verb; "last_wins" is the closest equivalent. "first_wins" and '
+            .'"last_wins" require a field, for example "first_wins:source", and accept the '
+            .'optional "|reconcile" modifier. "sum" requires a field, for example "sum:value", '
+            .'and rejects the modifier. "increment" takes neither a field nor the modifier.',
+            $signalName,
+            $property,
+            $given,
+            implode(', ', $validVerbs),
+        ));
+    }
+
+    /**
+     * A `hubspot.signals.map` property declaration is meant to name an invokable class-string
+     * (D-08) but does not: it is a `Closure`, a class that does not exist, a class that exists but
+     * does not implement `Signals\Contracts\SignalCalculator`, or some other non-string value.
+     * Thrown by `Signals\MergeRule::fromDeclaration()`.
+     *
+     * The `Closure` branch is the one D-08 exists to name plainly: the design spec's superseded §6
+     * example put a closure directly in `config/hubspot.php`, which makes `php artisan
+     * config:cache` throw *"Your configuration files are not serializable"* the moment it is
+     * cached -- a production-breaking regression invisible until someone deploys with cached
+     * config. The message steers to the class-string alternative rather than merely rejecting the
+     * closure.
+     */
+    public static function invalidSignalCalculator(mixed $value, string $signalName, string $property): self
+    {
+        if ($value instanceof Closure) {
+            return new self(sprintf(
+                'hubspot.signals.map["%s"]["%s"] is a closure. `php artisan config:cache` cannot '
+                .'serialise a closure and throws "Your configuration files are not serializable" '
+                .'the moment one appears anywhere in config/hubspot.php. Declare an invokable '
+                .'class-string implementing %s instead, for example \'%s\' => '
+                .'App\Signals\%s::class, and put the calculation in that class\'s __invoke() '
+                .'method.',
+                $signalName,
+                $property,
+                SignalCalculator::class,
+                $property,
+                str_replace(' ', '', ucwords(str_replace('_', ' ', $property))),
+            ));
+        }
+
+        // The four verbs are repeated as a literal here rather than read from
+        // `Signals\MergeRule::validVerbs()`: `Exceptions` is a cross-cutting namespace every layer
+        // throws through, and reaching into a concrete `Signals` class from here would be the
+        // inverse of the dependency direction the six-layer architecture requires. The literal is
+        // pinned against `MergeRule::validVerbs()`'s own return value in
+        // `tests/Unit/Signals/MergeRuleTest.php`, so the two cannot silently drift.
+        if (is_string($value) && $value !== '' && class_exists($value)) {
+            return new self(sprintf(
+                'hubspot.signals.map["%s"]["%s"] names "%s", which does not implement %s. Add '
+                .'"implements %s" to the class, or correct the declaration to one of the four '
+                .'merge verbs: first_wins, last_wins, increment, sum.',
+                $signalName,
+                $property,
+                $value,
+                SignalCalculator::class,
+                SignalCalculator::class,
+            ));
+        }
+
+        if (is_string($value) && $value !== '') {
+            return new self(sprintf(
+                'hubspot.signals.map["%s"]["%s"] names "%s", which is not a class that exists '
+                .'and is not one of the four merge verbs: first_wins, last_wins, increment, sum. '
+                .'Correct the class name, or declare a valid merge-rule verb instead.',
+                $signalName,
+                $property,
+                $value,
+            ));
+        }
+
+        return new self(sprintf(
+            'hubspot.signals.map["%s"]["%s"] is a %s, which is not a valid merge-rule '
+            .'declaration. Declare one of the four merge verbs (first_wins:<field>, '
+            .'last_wins:<field>, increment, sum:<field>) or an invokable class-string '
+            .'implementing %s.',
+            $signalName,
+            $property,
+            get_debug_type($value),
+            SignalCalculator::class,
+        ));
+    }
+
 }

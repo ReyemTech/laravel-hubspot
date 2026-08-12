@@ -33,11 +33,11 @@ interface SignalCalculator
 {
     /**
      * @param  Collection<int, array{signal_name: string}>  $signals  every one of the subject's
-     *                                                                 buffered rows matching this
-     *                                                                 property's signal name,
-     *                                                                 flushed included (D-10) --
-     *                                                                 `RollUpCalculator` never
-     *                                                                 filters by `flushed_at`
+     *                                                                buffered rows matching this
+     *                                                                property's signal name,
+     *                                                                flushed included (D-10) --
+     *                                                                `RollUpCalculator` never
+     *                                                                filters by `flushed_at`
      */
     public function __invoke(Collection $signals): mixed;
 }
