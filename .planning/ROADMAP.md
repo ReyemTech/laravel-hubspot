@@ -285,7 +285,22 @@ in no released tag and the column is written but never read back by package code
   4. One flush issues **one** batch property write regardless of how many signals buffered, and running the same flush twice produces the same property values — roll-ups are absolute values computed from the buffer, never read back from HubSpot, so a queue retry cannot double-count. The `first_wins:source|reconcile` modifier performs at most one read per subject, ever, recorded on the row so it never repeats.
   5. `HUBSPOT_SIGNALS=false` (the default) leaves the package with no migration and no new table, so zero-migration install is intact; setting it true without migrating produces `HUBSPOT_SIGNALS=true but table 'hubspot_signals' does not exist — run 'php artisan migrate'.` rather than a raw SQL failure. `assertSignalRecorded()`, `assertSignalFlushed()` and `assertPropertyRolledUp()` are available on the fake, with `occurred_at` from a frozen Carbon and visitor ids from a counter.
 
-**Plans**: TBD
+**Plans**: 7 plans, in 5 waves
+
+Plans:
+- [ ] 06-01-PLAN.md — Tracer: one signal to one buffer row to one batched write, plus SIG-01's gated migration (wave 1)
+- [ ] 06-02-PLAN.md — Signal map, closed four-verb vocabulary, boot-time validation (wave 2)
+- [ ] 06-03-PLAN.md — `identify()`, subject backfill, `SignalException` (wave 2)
+- [ ] 06-04-PLAN.md — `RollUpCalculator`, all four verbs, pure function (wave 3)
+- [ ] 06-05-PLAN.md — `SignalStore` contract and the `local` driver (wave 3)
+- [ ] 06-06-PLAN.md — `FlushSignalsJob` complete, `reconcile`, `hubspot:signals:flush` (wave 4)
+- [ ] 06-07-PLAN.md — Signal assertions on the fake, determinism (wave 5)
+
+**Blocking prerequisite found at plan time:** architecture rule **R5 does not admit `Illuminate`**,
+unlike R2/R3/R4. Every `src/Signals/` class needs `Illuminate\Support\Collection`,
+`Illuminate\Contracts\Config\Repository` and the queue contracts, so R5 is widened in 06-01 Task 1
+— mirroring R4's own 2026-08-06 widening, with committed fixtures proving `Signals` still rejects
+`HubSpot\*` (R1) and still rejects `Sync`/`Webhooks` (R7).
 
 ### Phase 7: Signal Stores & Attribution
 
