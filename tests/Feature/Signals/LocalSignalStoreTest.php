@@ -103,6 +103,8 @@ final class LocalSignalStoreTest extends TestCase
         self::assertSame('42', $row->subject_id);
         self::assertSame('pricing_page_viewed', $row->signal_name);
         self::assertSame('2026-08-10 09:00:00', $row->occurred_at);
+        self::assertSame('2026-08-12 12:00:00', $row->created_at);
+        self::assertSame('2026-08-12 12:00:00', $row->updated_at);
     }
 
     /**
@@ -336,10 +338,32 @@ final class LocalSignalStoreTest extends TestCase
 
             self::fail('Expected an InvalidArgumentException for a negative hubspot_signal_id.');
         } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('-1', $exception->getMessage());
+            // A hardcoded literal, not a factory-against-factory comparison -- the same reason
+            // 06-05-PLAN.md gives for ConfigurationException::unknownSignalStore(): comparing
+            // against the message-building code itself can never catch a mutated internal string.
+            self::assertSame(
+                'LocalSignalStore::append() was given hubspot_signal_id -1, and hubspot_signal_trail '
+                .'stores it in an unsigned column. A negative value is refused by MySQL and '
+                .'silently accepted by PostgreSQL and SQLite, so it is refused here on every driver '
+                .'alike.',
+                $exception->getMessage(),
+            );
         }
 
         self::assertSame(0, DB::table('hubspot_signal_trail')->count());
+    }
+
+    /**
+     * The boundary this driver-agreement check actually turns on: `0` is not negative and must be
+     * accepted, distinguishing `$signalId < 0` from an off-by-one mutant (`<= 0`).
+     */
+    public function test_a_signal_id_of_zero_is_accepted(): void
+    {
+        $this->migrate();
+
+        $this->store()->append(0, 'App\\Models\\Contact', '42', 'pricing_page_viewed', [], Carbon::now());
+
+        self::assertSame(1, DB::table('hubspot_signal_trail')->where('hubspot_signal_id', 0)->count());
     }
 
     public function test_a_subject_id_at_exactly_the_column_width_appends(): void
@@ -364,7 +388,13 @@ final class LocalSignalStoreTest extends TestCase
 
             self::fail('Expected an InvalidArgumentException for an over-width subjectId.');
         } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('192', $exception->getMessage());
+            self::assertSame(
+                'A signal trail entry\'s "subjectId" is 192 bytes, which exceeds the 191-byte '
+                .'column width hubspot_signal_trail stores it at. Rejecting it here rather than '
+                .'truncating it keeps a value that cannot be stored from being recorded as if it '
+                .'had been.',
+                $exception->getMessage(),
+            );
         }
 
         self::assertSame(0, DB::table('hubspot_signal_trail')->count());
@@ -379,7 +409,12 @@ final class LocalSignalStoreTest extends TestCase
 
             self::fail('Expected an InvalidArgumentException for a NUL byte in subjectType.');
         } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('subjectType', $exception->getMessage());
+            self::assertSame(
+                'A signal trail entry\'s "subjectType" contains a NUL byte, which PostgreSQL '
+                .'refuses in a text/varchar value outright. Rejecting it here rather than letting '
+                .'the database reject it after the caller believes the append succeeded.',
+                $exception->getMessage(),
+            );
         }
 
         self::assertSame(0, DB::table('hubspot_signal_trail')->count());
@@ -394,7 +429,12 @@ final class LocalSignalStoreTest extends TestCase
 
             self::fail('Expected an InvalidArgumentException for a NUL byte in subjectId.');
         } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('subjectId', $exception->getMessage());
+            self::assertSame(
+                'A signal trail entry\'s "subjectId" contains a NUL byte, which PostgreSQL refuses '
+                .'in a text/varchar value outright. Rejecting it here rather than letting the '
+                .'database reject it after the caller believes the append succeeded.',
+                $exception->getMessage(),
+            );
         }
 
         self::assertSame(0, DB::table('hubspot_signal_trail')->count());
@@ -409,9 +449,39 @@ final class LocalSignalStoreTest extends TestCase
 
             self::fail('Expected an InvalidArgumentException for a NUL byte in signalName.');
         } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('signalName', $exception->getMessage());
+            self::assertSame(
+                'A signal trail entry\'s "signalName" contains a NUL byte, which PostgreSQL refuses '
+                .'in a text/varchar value outright. Rejecting it here rather than letting the '
+                .'database reject it after the caller believes the append succeeded.',
+                $exception->getMessage(),
+            );
         }
 
         self::assertSame(0, DB::table('hubspot_signal_trail')->count());
+    }
+
+    /**
+     * `featureEnabled` defaults to `true` when a caller constructs the store without naming it --
+     * proven by triggering the missing-table branch through a two-argument construction and
+     * observing the "enabled" message rather than the "flag is off" one.
+     */
+    public function test_the_feature_enabled_constructor_parameter_defaults_to_true(): void
+    {
+        self::assertFalse(Schema::hasTable('hubspot_signal_trail'), 'This test is only meaningful before migrating.');
+
+        $store = new LocalSignalStore(app(DatabaseManager::class)->connection(), false);
+
+        try {
+            $store->append(1, 'App\\Models\\Contact', '42', 'pricing_page_viewed', [], Carbon::now());
+
+            self::fail('Expected a directed ConfigurationException for the absent table.');
+        } catch (ConfigurationException $exception) {
+            self::assertSame(
+                'HUBSPOT_SIGNALS is true but the "hubspot_signal_trail" table does not exist. Run '
+                .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+                .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+                $exception->getMessage(),
+            );
+        }
     }
 }

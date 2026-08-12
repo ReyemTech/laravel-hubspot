@@ -51,15 +51,6 @@ final class LocalSignalStore implements SignalStore
 {
     public const TABLE = 'hubspot_signal_trail';
 
-    /**
-     * The width `database/migrations/signals/..._create_hubspot_signal_trail_table.php` bounds
-     * `subject_type`, `subject_id` and `signal_name` to. Bounded here, in BYTES, before the INSERT
-     * -- the PR #71 rule that a column this package constrains gets its check at the point data
-     * enters, rather than truncating the value or letting the database reject it after the caller
-     * believes the append succeeded.
-     */
-    private const int MAX_COLUMN_LENGTH = 191;
-
     public function __construct(
         private readonly Connection $connection,
         // hubspot.signals.trail_payload -- false by default, mirroring
@@ -172,16 +163,31 @@ final class LocalSignalStore implements SignalStore
             ));
         }
 
-        if (strlen($value) > self::MAX_COLUMN_LENGTH) {
+        if (strlen($value) > self::maxColumnLength()) {
             throw new InvalidArgumentException(sprintf(
                 'A signal trail entry\'s "%s" is %d bytes, which exceeds the %d-byte column width '
                 .'hubspot_signal_trail stores it at. Rejecting it here rather than truncating it '
                 .'keeps a value that cannot be stored from being recorded as if it had been.',
                 $field,
                 strlen($value),
-                self::MAX_COLUMN_LENGTH,
+                self::maxColumnLength(),
             ));
         }
+    }
+
+    /**
+     * The width `database/migrations/signals/..._create_hubspot_signal_trail_table.php` bounds
+     * `subject_type`, `subject_id` and `signal_name` to. A METHOD, never a class constant: `pest
+     * --mutate` reports a mutation on a constant declaration as UNCOVERED, because a constant has
+     * no executed line for coverage to attribute a test to -- the identical reason
+     * `ServiceProvider::supportedStores()` is a method rather than a `const array`. Bounded here,
+     * in BYTES, before the INSERT -- the PR #71 rule that a column this package constrains gets its
+     * check at the point data enters, rather than truncating the value or letting the database
+     * reject it after the caller believes the append succeeded.
+     */
+    private static function maxColumnLength(): int
+    {
+        return 191;
     }
 
     /**
