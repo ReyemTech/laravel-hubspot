@@ -32,12 +32,19 @@ use Illuminate\Support\Collection;
 interface SignalCalculator
 {
     /**
-     * @param  Collection<int, array{signal_name: string}>  $signals  every one of the subject's
-     *                                                                buffered rows matching this
-     *                                                                property's signal name,
-     *                                                                flushed included (D-10) --
-     *                                                                `RollUpCalculator` never
-     *                                                                filters by `flushed_at`
+     * `RollUpCalculator::compute()` (06-04) is the only constructor of this `Collection`, so this
+     * shape is that class's own row shape, verbatim -- see its `SignalRow` phpstan-type. Every one
+     * of the signals `compute()` was called with, flushed included (D-10, `RollUpCalculator` never
+     * reads `flushed_at`); scoping the call to one signal name is the CALLER's responsibility, not
+     * something this interface's implementation should assume happened.
+     *
+     * @param  Collection<int, array{
+     *     id: int,
+     *     signal_name: string,
+     *     properties: array<string, mixed>,
+     *     occurred_at: \DateTimeInterface,
+     *     flushed_at: ?\DateTimeInterface,
+     * }>  $signals
      */
     public function __invoke(Collection $signals): mixed;
 }

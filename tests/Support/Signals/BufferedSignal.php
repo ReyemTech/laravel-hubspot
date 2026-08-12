@@ -22,6 +22,9 @@ use DateTimeImmutable;
  */
 final readonly class BufferedSignal
 {
+    /**
+     * @param  array<string, mixed>  $properties
+     */
     public function __construct(
         public int $id,
         public string $signalName,

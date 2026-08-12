@@ -27,6 +27,15 @@ mutates(RollUpCalculator::class);
  */
 final class RecordingSignalCalculator implements SignalCalculator
 {
+    /**
+     * @var Collection<int, array{
+     *     id: int,
+     *     signal_name: string,
+     *     properties: array<string, mixed>,
+     *     occurred_at: \DateTimeInterface,
+     *     flushed_at: ?\DateTimeInterface,
+     * }>|null
+     */
     public static ?Collection $received = null;
 
     public function __invoke(Collection $signals): mixed

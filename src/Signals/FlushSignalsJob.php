@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Signals;
 
+use DateTimeImmutable;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Connection;
 use Illuminate\Queue\InteractsWithQueue;
@@ -50,12 +50,15 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
  * functionality gap, not an architectural one, and is left unimplemented rather than half-answered
  * with a docblock claiming a safety property that is not yet true.
  *
- * ## Reads `hubspot.signals.map` directly, ahead of `SignalMap`
+ * ## Rules are resolved per signal name, not once across the whole map (06-04)
  *
- * `Signals\SignalMap` (plan 06-02) does not exist yet. This task reads the raw config array
- * itself, in the minimal shape SIG-03 documents -- `signal name => ['properties' => [property =>
- * verb]]` -- and 06-02 replaces this with `SignalMap::rulesFor()` once boot-time validation exists.
- * Nothing here contradicts that shape; it is a strict subset of it.
+ * `RollUpCalculator::compute()` (06-04) does not filter its `$signals` argument by signal name --
+ * scoping a call to one signal's rows is the CALLER's responsibility, mirroring
+ * `SignalMap::rulesFor()`'s own per-name scope. This job therefore calls `compute()` once PER
+ * signal name present in a subject's buffered rows, filtering those rows to that name and reading
+ * that name's properties through `SignalMap::rulesFor()`, then merges the per-name property arrays
+ * into the one combined array a subject's `upsertMany()` record carries. A subject that fired two
+ * different signal names contributes properties from both in the same write.
  */
 final class FlushSignalsJob implements ShouldQueue
 {
@@ -78,13 +81,11 @@ final class FlushSignalsJob implements ShouldQueue
         BoundModelReader $bindings,
         ObjectGatewayContract $gateway,
         RollUpCalculator $calculator,
-        ConfigRepository $config,
+        SignalMap $map,
     ): void {
         if ($this->subjects === []) {
             return;
         }
-
-        $rules = self::rulesFromMap($config);
 
         /**
          * @var array<string, array{
@@ -99,19 +100,18 @@ final class FlushSignalsJob implements ShouldQueue
         foreach ($this->subjects as ['subjectType' => $subjectType, 'subjectId' => $subjectId]) {
             $binding = $bindings->for($subjectType);
 
-            /** @var list<array{id: int, signal_name: string}> $rows */
+            /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}> $rows */
             $rows = $connection->table('hubspot_signals')
                 ->where('subject_type', $subjectType)
                 ->where('subject_id', $subjectId)
-                ->get(['id', 'signal_name'])
-                ->map(static fn (object $row): array => (array) $row)
+                ->get(['id', 'signal_name', 'properties', 'occurred_at', 'flushed_at'])
                 ->all();
 
             if ($rows === []) {
                 continue;
             }
 
-            $properties = $calculator->compute($rows, $rules);
+            $properties = self::computeAcrossSignalNames($calculator, $map, $rows);
 
             if ($properties === []) {
                 continue;
@@ -129,7 +129,7 @@ final class FlushSignalsJob implements ShouldQueue
             $groups[$groupKey]['records'][] = ['id' => $subjectId, 'properties' => $properties];
 
             foreach ($rows as $row) {
-                $groups[$groupKey]['rowIds'][] = $row['id'];
+                $groups[$groupKey]['rowIds'][] = $row->id;
             }
         }
 
@@ -168,24 +168,76 @@ final class FlushSignalsJob implements ShouldQueue
     }
 
     /**
-     * @return array<string, array{signal: string, verb: string}>
+     * `RollUpCalculator::compute()` (06-04) does not filter by signal name, so this method calls it
+     * once per signal name present in `$rows`, each time with that name's own rows and that name's
+     * own `SignalMap::rulesFor()` properties, merging the per-name results into one property array
+     * for the subject's single `upsertMany()` record. Where two signal names both declare the same
+     * HubSpot property, the first one processed (declared array order in `SignalMap::names()`)
+     * wins -- `SignalMap` does not police cross-signal property collisions, so this is the same
+     * "first configured wins" precedent the array union operator gives for free, not a new rule
+     * invented here.
+     *
+     * @param  list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string}>  $rows
+     * @return array<string, string>
      */
-    private static function rulesFromMap(ConfigRepository $config): array
+    private static function computeAcrossSignalNames(RollUpCalculator $calculator, SignalMap $map, array $rows): array
     {
-        /** @var array<string, array{properties?: array<string, string>}> $map */
-        $map = $config->get('hubspot.signals.map', []);
+        $properties = [];
 
-        $rules = [];
+        foreach ($map->names() as $signalName) {
+            $matching = array_values(array_filter(
+                $rows,
+                static fn (object $row): bool => $row->signal_name === $signalName,
+            ));
 
-        foreach ($map as $signalName => $entry) {
-            /** @var array<string, string> $properties */
-            $properties = $entry['properties'] ?? [];
-
-            foreach ($properties as $property => $verb) {
-                $rules[$property] = ['signal' => (string) $signalName, 'verb' => $verb];
+            if ($matching === []) {
+                continue;
             }
+
+            $rules = $map->rulesFor($signalName);
+
+            $signals = array_map(static fn (object $row): array => [
+                'id' => $row->id,
+                'signal_name' => $row->signal_name,
+                'properties' => self::decodeProperties($row->properties),
+                'occurred_at' => new DateTimeImmutable($row->occurred_at),
+                'flushed_at' => $row->flushed_at === null ? null : new DateTimeImmutable($row->flushed_at),
+            ], $matching);
+
+            // + (array union), not array_merge(): a later signal name must not clobber an earlier
+            // one's property value for the same key, only fill in keys the earlier one left unset.
+            $properties += $calculator->compute($signals, $rules);
         }
 
-        return $rules;
+        return $properties;
+    }
+
+    /**
+     * `SignalRecorder::record()` always writes a JSON object (`json_encode([])` is `'[]'`, never
+     * `'null'`), but this reads a column the database itself could still hand back as `null` or a
+     * malformed value from outside this package's control -- decoded defensively rather than
+     * trusted blind.
+     *
+     * @return array<string, mixed>
+     */
+    private static function decodeProperties(?string $json): array
+    {
+        /** @var mixed $decoded */
+        $decoded = json_decode($json ?? '[]', true);
+
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        // json_decode() auto-casts a numeric-looking JSON object key to an int array key -- a
+        // HubSpot property name is never purely numeric, but this normalises the key back to a
+        // string explicitly rather than leaning on that assumption.
+        $properties = [];
+
+        foreach ($decoded as $key => $value) {
+            $properties[(string) $key] = $value;
+        }
+
+        return $properties;
     }
 }
