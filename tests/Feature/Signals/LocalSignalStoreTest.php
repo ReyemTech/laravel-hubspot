@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use InvalidArgumentException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\ServiceProvider;
 use ReyemTech\Hubspot\Signals\Stores\LocalSignalStore;
@@ -299,5 +300,118 @@ final class LocalSignalStoreTest extends TestCase
             '{"source":"ad"}',
             DB::table('hubspot_signal_trail')->where('hubspot_signal_id', 2)->value('properties'),
         );
+    }
+
+    /**
+     * Driver-agreement cases (Task 3, PR #71's recorded lesson): a column constraint that behaves
+     * three ways across SQLite, MySQL and PostgreSQL is a defect only one leg of CI reports. Every
+     * check below is enforced by the store BEFORE the INSERT, so the same correctly-formed call
+     * behaves identically regardless of which driver is running underneath it.
+     */
+    public function test_a_signal_id_at_the_top_of_the_supported_range_appends_and_reads_back_unchanged(): void
+    {
+        $this->migrate();
+
+        // PHP_INT_MAX, not the true unsigned-bigint ceiling (18446744073709551615): a
+        // hubspot_signals.id is an auto-increment bigint PK that can never practically reach that
+        // value, and PHP has no native way to hold an integer past its own 64-bit signed range
+        // without falling back to a string -- this is the top of what this store can ever actually
+        // be asked to append.
+        $topOfRange = PHP_INT_MAX;
+
+        $this->store()->append($topOfRange, 'App\\Models\\Contact', '42', 'pricing_page_viewed', [], Carbon::now());
+
+        self::assertSame(
+            (string) $topOfRange,
+            (string) DB::table('hubspot_signal_trail')->value('hubspot_signal_id'),
+        );
+    }
+
+    public function test_a_negative_signal_id_is_refused_before_the_insert(): void
+    {
+        $this->migrate();
+
+        try {
+            $this->store()->append(-1, 'App\\Models\\Contact', '42', 'pricing_page_viewed', [], Carbon::now());
+
+            self::fail('Expected an InvalidArgumentException for a negative hubspot_signal_id.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('-1', $exception->getMessage());
+        }
+
+        self::assertSame(0, DB::table('hubspot_signal_trail')->count());
+    }
+
+    public function test_a_subject_id_at_exactly_the_column_width_appends(): void
+    {
+        $this->migrate();
+
+        $subjectId = str_repeat('9', 191);
+
+        $this->store()->append(1, 'App\\Models\\Contact', $subjectId, 'pricing_page_viewed', [], Carbon::now());
+
+        self::assertSame(1, DB::table('hubspot_signal_trail')->where('subject_id', $subjectId)->count());
+    }
+
+    public function test_a_subject_id_one_byte_over_the_column_width_is_refused_before_the_insert(): void
+    {
+        $this->migrate();
+
+        $subjectId = str_repeat('9', 192);
+
+        try {
+            $this->store()->append(1, 'App\\Models\\Contact', $subjectId, 'pricing_page_viewed', [], Carbon::now());
+
+            self::fail('Expected an InvalidArgumentException for an over-width subjectId.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('192', $exception->getMessage());
+        }
+
+        self::assertSame(0, DB::table('hubspot_signal_trail')->count());
+    }
+
+    public function test_a_nul_byte_in_subject_type_is_refused_before_the_insert(): void
+    {
+        $this->migrate();
+
+        try {
+            $this->store()->append(1, "App\\Models\\Contact\0evil", '42', 'pricing_page_viewed', [], Carbon::now());
+
+            self::fail('Expected an InvalidArgumentException for a NUL byte in subjectType.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('subjectType', $exception->getMessage());
+        }
+
+        self::assertSame(0, DB::table('hubspot_signal_trail')->count());
+    }
+
+    public function test_a_nul_byte_in_subject_id_is_refused_before_the_insert(): void
+    {
+        $this->migrate();
+
+        try {
+            $this->store()->append(1, 'App\\Models\\Contact', "42\0evil", 'pricing_page_viewed', [], Carbon::now());
+
+            self::fail('Expected an InvalidArgumentException for a NUL byte in subjectId.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('subjectId', $exception->getMessage());
+        }
+
+        self::assertSame(0, DB::table('hubspot_signal_trail')->count());
+    }
+
+    public function test_a_nul_byte_in_signal_name_is_refused_before_the_insert(): void
+    {
+        $this->migrate();
+
+        try {
+            $this->store()->append(1, 'App\\Models\\Contact', '42', "pricing_page_viewed\0evil", [], Carbon::now());
+
+            self::fail('Expected an InvalidArgumentException for a NUL byte in signalName.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('signalName', $exception->getMessage());
+        }
+
+        self::assertSame(0, DB::table('hubspot_signal_trail')->count());
     }
 }
