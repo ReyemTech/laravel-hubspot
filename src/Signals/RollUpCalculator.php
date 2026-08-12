@@ -7,6 +7,7 @@ namespace ReyemTech\Hubspot\Signals;
 use DateTimeInterface;
 use Illuminate\Support\Collection;
 use LogicException;
+use OverflowException;
 use UnexpectedValueException;
 
 /**
@@ -68,6 +69,14 @@ final class RollUpCalculator
         if ($signals === []) {
             return [];
         }
+
+        // The tie-break rule: two signals sharing one `occurred_at` are ordered by their own
+        // `id` -- ascending here, so `first_wins` (which keeps the first match it sees) resolves
+        // to the LOWEST id and `last_wins` (which keeps the last match it sees) resolves to the
+        // HIGHEST id. Chosen because it is total, stable, and already stored -- no new column, no
+        // clock dependence, and two ids can never tie a second time. Sorted once, up front, so
+        // every verb -- and the invokable Collection -- sees a caller-order-independent sequence.
+        usort($signals, static fn (array $a, array $b): int => ($a['occurred_at'] <=> $b['occurred_at']) ?: ($a['id'] <=> $b['id']));
 
         $result = [];
 
@@ -208,7 +217,45 @@ final class RollUpCalculator
             $total += (float) $value;
         }
 
-        return $found ? (string) $total : null;
+        if (! $found) {
+            return null;
+        }
+
+        // 9_007_199_254_740_992.0 is 2**53, the largest integer a 64-bit float represents
+        // exactly -- written as a literal, not a named constant, so `pest --mutate` can attribute
+        // a covering test (Test 21) to a mutation of this comparison; a `const` declaration has no
+        // executed line for coverage to attribute one to. Beyond it, both the numeric-string-to-
+        // float cast above and the addition itself can silently round -- refused here rather than
+        // writing a silently-wrong absolute value to HubSpot.
+        if (! is_finite($total) || abs($total) >= 9_007_199_254_740_992.0) {
+            throw new OverflowException(sprintf(
+                'RollUpCalculator cannot sum property "%s": the total %s cannot be represented as a '
+                .'64-bit float without losing precision (it exceeds 2**53). Summing it here would '
+                .'write a silently-rounded absolute value to HubSpot.',
+                $field,
+                $total,
+            ));
+        }
+
+        return self::formatDecimal($total);
+    }
+
+    /**
+     * PHP's default float-to-string cast switches to scientific notation once a value exceeds
+     * `precision` (14 significant digits, the ini default) -- `(string) 1.0E+15 === "1.0E+15"`.
+     * `sprintf('%F', ...)`, unlike `(string)`, never does that regardless of magnitude, which is
+     * why every branch of this method builds the string through it rather than a bare cast.
+     *
+     * Six decimal places is this class's own chosen precision floor for a fractional total, not
+     * something the merge-rule grammar or HubSpot's API dictates -- trailing zeros (and a trailing
+     * decimal point, if nothing survives after them) are trimmed by walking in from the right,
+     * which stops the moment it meets the decimal point rather than eating into the integer part's
+     * own trailing zeros (`"1000000000000000.000000"` -> `"1000000000000000."` -> stops -- never
+     * `"1"`).
+     */
+    private static function formatDecimal(float $total): string
+    {
+        return rtrim(rtrim(sprintf('%.6F', $total), '0'), '.');
     }
 
     /**
