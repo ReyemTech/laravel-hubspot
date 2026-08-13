@@ -85,6 +85,14 @@ final class SignalReconciler
      * the first one is enough. A non-empty persisted value wins over the buffer's own, mirroring
      * `reconcileChunk()`'s identical "non-empty wins" precedence for the live read.
      *
+     * **Does not share `reconcileChunk()`'s absent-vs-empty conflation (checked, 2026-08-12
+     * review).** The gate above is `alreadyReconciled()`, which is `reconciled_at !== null` --
+     * and `reconcileChunk()` now sets `reconciled_at` ONLY for a subject its own read confirmed.
+     * An unconfirmed subject therefore never has `reconciled_at` set, `alreadyReconciled()` stays
+     * false for it, and this method returns `$properties` unchanged on the line just below --
+     * there is no `reconciled_properties` value here that could ever have come from an
+     * unconfirmed read to conflate with a confirmed-empty one.
+     *
      * @param  list<SubjectRow>  $rows
      * @param  array<string, string>  $properties
      * @return array<string, string>
@@ -153,7 +161,26 @@ final class SignalReconciler
      * -- a value already recorded upstream is by definition earlier than anything this buffer saw.
      * `reconciled_at` is set on the SAME row-id list the flush's own `flushed_at` update uses,
      * immediately once the read returns -- NOT gated on the group's write succeeding, so "at most
-     * one read per subject, ever" holds even when the job throws before any write is attempted.
+     * one read per subject, ever" holds even when the job throws before any write is attempted --
+     * but only for a subject THIS read actually confirmed; see below.
+     *
+     * **"Absent from the read" and "confirmed empty" are two different facts, tracked
+     * separately (P1, 2026-08-12 review).** A subject can be missing from `$found` for two
+     * reasons -- a 207 partial failure dropped its record entirely, or the record came back but
+     * carried no value for `$group['idProperty']` to correlate it with (handled just below, where
+     * `$portalIdValue === null` skips the record out of `$found`). Both are the SAME fact from this
+     * method's point of view: the read never established what the portal holds for that subject.
+     * That is not the same fact as "the read confirmed the subject and the property is genuinely
+     * empty" -- and the two demand opposite handling. Collapsing them through `$found[...] ?? ''`
+     * (the bug) let an unconfirmed subject's buffer value flow straight into the write, silently
+     * overwriting a manually curated `first_wins:*|reconcile` value with no way for a later flush
+     * to notice and correct it, because the SAME collapse also set `reconciled_at` unconditionally
+     * -- `alreadyReconciled()` then swallowed every future read attempt for that subject, forever.
+     * The fix is `array_key_exists($subject['id'], $found)`: a subject NOT in `$found` has every
+     * reconcile property stripped from what gets sent (never written over the portal's value) and
+     * is left unreconciled (so the next flush's read gets a fair shot); a subject IN `$found` keeps
+     * today's behaviour exactly -- a genuinely empty property there means the buffer wins AND the
+     * subject is marked reconciled, because the read did establish the truth for it.
      *
      * @param  GroupShape  $group
      * @param  array<string, SubjectEntry>  $chunk
@@ -199,6 +226,37 @@ final class SignalReconciler
         }
 
         foreach ($chunk as $idValue => $subject) {
+            // `array_key_exists()`, never `$found[...] ?? ''` -- the P1 this method exists to not
+            // repeat (2026-08-12 review). `?? ''` cannot tell "this subject was never in the read
+            // response" (a 207 partial failure dropped it, or its record carried no echoed id
+            // property to correlate on -- both land here as a missing $found key) from "the read
+            // confirmed this subject and HubSpot genuinely holds nothing for the property". Those
+            // two states demand OPPOSITE handling: unknown must never overwrite a manually curated
+            // portal value, confirmed-empty is exactly when the buffer's own value is correct to
+            // send.
+            $confirmed = array_key_exists($subject['id'], $found);
+
+            if (! $confirmed) {
+                // UNKNOWN -- not empty. Every reconcile property this subject was carrying is
+                // stripped out of what gets sent to upsertMany() below (see sendGroup()), so a
+                // curated value already on the portal record is never silently overwritten by a
+                // roll-up this read never actually checked against it. reconciled_at is left
+                // untouched (no update() at all for this subject) so `alreadyReconciled()` stays
+                // false and the NEXT flush's read gets a fair shot at actually confirming it --
+                // marking it reconciled here, as the previous code did unconditionally, would have
+                // swallowed every future attempt via candidateProperties() returning [].
+                $properties = $subject['properties'];
+
+                foreach ($subject['reconcileProperties'] as $property) {
+                    unset($properties[$property]);
+                }
+
+                $subject['properties'] = $properties;
+                $group['subjects'][$idValue] = $subject;
+
+                continue;
+            }
+
             $properties = $subject['properties'];
             // Exactly what THIS read confirmed -- never $properties, which also carries buffer-only
             // keys the read never touched. Persisted separately so a later retry's merge
@@ -207,6 +265,10 @@ final class SignalReconciler
             $persisted = [];
 
             foreach ($subject['reconcileProperties'] as $property) {
+                // $subject is CONFIRMED here (the guard above already handled the unconfirmed
+                // case), so a missing or empty value at this key is HubSpot genuinely holding
+                // nothing for the property -- never "we don't know" -- and the buffer's own value
+                // is correct to keep standing.
                 $portalValue = $found[$subject['id']][$property] ?? '';
 
                 if ($portalValue !== '') {
@@ -227,6 +289,8 @@ final class SignalReconciler
             // review) -- the flag alone made the READ durable; this makes the VALUE it returned
             // durable too, so a write that fails after this point still has something for the next
             // flush's buildGroups() to merge back in instead of recomputing from the buffer alone.
+            // Only reached for a CONFIRMED subject -- an unconfirmed one continue()s above and
+            // never runs this update(), which is what keeps it unreconciled for the next retry.
             $connection->table('hubspot_signals')
                 ->whereIn('id', $subject['rowIds'])
                 ->update([

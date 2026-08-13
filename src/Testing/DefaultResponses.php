@@ -116,6 +116,17 @@ final class DefaultResponses
      * status code matters: batch create answers 201 and the rest answer 200, and the SDK's
      * generated switch deserialises on exactly that — a uniform 200 would push every batch create
      * into the `default` branch and back out as `Model\Error`.
+     *
+     * **A batch READ's own `inputs` carry only `{id}`, never a per-input `properties` map** — that
+     * shape belongs to create/update/upsert alone (`BatchReadInputSimplePublicObjectId` puts the
+     * requested property NAMES in one top-level `properties` list instead). Echoing
+     * `$input['properties'] ?? []` for a read therefore always answers `[]`, however real HubSpot
+     * never would: the id-property lookup succeeded BECAUSE that value is a genuine property on
+     * the record, so a real response echoes it back under `properties[idProperty]` whenever
+     * `idProperty` was requested — `Signals\SignalReconciler` folds it into `requestedProperties`
+     * for exactly that reason. Synthesised here from the request's own top-level `idProperty` +
+     * each input's own `id`, restricted to the `/batch/read` route so create/update/upsert (which
+     * already carry real per-input properties to echo) are untouched.
      */
     private function batch(RequestInterface $request): ResponseInterface
     {
@@ -125,15 +136,24 @@ final class DefaultResponses
             return new Response(204);
         }
 
-        /** @var array{inputs?: list<array{id?: string, properties?: array<string, mixed>}>}|null $submitted */
+        /** @var array{inputs?: list<array{id?: string, properties?: array<string, mixed>}>, idProperty?: string}|null $submitted */
         $submitted = json_decode((string) $request->getBody(), true);
+
+        $isRead = str_ends_with($path, '/batch/read');
+        $idProperty = $isRead ? ($submitted['idProperty'] ?? null) : null;
 
         $results = [];
 
         foreach ($submitted['inputs'] ?? [] as $input) {
+            $properties = $input['properties'] ?? [];
+
+            if ($idProperty !== null && isset($input['id'])) {
+                $properties[$idProperty] = $input['id'];
+            }
+
             $results[] = [
                 'id' => $input['id'] ?? (string) ++$this->idCounter,
-                'properties' => $input['properties'] ?? [],
+                'properties' => $properties,
                 ...$this->timestamps(),
             ];
         }
