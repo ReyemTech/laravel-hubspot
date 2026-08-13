@@ -100,16 +100,31 @@ final class SignalRecorder
     }
 
     /**
-     * Refuses a value this table cannot hold rather than truncating it, mirroring
-     * `Webhooks\NormalizedWebhookEvent::bounded()`'s identical reasoning: a truncated `visitor_id`
-     * could silently alias two distinct visitors onto the same buffer identity, and the database
-     * rejecting an over-long value later is the same acknowledged-then-lost failure either way.
+     * Refuses a value this table cannot hold rather than truncating it, and refuses a NUL byte
+     * outright -- mirrors `Webhooks\NormalizedWebhookEvent::bounded()`'s and
+     * `Signals\Stores\LocalSignalStore::bounded()`'s identical reasoning (P2, codex review, fixed
+     * 2026-08-12). A truncated `visitor_id` could silently alias two distinct visitors onto the
+     * same buffer identity, and the database rejecting an over-long value later is the same
+     * acknowledged-then-lost failure either way. A NUL byte is refused for the same shape of
+     * reason: PostgreSQL refuses one in a `text`/`varchar` value outright, so an accepted one is
+     * silently driver-dependent -- accepted by MySQL/SQLite, rejected by PostgreSQL -- and either
+     * way it is an identifier this buffer correlates rows by, so a byte that can make two distinct
+     * values collide has no more business here than an over-long one does.
      *
      * `strlen()`, not `mb_strlen()` -- the column width is a BYTE width (the MySQL-safe VARCHAR(191)
      * ceiling under `utf8mb4`), not a character count.
      */
     private static function bounded(string $value, string $field): void
     {
+        if (str_contains($value, "\0")) {
+            throw new InvalidArgumentException(sprintf(
+                'A signal\'s "%s" contains a NUL byte, which PostgreSQL refuses in a text/varchar '
+                .'value outright. Rejecting it here rather than letting the database reject it '
+                .'after the caller believes the call succeeded.',
+                $field,
+            ));
+        }
+
         if (strlen($value) > self::MAX_COLUMN_LENGTH) {
             throw new InvalidArgumentException(sprintf(
                 'A signal\'s "%s" is %d bytes, which exceeds the %d-byte column width '
