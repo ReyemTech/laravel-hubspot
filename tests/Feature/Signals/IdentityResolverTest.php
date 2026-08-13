@@ -19,11 +19,20 @@ use ReyemTech\Hubspot\Tests\Support\Signals\SecondSignalSubject;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalsTestCase;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 
+mutates(IdentityResolver::class);
+
 /**
  * `Hubspot::identify()`'s completed behaviour (06-03-PLAN.md Task 2): D-02's blank-`id_property`
  * refusal, D-09's asymmetric rebind refusal, and the multi-visitor-to-one-subject backfill D-09
  * requires. The happy-path tracer tests already live in `SignalTracerTest`; this file covers what
  * 06-01 deliberately left unimplemented.
+ *
+ * Missing its own `mutates()` declaration until now (PR #82 review's mutation gate): every test
+ * below already exercised `IdentityResolver` directly, but a scoped `--class=IdentityResolver`
+ * mutation run only associates tests a file DECLARES coverage for -- this file exercised the class
+ * without ever declaring it, so a scoped run silently mutated it against `SignalTracerTest`'s
+ * happy-path coverage alone, missing every D-02/D-09 refusal this file is the one that actually
+ * proves.
  */
 final class IdentityResolverTest extends SignalsTestCase
 {
@@ -236,13 +245,19 @@ final class IdentityResolverTest extends SignalsTestCase
         self::assertNull($row->subject_type);
     }
 
+    /**
+     * Saved (a real primary key) for the same reason the null-value test above is: an unsaved
+     * `SignalSubject` would trip `refuseUnsavedSubject()` first (PR #82 review), never reaching
+     * D-02's own blank-value branch this test exists to prove.
+     */
     public function test_an_empty_or_whitespace_only_id_property_value_throws_and_a_single_character_is_accepted(): void
     {
         Hubspot::fake();
         Bus::fake();
 
         foreach (['', '   '] as $blankValue) {
-            $subject = new SignalSubject(['email' => $blankValue]);
+            $subject = SignalSubject::query()->create(['email' => 'placeholder@example.com']);
+            $subject->setAttribute('email', $blankValue);
 
             try {
                 Hubspot::identify('visitor-boundary', $subject);
