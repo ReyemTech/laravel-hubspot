@@ -129,10 +129,14 @@ package's own command:
 php artisan hubspot:signals:flush
 ```
 
-Selects every identified subject (`subject_type` set) carrying at least one unflushed row,
-batches them at 100 subjects per dispatch, and queues one `FlushSignalsJob` per batch. The package
-registers **no** schedule of its own (D-04) — add one line in your own `routes/console.php` or
-`bootstrap/app.php`'s `withSchedule()`:
+First sweeps every buffered signal recorded **after** an `identify()` call for its own visitor id —
+`Hubspot::signal()` always buffers anonymous, even for an already-identified visitor, because
+buffering stays a single write with no lookup (SIG-02); this sweep is what keeps that signal from
+being stranded until the application happens to call `identify()` again. Then selects every
+identified subject (`subject_type` set, straggler sweep included) carrying at least one unflushed
+row, batches them at 100 subjects per dispatch, and queues one `FlushSignalsJob` per batch. The
+package registers **no** schedule of its own (D-04) — add one line in your own
+`routes/console.php` or `bootstrap/app.php`'s `withSchedule()`:
 
 ```php
 Schedule::command('hubspot:signals:flush')->everyFiveMinutes()->withoutOverlapping();

@@ -127,13 +127,12 @@ differs.
 
 Full-branch CLI review (not the GitHub bot) run per this task's own instructions after committing
 the rebind-race and NUL-byte fixes. Both findings below are genuinely pre-existing -- neither touches
-a line this session's diff added or changed -- and are logged rather than fixed, per the
-scope-boundary rule. **Per `CLAUDE.md`'s review policy a P1 blocks merge**; the first finding below
-is NOT closed and needs an explicit disposition (fix via a follow-up plan, or accept and document)
-before this branch merges -- it is recorded here rather than silently fixed because closing it
-correctly is an architectural decision, not a bug fix (Rule 4).
+a line this session's diff added or changed -- and were logged rather than fixed on that pass, per
+the scope-boundary rule. **The first finding (`SignalRecorder.php:80-82`) is now resolved** -- see
+its own entry below for the disposition, the commit, and the design reasoning. The second
+(`FlushSignalsJob.php:471-475`) remains open.
 
-- **`src/Signals/SignalRecorder.php:80-82` (P1, codex review, out of scope for this diff, UNRESOLVED)**
+- **`src/Signals/SignalRecorder.php:80-82` (P1, codex review, out of scope for this diff)**
   -- `record()`'s INSERT always writes `subject_type`/`subject_id` as `null`, regardless of whether
   `visitor_id` already carries an existing `identify()` binding. Verified true against the current
   code and against `README.md`'s own "Selects every identified subject (`subject_type` set)" wording
@@ -142,15 +141,25 @@ correctly is an architectural decision, not a bug fix (Rule 4).
   anonymous and never flushed unless the application calls `identify()` again for that visitor --
   D-09's docs never state this as a requirement, and neither does the phase's `README.md` signals
   section. This is genuinely undiscussed in `06-CONTEXT.md`'s decisions or deferred ideas.
-  **Why this is not fixed here rather than merely logged:** closing it correctly requires a design
-  decision this task has no mandate to make alone (Rule 4, architectural change) -- candidates
-  include (a) having `record()` query `hubspot_signals` for an existing binding on every call and
-  auto-rebind new rows (adds a query to SIG-02's currently zero-DB-lookup happy path), (b)
+  **Resolved 2026-08-13** (owner decision): option (c) from the three candidates below, implemented
+  as `FlushSignalsCommand::resolveStragglers()` -- the scheduled flush sweeps every anonymous row
+  whose `visitor_id` already carries a binding, using `identify()`'s own conditional-`UPDATE` shape,
+  BEFORE `pendingSubjects()` runs (the subject is otherwise invisible to that query once its earlier
+  rows are already flushed). `record()` itself is untouched -- SIG-02's single zero-read write stays
+  exactly as it was, and resolving at flush time closes the race a record()-time lookup could not:
+  flush-time resolution always runs strictly after any concurrent `identify()`'s own write has
+  committed. `identify()`'s own backfill is unchanged and remains the "bind now and flush now" path;
+  the sweep is the race-free backstop, not a replacement for it -- see
+  `FlushSignalsCommand.php`'s own class docblock for the full reasoning, including why the two
+  writers are deliberately not consolidated. `README.md`'s wording above was corrected to describe
+  the sweep. See test coverage in `FlushSignalsCommandTest.php` (the four straggler-sweep tests).
+  **Original candidates considered** -- kept here for the record: (a) having `record()` query
+  `hubspot_signals` for an existing binding on every call and auto-rebind new rows (rejected: adds a
+  query to SIG-02's currently zero-DB-lookup happy path, and does not close the race either -- a
+  concurrent `identify()` can still land in the gap between the lookup and the write); (b)
   documenting that an app must re-call `identify()` on every signal after the first for an identified
-  visitor, or (c) having `hubspot:signals:flush` additionally sweep anonymous rows whose `visitor_id`
-  matches an already-identified visitor elsewhere in the buffer. Each has different performance,
-  correctness and API-shape consequences that were not discussed when D-01/D-09 were decided.
-  Surfaced explicitly for a human decision rather than silently dropped or silently auto-fixed.
+  visitor (rejected: an undocumented-until-now, easy-to-miss operational burden, and the whole reason
+  this was a P1); (c) the flush sweep -- chosen.
 
 - **`src/Signals/FlushSignalsJob.php:471-475` (P2, codex review, out of scope for this diff)** --
   `computeAcrossSignalNames()` iterates the CURRENTLY CONFIGURED `$map->names()` and matches buffered
