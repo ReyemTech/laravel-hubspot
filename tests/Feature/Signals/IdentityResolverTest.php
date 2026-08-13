@@ -201,6 +201,34 @@ final class IdentityResolverTest extends SignalsTestCase
         self::assertNull($row->subject_type);
     }
 
+    /**
+     * The same family as D-02, for the same reason: `identify()` issues no HTTP, so refusing an
+     * unsaved subject here is cheap, and the alternative -- binding buffered rows to `subject_id`
+     * `''`, the string `getKey()` casts a null primary key to -- strands them permanently, since no
+     * real subject will ever carry that id. `email` is deliberately non-blank here so D-02's own
+     * check does not fire first; this test isolates the missing-primary-key refusal.
+     */
+    public function test_an_unsaved_subject_with_no_primary_key_throws_and_mutates_no_row(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-unsaved');
+        $subject = new SignalSubject(['email' => 'unsaved@example.com']); // never ->save()'d.
+
+        try {
+            Hubspot::identify('visitor-unsaved', $subject);
+
+            self::fail('Expected a SignalException for an unsaved subject with no primary key.');
+        } catch (SignalException $exception) {
+            self::assertStringContainsString(SignalSubject::class, $exception->getMessage());
+        }
+
+        $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-unsaved')->first();
+        self::assertNotNull($row);
+        self::assertNull($row->subject_type);
+    }
+
     public function test_an_empty_or_whitespace_only_id_property_value_throws_and_a_single_character_is_accepted(): void
     {
         Hubspot::fake();

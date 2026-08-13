@@ -226,6 +226,69 @@ final class FlushReconcileTest extends SignalsTestCase
         );
     }
 
+    /**
+     * The P1 this test isolates: the read that ran before the failed write is durable
+     * (`reconciled_at`), but until the fix, the VALUE it read was in-memory only. A retry that
+     * recomputes from the buffer alone (D-40) then overwrites the portal value permanently -- the
+     * exact loss `reconcile` exists to prevent. A second, different buffered value is inserted
+     * between the failed attempt and the retry so the retry's recompute has something new to prefer
+     * over the read, proving the fix is the read surviving, not merely a stale cache hit.
+     */
+    public function test_a_retry_after_the_read_but_before_the_write_still_writes_the_reads_value(): void
+    {
+        $fake = Hubspot::fake([
+            'contacts' => Hubspot::response([
+                'status' => 'COMPLETE',
+                'results' => [
+                    ['id' => '902', 'properties' => ['email' => 'retry-durability@example.com', 'first_touch_source' => 'portal-value']],
+                ],
+            ]),
+        ]);
+        $realGateway = Hubspot::objects();
+
+        $subject = SignalSubject::query()->create(['email' => 'retry-durability@example.com']);
+        $this->insertBoundSignal('visitor-retry-durability', $subject, 'pricing_page_viewed', ['source' => 'buffer-value-one']);
+
+        app()->instance(ObjectGatewayContract::class, self::throwingOnUpsert($realGateway));
+
+        try {
+            app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+            self::fail('Expected an ApiException.');
+        } catch (ApiException) {
+            // Expected -- the read succeeded (and set reconciled_at) but the write then failed.
+        }
+
+        self::assertNotNull(
+            DB::table('hubspot_signals')->where('visitor_id', 'visitor-retry-durability')->value('reconciled_at'),
+            'The read happened before the write failed, so reconciled_at must already be set.',
+        );
+
+        // A DIFFERENT value buffers between the failed attempt and the retry -- the buffer's own
+        // recompute now disagrees with what the read already confirmed.
+        $this->insertBoundSignal('visitor-retry-durability', $subject, 'pricing_page_viewed', ['source' => 'buffer-value-two']);
+
+        app()->instance(ObjectGatewayContract::class, $realGateway);
+        DB::table('hubspot_signal_flush_claims')
+            ->where('subject_type', SignalSubject::class)
+            ->where('subject_id', (string) $subject->getKey()) // @phpstan-ignore-line cast.string
+            ->update(['claimed_at' => now()->subSeconds(901)]);
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        self::assertSame(
+            1,
+            self::readRequestCount($fake),
+            'The retry must not read a second time -- reconciled_at was already set.',
+        );
+        self::assertSame(
+            'portal-value',
+            self::writtenProperty($fake, 'first_touch_source'),
+            'The retry must write the value the first (and only) read confirmed, not a buffer-only '
+            .'recompute that overwrites it.',
+        );
+    }
+
     // -- Test 8: batching -- ten subjects, one read ----------------------------------------------
 
     public function test_ten_reconciling_subjects_in_one_group_issue_one_read_covering_all_ten(): void
