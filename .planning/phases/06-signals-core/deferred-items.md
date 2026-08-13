@@ -19,14 +19,26 @@ real and not a scoped-run artefact.
    `'updated_at' => Carbon::now()` alongside `subject_type`/`subject_id`; no test asserts
    `updated_at` changed. Removing the array item passes the whole suite.
 
-3. **`src/Signals/SignalReconciler.php:195`** -- `reconcileChunk()`'s correlation loop uses
+3. ~~**`src/Signals/SignalReconciler.php:195`** -- `reconcileChunk()`'s correlation loop uses
    `continue` when a `findMany()` result record carries no echoed id property, to skip just that
-   record. Mutating it to `break` also passes the whole suite: no existing test constructs a batch
-   read response where a record missing the id property is followed by a LATER record that has it,
-   so nothing proves `break` would silently drop every record after the malformed one instead of
-   just the malformed one. This is the one gap of the three with a real (if narrow) production
-   consequence -- a malformed record early in HubSpot's own batch response would silently un-reconcile
-   every subject after it in the same read.
+   record.~~ **Resolved 2026-08-12** (absent-vs-confirmed-empty P1 fix, same file):
+   `test_the_correlation_loop_continues_past_an_uncorrelatable_record_to_the_next_one` in
+   `FlushReconcileAbsenceTest.php` now constructs exactly the two-record response this note asked
+   for and kills the mutant. A sibling `ContinueToBreak` this same fix introduced (the new
+   unconfirmed-subject branch's own `continue`) is killed by
+   `test_the_per_subject_loop_continues_past_a_stripped_unconfirmed_subject_to_the_next_one` in the
+   same file.
+
+## New findings this session (2026-08-12, absent-vs-confirmed-empty P1 fix + its own codex review)
+
+- **`src/Signals/SignalRecorder.php:111-122` (P2, codex review, out of scope for this diff)** --
+  codex review flagged that a caller-supplied visitor id (or mapped signal name) containing a NUL
+  byte is rejected by PostgreSQL's `varchar` insert but silently accepted by MySQL/SQLite, giving
+  driver-dependent behaviour and a late raw-query failure. `SignalRecorder.php` is untouched by
+  this session's diff (`SignalReconciler.php`, `FlushSignalsJob.php`, `Testing/DefaultResponses.php`
+  only) and the finding is unrelated to the absent-vs-empty reconcile distinction this task fixes --
+  logged per the scope-boundary rule rather than fixed here. Suggested fix mirrors the local trail
+  store's existing NUL-byte rejection for its own string columns.
 
 ## Verified equivalent mutants (cannot be killed, no fix applicable)
 
