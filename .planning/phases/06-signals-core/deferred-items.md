@@ -57,6 +57,37 @@ treated as closed just because it is out of scope for this particular task.
   only) and the finding is unrelated to the absent-vs-empty reconcile distinction this task fixes --
   logged per the scope-boundary rule rather than fixed here. Suggested fix mirrors the local trail
   store's existing NUL-byte rejection for its own string columns.
+  **Resolved 2026-08-12**: `IdentityResolver.php`'s P1 rebind race and this P2 were fixed together
+  (`fix(06): close identify()'s rebind race and reject NUL bytes in signal identifiers`). The sweep
+  covered `SignalRecorder::bounded()` (`visitorId`, `signalName`) and the one caller-supplied
+  identifier `IdentityResolver::identify()` itself reads (`visitorId`); `LocalSignalStore::bounded()`
+  already rejected NUL bytes for `subject_type`/`subject_id`/`signal_name` on the trail-append path,
+  so it needed no change. `subject_type`/`subject_id` on the `hubspot_signals` buffer were
+  deliberately left unchecked -- the migration's own docblock records why: both are package-controlled
+  (an `::class` string and a cast primary key), not application-supplied free text -- and an
+  `id_property` VALUE (e.g. a subject's email) never reaches a `hubspot_signals`/`hubspot_signal_trail`
+  column at all; it is sent only to HubSpot's own HTTP API in `FlushSignalsJob`, out of scope for a
+  local NUL-byte defect.
+
+## Pre-existing mutation gaps confirmed during the P1/P2 fix above (2026-08-12)
+
+Re-verified by running `pest --mutate` against the UNFIXED `git show HEAD~2:...` revision of each
+file with its then-current tests, scoped to the single class -- each mutant below was ALREADY
+untested before this session's diff, confirming they are not something the P1/P2 fix introduced or
+regressed. Left unfixed per the scope-boundary rule (pre-existing, unrelated to the two findings this
+session closes).
+
+- **`src/Signals/SignalRecorder.php`** -- `MAX_COLUMN_LENGTH = 191` (the `const` itself, no executed
+  line for `pest --mutate` to attribute coverage to -- the same shape `ServiceProvider::supportedStores()`
+  documents), the `featureEnabled = true` constructor default (mirrors `IdentityResolver.php`'s own
+  documented gap above), every INSERT array item (`subject_type`, `subject_id`, the `occurred_at ??`
+  coalesce, `flushed_at`, `reconciled_at`, `reconciled_properties`, `created_at`), the
+  `recordSignalBuffered(...)`'s `$occurredAt ?? $now` coalesce, and `bounded()`'s LENGTH check
+  (`strlen($value) > self::MAX_COLUMN_LENGTH`, both the `>`/`>=` boundary and its message
+  concatenation) -- no existing test exercises the length-throw path on a value sitting exactly at
+  the 191/192-byte boundary, nor asserts the message's exact wording. `SignalTracerTest`'s
+  `str_repeat('a', 192)` visitor id proves the check fires at all, but 192 is well past the boundary
+  either way, so switching `>` to `>=` changes nothing observable.
 
 ## Verified equivalent mutants (cannot be killed, no fix applicable)
 
