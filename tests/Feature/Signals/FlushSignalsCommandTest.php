@@ -265,4 +265,140 @@ final class FlushSignalsCommandTest extends SignalsTestCase
         Hubspot::assertSynced('contacts', ['pricing_page_views' => '1']);
         self::assertNotNull(DB::table('hubspot_signals')->where('visitor_id', 'visitor-race')->value('flushed_at'));
     }
+
+    // -- Straggler sweep: signals recorded AFTER identify() must not be stranded -----------------
+    //
+    // `SignalRecorder::record()` always writes `subject_type`/`subject_id` as null, even for a
+    // visitor id `identify()` already bound (deferred-items.md, P1, codex review 2026-08-12). Left
+    // unresolved, `pendingSubjects()`'s `WHERE subject_type IS NOT NULL AND flushed_at IS NULL`
+    // never selects a subject whose only unflushed rows are these later, anonymous stragglers --
+    // the subject is never dispatched at all, not merely under-counted. The fix resolves them here,
+    // in the command, before `pendingSubjects()` runs -- see `FlushSignalsCommand::resolveStragglers()`.
+
+    /**
+     * The headline case: a signal recorded AFTER `identify()` for the same, already-bound visitor
+     * is picked up by the NEXT scheduled flush and written -- not stranded until the application
+     * happens to call `identify()` again.
+     */
+    public function test_a_signal_recorded_after_identify_is_swept_by_the_scheduled_flush_and_written(): void
+    {
+        Hubspot::fake();
+
+        $subject = SignalSubject::query()->create(['email' => 'straggler@example.com']);
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-straggler');
+        Hubspot::identify('visitor-straggler', $subject);
+
+        Hubspot::assertRequestCount(1);
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '1']);
+
+        // A LATER signal for the SAME, already-identified visitor -- SignalRecorder::record()
+        // writes it anonymous regardless (the gap this test proves is closed).
+        Hubspot::signal('pricing_page_viewed', 'visitor-straggler');
+
+        $stragglerRow = DB::table('hubspot_signals')
+            ->where('visitor_id', 'visitor-straggler')
+            ->whereNull('subject_type')
+            ->first();
+        self::assertNotNull($stragglerRow, 'Precondition: the later signal is buffered anonymous.');
+
+        $exitCode = Artisan::call('hubspot:signals:flush');
+
+        self::assertSame(Command::SUCCESS, $exitCode);
+        Hubspot::assertRequestCount(2);
+        // D-10: roll-ups compute over ALL rows for the subject, flushed included -- the count
+        // reaches 2, proving the straggler row was actually read by this flush, not merely stamped.
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '2']);
+
+        $resolved = DB::table('hubspot_signals')->where('id', $stragglerRow->id)->first();
+        self::assertNotNull($resolved);
+        self::assertSame(SignalSubject::class, $resolved->subject_type);
+        self::assertSame((string) $subject->getKey(), $resolved->subject_id); // @phpstan-ignore-line cast.string
+        self::assertNotNull($resolved->flushed_at);
+    }
+
+    /**
+     * D-09's asymmetry, negative direction: a visitor id that was NEVER identified stays anonymous
+     * through the sweep -- it must never be merged onto some other subject's binding.
+     */
+    public function test_a_never_identified_visitor_stays_anonymous_and_is_not_swept_into_another_subject(): void
+    {
+        Hubspot::fake();
+
+        $identifiedSubject = SignalSubject::query()->create(['email' => 'identified@example.com']);
+        Hubspot::signal('pricing_page_viewed', 'visitor-identified');
+        Hubspot::identify('visitor-identified', $identifiedSubject);
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-never-identified');
+
+        Artisan::call('hubspot:signals:flush');
+
+        $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-never-identified')->first();
+        self::assertNotNull($row);
+        self::assertNull($row->subject_type);
+        self::assertNull($row->subject_id);
+        self::assertNull($row->flushed_at);
+    }
+
+    /**
+     * D-09's permitted direction: many visitor ids bound to the SAME subject each carry their own
+     * straggler, and the sweep resolves both to that one subject -- never a merge into two.
+     */
+    public function test_two_visitor_ids_bound_to_the_same_subject_both_resolve_their_stragglers(): void
+    {
+        Hubspot::fake();
+
+        $subject = SignalSubject::query()->create(['email' => 'multi-device@example.com']);
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-phone');
+        Hubspot::signal('pricing_page_viewed', 'visitor-laptop');
+        Hubspot::identify('visitor-phone', $subject);
+        Hubspot::identify('visitor-laptop', $subject);
+
+        // A later, straggler signal for EACH already-identified visitor id.
+        Hubspot::signal('pricing_page_viewed', 'visitor-phone');
+        Hubspot::signal('pricing_page_viewed', 'visitor-laptop');
+
+        Artisan::call('hubspot:signals:flush');
+
+        $rows = DB::table('hubspot_signals')
+            ->where('subject_type', SignalSubject::class)
+            ->where('subject_id', (string) $subject->getKey()) // @phpstan-ignore-line cast.string
+            ->get();
+
+        self::assertCount(4, $rows);
+
+        foreach ($rows as $row) {
+            self::assertNotNull($row->flushed_at);
+        }
+
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '4']);
+    }
+
+    /**
+     * D-40's absolute roll-ups made idempotent end to end: a second scheduled flush run, after the
+     * straggler sweep already resolved and flushed everything, issues zero further requests -- it
+     * must not re-sweep, re-dispatch, or double-count.
+     */
+    public function test_running_the_flush_twice_after_a_straggler_sweep_does_not_double_count(): void
+    {
+        Hubspot::fake();
+
+        $subject = SignalSubject::query()->create(['email' => 'idempotent@example.com']);
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-idempotent');
+        Hubspot::identify('visitor-idempotent', $subject);
+        Hubspot::signal('pricing_page_viewed', 'visitor-idempotent');
+
+        Artisan::call('hubspot:signals:flush');
+
+        Hubspot::assertRequestCount(2); // identify()'s own flush (1) + the scheduled sweep's flush (1).
+        Hubspot::assertSynced('contacts', ['pricing_page_views' => '2']);
+
+        Artisan::call('hubspot:signals:flush');
+
+        // Nothing left pending -- both rows are already flushed and no anonymous row remains to
+        // sweep, so the second run issues no further requests at all.
+        Hubspot::assertRequestCount(2);
+    }
 }
