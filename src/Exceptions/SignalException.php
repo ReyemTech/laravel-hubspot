@@ -69,6 +69,26 @@ final class SignalException extends RuntimeException implements HubspotException
     }
 
     /**
+     * `$subject` was never saved, so `getKey()` returns `null` (PR #82 review, closed 2026-08-12).
+     * The same family as D-02 and the same reason: `identify()` issues no HTTP, so refusing it in
+     * the caller's own stack is free, and `(string) null` casting silently to `''` would otherwise
+     * bind every buffered row for the visitor id to a subject id no real subject can ever carry --
+     * not matchable to a real subject later, and not anonymous either.
+     */
+    public static function unsavedSignalSubject(string $subjectType): self
+    {
+        return new self(sprintf(
+            '%s has no primary key value, so Hubspot::identify() cannot bind any buffered row to '
+            .'it -- an unsaved model\'s primary key casts to an empty string, which would silently '
+            .'strand those rows on a subject id no real %s will ever carry. Save %s (so it carries '
+            .'a real primary key) before calling identify().',
+            $subjectType,
+            $subjectType,
+            $subjectType,
+        ));
+    }
+
+    /**
      * The subject's `id_property` value is missing, null, empty or whitespace-only (D-02). Thrown
      * in `identify()`'s OWN caller stack, before any write -- `identify()` issues no HTTP, so this
      * check is free, and the alternative surfaces hours later in a worker log detached from its

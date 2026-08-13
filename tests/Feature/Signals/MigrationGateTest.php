@@ -111,16 +111,23 @@ final class MigrationGateTest extends TestCase
     /**
      * `IdentityResolver::guarded()`'s own missing-table translation (06-03-PLAN.md Task 2),
      * mirroring `test_enabled_signal_with_the_flag_on_and_no_table_names_the_table_and_migrate()`
-     * above exactly. The subject is never persisted -- `identify()`'s D-02 check reads only the
-     * in-memory `id_property` attribute, so no `signal_subjects` table is needed for this failure
-     * to reach the `hubspot_signals` query that actually throws.
+     * above exactly. The subject IS persisted here -- `refuseUnsavedSubject()` (PR #82 review)
+     * now refuses an unsaved model before `guarded()` is ever reached, so this test creates
+     * `signal_subjects` itself and saves the subject to it, isolating what it exists to prove: the
+     * `hubspot_signals` missing-table translation, not the unsaved-subject refusal.
      */
     public function test_enabled_identify_with_the_flag_on_and_no_table_names_the_table_and_migrate(): void
     {
         self::assertTrue(config('hubspot.signals.enabled'));
         self::assertFalse(Schema::hasTable('hubspot_signals'), 'This test is only meaningful before migrating.');
 
-        $subject = new SignalSubject(['email' => 'ada@example.com']);
+        Schema::create('signal_subjects', function (Blueprint $table): void {
+            $table->id();
+            $table->string('email');
+            $table->timestamps();
+        });
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
 
         try {
             $this->identityResolver()->identify('visitor-1', $subject);

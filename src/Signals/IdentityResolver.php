@@ -24,22 +24,27 @@ use ReyemTech\Hubspot\Exceptions\SignalException;
  *    {@see ConfigurationException::unboundSignalSubject()} on a miss (every miss throws rather
  *    than returning null, mirroring `Sync\ModelBindings::for()`'s precedent, Claude's Discretion
  *    06-CONTEXT.md).
- * 2. Read the subject's `id_property` value and refuse it here, in the CALLER's own stack, if it
+ * 2. Refuse an unsaved subject -- `getKey() === null` -- here, in the CALLER's own stack, before
+ *    either its id_property or its primary key is read for anything else. The same family as D-02
+ *    and the same reason: `getKey()` casts a null primary key to `''`, and PHP's own cast makes
+ *    that failure silent -- every buffered row for this visitor id would bind to subject id `''`
+ *    forever, since no real subject ever carries that value (PR #82 review, closed here).
+ * 3. Read the subject's `id_property` value and refuse it here, in the CALLER's own stack, if it
  *    is missing, blank or whitespace-only (D-02). `identify()` issues no HTTP, so this check costs
  *    nothing -- the alternative surfaces hours later in a worker log detached from its cause.
- * 3. Ask whether this visitor id already carries a DIFFERENT subject and refuse the rebind if so
+ * 4. Ask whether this visitor id already carries a DIFFERENT subject and refuse the rebind if so
  *    (D-09, SIG-05).
- * 4. Backfill with ONE conditional `UPDATE ... WHERE visitor_id = ? AND subject_type IS NULL`,
+ * 5. Backfill with ONE conditional `UPDATE ... WHERE visitor_id = ? AND subject_type IS NULL`,
  *    never a read-then-decide-then-write over individual rows -- the same race-avoidance shape
  *    `Webhooks\Stores\DatabaseWebhookEventStore`'s own docblock records for its writes. Two
  *    concurrent identical calls converge on the same outcome because the WHERE clause, not a prior
  *    read, decides which rows are touched.
- * 5. Dispatch `FlushSignalsJob` only when step 4 actually bound at least one row -- a re-bind of an
+ * 6. Dispatch `FlushSignalsJob` only when step 5 actually bound at least one row -- a re-bind of an
  *    already-bound visitor, or a visitor with nothing buffered, dispatches nothing.
  *
  * ## D-09's asymmetry is implemented as exactly ONE directional check
  *
- * Step 3 asks about the VISITOR's existing binding and never about the SUBJECT's existing visitor
+ * Step 4 asks about the VISITOR's existing binding and never about the SUBJECT's existing visitor
  * ids. That is the whole of the asymmetry: many visitor ids may bind to one subject (permitted,
  * and what makes `first_wins` pick the genuinely earliest touch across a person's own devices),
  * while one visitor id may never bind to a second, different subject (refused). Accepted
@@ -84,18 +89,23 @@ final class IdentityResolver
         $binding = $this->bindings->for($subject::class);
 
         $subjectType = $subject::class;
+
+        // Step 2 -- before the primary key is even cast to a string, in the caller's own stack.
+        self::refuseUnsavedSubject($subject, $subjectType);
+
         // getKey() returns mixed; every id in this package's own precedent
         // (SyncHubspotObjectsBatchJob::storeConfirmedRecords()) casts it to string the same way.
+        // Step 2's check above guarantees this is never null here.
         $subjectId = (string) $subject->getKey(); // @phpstan-ignore-line cast.string
 
-        // Step 2 (D-02) -- before any write, in the caller's own stack.
+        // Step 3 (D-02) -- before any write, in the caller's own stack.
         self::refuseBlankIdPropertyValue($subject, $binding->idProperty, $subjectType, $subjectId);
 
         $bound = $this->guarded(function () use ($visitorId, $subjectType, $subjectId): int {
-            // Step 3 (D-09, SIG-05) -- the ONE directional check the asymmetry is built from.
+            // Step 4 (D-09, SIG-05) -- the ONE directional check the asymmetry is built from.
             $this->refuseRebindToADifferentSubject($visitorId, $subjectType, $subjectId);
 
-            // Step 4 -- one conditional UPDATE, never read-then-decide-then-write.
+            // Step 5 -- one conditional UPDATE, never read-then-decide-then-write.
             return $this->connection->table('hubspot_signals')
                 ->where('visitor_id', $visitorId)
                 ->whereNull('subject_type')
@@ -106,11 +116,26 @@ final class IdentityResolver
                 ]);
         });
 
-        // Step 5 -- only when this call actually bound a row.
+        // Step 6 -- only when this call actually bound a row.
         if ($bound > 0) {
             $this->dispatcher->dispatch(new FlushSignalsJob([
                 ['subjectType' => $subjectType, 'subjectId' => $subjectId],
             ]));
+        }
+    }
+
+    /**
+     * The same family as D-02, closed for the same reason (PR #82 review): `getKey()` returns
+     * `null` for a model that was never saved, and `(string) null` is `''` -- silently, with no
+     * error PHP surfaces. Left unrefused, every buffered row for the visitor id would bind to
+     * `subject_id` `''`, a value no real subject will ever carry, permanently stranding them: not
+     * matchable to a real subject later, and not anonymous either. `identify()` issues no HTTP, so
+     * this check is free and runs before the primary key is even cast.
+     */
+    private static function refuseUnsavedSubject(Model $subject, string $subjectType): void
+    {
+        if ($subject->getKey() === null) {
+            throw SignalException::unsavedSignalSubject($subjectType);
         }
     }
 

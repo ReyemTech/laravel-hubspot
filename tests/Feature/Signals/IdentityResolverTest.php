@@ -180,13 +180,20 @@ final class IdentityResolverTest extends SignalsTestCase
         }
     }
 
+    /**
+     * Saved (a real primary key), then `email` is nulled out in memory only -- isolating D-02's
+     * `null` branch from `refuseUnsavedSubject()`'s own refusal (PR #82 review): an unsaved model's
+     * `email` would ALSO be null by default, exercising the wrong check first and leaving D-02's own
+     * `$value === null` match arm uncovered.
+     */
     public function test_a_null_id_property_value_throws_and_mutates_no_row(): void
     {
         Hubspot::fake();
         Bus::fake();
 
         Hubspot::signal('pricing_page_viewed', 'visitor-1');
-        $subject = new SignalSubject; // unsaved -- 'email' was never set, so it is null.
+        $subject = SignalSubject::query()->create(['email' => 'placeholder@example.com']);
+        $subject->setAttribute('email', null);
 
         try {
             Hubspot::identify('visitor-1', $subject);
