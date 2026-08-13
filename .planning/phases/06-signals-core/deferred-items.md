@@ -172,3 +172,55 @@ its own entry below for the disposition, the commit, and the design reasoning. T
   logged per the scope-boundary rule rather than fixed here. Suggested fix mirrors the finding's own
   wording: iterate the buffered names instead of the configured ones, or reject an unknown persisted
   name explicitly so the backlog is visible to an operator.
+
+## New finding from `codex review --base main` on the flush-time straggler sweep (2026-08-13, UNRESOLVED, P1)
+
+Full-branch CLI review, run per this task's own instructions after committing the straggler-sweep
+fix (`FlushSignalsCommand::resolveStragglers()`). **This is a genuinely different gap from the one
+this task closed**, and closing it needs the same kind of owner decision the sweep itself did --
+recorded here rather than silently fixed, per Rule 4 (architectural change) and the scope-boundary
+rule (`IdentityResolver.php` is untouched by this session's diff).
+
+- **`src/Signals/IdentityResolver.php:126-136` (P1, codex review, out of scope for this diff,
+  UNRESOLVED)** -- `identify()`'s own conditional `UPDATE ... WHERE visitor_id = ? AND subject_type
+  IS NULL` persists a binding ONLY by rewriting an EXISTING `hubspot_signals` row. When `identify()`
+  is called for a visitor id that has ZERO buffered rows yet (an identify-first flow -- the
+  application knows who the visitor is, e.g. right after login, before any `signal()` call has ever
+  fired for them), the `UPDATE` affects zero rows and **persists nothing anywhere**. The
+  post-write `refuseIfNowBoundToADifferentSubject()` check also finds nothing (there is no row to
+  find), so `identify()` returns normally with no error and no dispatch -- silently. A signal
+  recorded AFTER this call is inserted anonymous by `SignalRecorder::record()` as always, and this
+  session's own straggler sweep (`resolveStragglers()`) cannot rescue it either: the sweep's
+  candidate-visitor query requires an EXISTING bound row (`whereNotNull('bound.subject_type')`) for
+  that visitor id, and there has never been one. The signal is stranded permanently, with no
+  mechanism in this phase that ever recovers it -- worse than the gap this task closed, which at
+  least had a bound row somewhere for the sweep to find.
+
+  **Verified true** (CLAUDE.md's "verify a finding's premise before accepting it" rule): re-read
+  `IdentityResolver.php:126-158` end to end and confirmed with a throwaway test exercising exactly
+  this sequence (`identify()` with zero buffered rows, then a later `signal()`, then
+  `hubspot:signals:flush`) against the current code -- the row stays anonymous and unflushed
+  through the whole sequence, `Bus::assertNotDispatched(FlushSignalsJob::class)` holds after
+  `identify()`, and `hubspot_signals` is empty immediately after `identify()` returns. The test was
+  not committed (it is a verification aid, not part of the suite); its result is recorded here
+  instead.
+
+  **Why this is not fixed here rather than merely logged:** every candidate fix is exactly the kind
+  of architectural decision this task's own owner already flagged as out of scope for the sweep it
+  approved -- `FlushSignalsCommand.php`'s own class docblock states plainly: "The genuinely clean
+  long-term answer is a dedicated `visitor_id -> subject` identities table as the single source of
+  truth for a binding... not done here because it is a schema change (Rule 4, architectural)." This
+  finding is the concrete case that identities table would also need to solve: `identify()` has
+  nowhere to WRITE a binding fact when there is no `hubspot_signals` row to attach it to. Candidates,
+  none free of trade-offs this task has no mandate to choose among alone: (a) the dedicated
+  identities table (`visitor_id -> subject_type, subject_id`), read by both `identify()` and
+  `record()`, solving this AND every future variant of the same shape; (b) have `identify()` INSERT
+  a binding-only placeholder row into `hubspot_signals` when its own `UPDATE` affects zero rows AND
+  no existing row for the visitor exists at all (cheaper, but stretches `hubspot_signals`'s own
+  schema to represent "identity, no signal" rows, with knock-on effects on `RollUpCalculator`'s
+  per-`signal_name` grouping and `FlushSignalsJob`'s roll-up computation that were not designed for
+  a rowless binding); (c) document that `identify()` must be called AFTER at least one `signal()`
+  for a visitor, never before (an even less discoverable operational burden than the one closed
+  this session, and the opposite of what "identify-first" flows -- the common shape for an
+  authenticated app -- actually do). **Per `CLAUDE.md`'s review policy a P1 blocks merge**; this
+  finding is NOT closed and needs an explicit disposition before this branch merges.
