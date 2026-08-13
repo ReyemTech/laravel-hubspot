@@ -31,6 +31,24 @@ real and not a scoped-run artefact.
 
 ## New findings this session (2026-08-12, absent-vs-confirmed-empty P1 fix + its own codex review)
 
+Two `codex review --base main` passes were run this session. The first (scoped to this session's
+own commits) surfaced only the `FlushSignalsJob.php` P1 fixed in this same task (see the
+commit history) and the `SignalRecorder.php` P2 below. The second (`--base main`, the full branch
+diff) additionally surfaced the `IdentityResolver.php` P1 below -- neither run's scope includes
+`SignalReconciler.php` for either of these two, and neither file was touched by this session's
+diff, so both are logged rather than fixed here (scope-boundary rule). **Per `CLAUDE.md`'s own
+review policy a P1 blocks merge** -- the `IdentityResolver.php` finding below should not be
+treated as closed just because it is out of scope for this particular task.
+
+- **`src/Signals/IdentityResolver.php:109-116` (P1, codex review, out of scope for this diff)** --
+  two concurrent first-time `identify()` calls for the same anonymous visitor with DIFFERENT
+  subjects can both pass `refuseRebindToADifferentSubject()`'s pre-check before either's
+  conditional `UPDATE` runs; the losing call's `UPDATE` then affects zero rows, and the method
+  returns as if it succeeded -- the caller believes its subject was bound, but the signals stay
+  bound to the OTHER subject and no flush is ever dispatched for the caller's own subject. Needs a
+  re-check of the actual binding when the conditional update affects zero rows, throwing the rebind
+  exception if it landed on a different subject (the fix codex itself suggests).
+
 - **`src/Signals/SignalRecorder.php:111-122` (P2, codex review, out of scope for this diff)** --
   codex review flagged that a caller-supplied visitor id (or mapped signal name) containing a NUL
   byte is rejected by PostgreSQL's `varchar` insert but silently accepted by MySQL/SQLite, giving
