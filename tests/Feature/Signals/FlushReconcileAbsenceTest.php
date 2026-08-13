@@ -6,13 +6,18 @@ namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 
 use Illuminate\Support\Facades\DB;
 use ReyemTech\Hubspot\Facades\Hubspot;
+use ReyemTech\Hubspot\Gateway\BatchResult;
+use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
+use ReyemTech\Hubspot\Gateway\HubspotObject;
+use ReyemTech\Hubspot\Gateway\HubspotObjectPage;
+use ReyemTech\Hubspot\Gateway\SearchQuery;
 use ReyemTech\Hubspot\Signals\FlushSignalsJob;
 use ReyemTech\Hubspot\Signals\SignalReconciler;
 use ReyemTech\Hubspot\Testing\HubspotFake;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalsTestCase;
 use ReyemTech\Hubspot\Tests\Support\Signals\SignalSubject;
 
-mutates(SignalReconciler::class);
+mutates(SignalReconciler::class, FlushSignalsJob::class);
 
 /**
  * Extracted out of {@see FlushReconcileTest} purely to keep that file under STANDARDS §6b's
@@ -198,6 +203,46 @@ final class FlushReconcileAbsenceTest extends SignalsTestCase
         );
     }
 
+    // -- Test 4a: the write's own success must NOT paper over an unconfirmed reconcile read -----
+
+    /**
+     * The P1 the four tests above did not catch (codex review, 2026-08-12): every test above cans
+     * ONE response for the `contacts` route key, reused for BOTH the read and the write within a
+     * single `handle()` call ({@see HubspotFake::routeKeyOf()}) -- so a 207-empty read ALSO makes
+     * the write's own `confirmedIdValues` come back empty, and `FlushSignalsJob::sendGroup()`'s
+     * pre-existing "not confirmed -- left unflushed" branch (line 356) already covered that
+     * combination correctly. It never exercised the REALISTIC split: the read is unconfirmed but
+     * the WRITE independently succeeds (an id-only upsert, minus the stripped reconcile property,
+     * is still a perfectly valid HubSpot write). Before this fix, `sendGroup()` marked every row
+     * `flushed_at` on that write's own confirmation alone, with no awareness that reconcile had
+     * left the subject unresolved -- and `FlushSignalsCommand::pendingSubjects()` selects on
+     * `WHERE flushed_at IS NULL`, so the subject would silently vanish from every future scheduled
+     * flush until a brand-new signal happened to arrive for it. The decorator below isolates
+     * exactly that split: `findMany()` is hard-coded unconfirmed, `upsertMany()` runs for real
+     * against the ordinary fake and succeeds normally.
+     */
+    public function test_an_unconfirmed_reconcile_read_does_not_let_a_successful_write_mark_the_subject_flushed(): void
+    {
+        Hubspot::fake();
+        $realGateway = Hubspot::objects();
+
+        app()->instance(ObjectGatewayContract::class, self::unconfirmedFindManyGateway($realGateway));
+
+        $subject = SignalSubject::query()->create(['email' => 'never-flushed@example.com']);
+        $this->insertBoundSignal('visitor-never-flushed', $subject, 'pricing_page_viewed', ['source' => 'buffer-value']);
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        self::assertNull(
+            DB::table('hubspot_signals')->where('visitor_id', 'visitor-never-flushed')->value('flushed_at'),
+            'An unconfirmed reconcile read must keep the subject unflushed too, or the scheduler '
+            .'(WHERE flushed_at IS NULL) never dispatches the retry that would establish the truth.',
+        );
+        self::assertNull(
+            DB::table('hubspot_signals')->where('visitor_id', 'visitor-never-flushed')->value('reconciled_at'),
+        );
+    }
+
     // -- Test 5 (mutation coverage): the correlation loop moves PAST an uncorrelatable record ----
 
     /**
@@ -335,5 +380,84 @@ final class FlushReconcileAbsenceTest extends SignalsTestCase
         $body = json_decode((string) $writeRequest->getBody(), true);
 
         return $body['inputs'][0]['properties'];
+    }
+
+    /**
+     * A decorator that delegates every method to the real, faked gateway except `findMany()`,
+     * which is hard-coded to an EMPTY partial-failure result regardless of what it was asked for --
+     * isolating the split `findMany()` and `upsertMany()` share the SAME canned-response route key
+     * under (see the test's own docblock) so a test can prove the read stayed unconfirmed while the
+     * write independently succeeded. Mirrors `throwingOnUpsert()`'s decorator shape.
+     */
+    private static function unconfirmedFindManyGateway(ObjectGatewayContract $gateway): ObjectGatewayContract
+    {
+        return new class($gateway) implements ObjectGatewayContract
+        {
+            public function __construct(private readonly ObjectGatewayContract $gateway) {}
+
+            /** @param array<string, string> $properties */
+            public function create(string $objectType, array $properties): HubspotObject
+            {
+                return $this->gateway->create($objectType, $properties);
+            }
+
+            /** @param list<string> $properties */
+            public function find(string $objectType, string $id, array $properties = [], ?string $idProperty = null): HubspotObject
+            {
+                return $this->gateway->find($objectType, $id, $properties, $idProperty);
+            }
+
+            /** @param array<string, string> $properties */
+            public function update(string $objectType, string $id, array $properties, ?string $idProperty = null): HubspotObject
+            {
+                return $this->gateway->update($objectType, $id, $properties, $idProperty);
+            }
+
+            public function archive(string $objectType, string $id): void
+            {
+                $this->gateway->archive($objectType, $id);
+            }
+
+            public function search(string $objectType, SearchQuery $query): HubspotObjectPage
+            {
+                return $this->gateway->search($objectType, $query);
+            }
+
+            /** @param array<string, string> $properties */
+            public function upsert(string $objectType, string $idProperty, string $id, array $properties): HubspotObject
+            {
+                return $this->gateway->upsert($objectType, $idProperty, $id, $properties);
+            }
+
+            /** @param list<array<string, string>> $records */
+            public function createMany(string $objectType, array $records): BatchResult
+            {
+                return $this->gateway->createMany($objectType, $records);
+            }
+
+            /** @param list<string> $ids @param list<string> $properties */
+            public function findMany(string $objectType, array $ids, array $properties = [], ?string $idProperty = null): BatchResult
+            {
+                return BatchResult::partial([], []);
+            }
+
+            /** @param list<array{id: string, properties: array<string, string>}> $records */
+            public function updateMany(string $objectType, array $records): BatchResult
+            {
+                return $this->gateway->updateMany($objectType, $records);
+            }
+
+            /** @param list<array{id: string, properties: array<string, string>}> $records */
+            public function upsertMany(string $objectType, string $idProperty, array $records): BatchResult
+            {
+                return $this->gateway->upsertMany($objectType, $idProperty, $records);
+            }
+
+            /** @param list<string> $ids */
+            public function archiveMany(string $objectType, array $ids): void
+            {
+                $this->gateway->archiveMany($objectType, $ids);
+            }
+        };
     }
 }
