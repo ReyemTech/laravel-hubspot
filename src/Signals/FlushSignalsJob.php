@@ -177,6 +177,7 @@ final class FlushSignalsJob implements ShouldQueue
      *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string, reconciled_properties: ?string}>,
      *         rowIds: list<int>,
      *         reconcileProperties: list<string>,
+     *         reconcileUnconfirmed: bool,
      *     }>,
      * }>
      */
@@ -267,6 +268,11 @@ final class FlushSignalsJob implements ShouldQueue
                     'rows' => $rows,
                     'rowIds' => array_map(static fn (object $row): int => $row->id, $rows),
                     'reconcileProperties' => SignalReconciler::candidateProperties($map, $rows),
+                    // Defaults false here and flips true ONLY inside SignalReconciler::reconcile()
+                    // when that subject's own read could not correlate it -- a subject with no
+                    // reconcile-eligible properties at all never reaches that branch and keeps this
+                    // default, so sendGroup()'s flush gate below is a no-op for it.
+                    'reconcileUnconfirmed' => false,
                 ];
 
                 $carriedForward = true;
@@ -295,6 +301,7 @@ final class FlushSignalsJob implements ShouldQueue
      *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string, reconciled_properties: ?string}>,
      *         rowIds: list<int>,
      *         reconcileProperties: list<string>,
+     *         reconcileUnconfirmed: bool,
      *     }>,
      * }  $group
      */
@@ -353,7 +360,16 @@ final class FlushSignalsJob implements ShouldQueue
 
             foreach ($chunk as $subjectRecord) {
                 try {
-                    if (! in_array($subjectRecord['id'], $confirmedIdValues, true)) {
+                    // Two INDEPENDENT facts gate the flushed-at write, and either one failing is
+                    // enough to withhold it: the WRITE confirming this subject's id (unchanged),
+                    // and -- P1, codex review 2026-08-12 -- reconcile's own read having actually
+                    // correlated it. A property-stripped write can succeed on its own even when
+                    // the read that stripped it never did, and marking flushed_at on the write's
+                    // success alone would drop this subject out of
+                    // `Console\FlushSignalsCommand`'s `WHERE flushed_at IS NULL` selection forever,
+                    // with no unflushed row left to make it eligible again until an unrelated new
+                    // signal happens to arrive. See SignalReconciler::reconcileChunk().
+                    if (! in_array($subjectRecord['id'], $confirmedIdValues, true) || $subjectRecord['reconcileUnconfirmed']) {
                         // Not confirmed -- left unflushed. The next flush recomputes an absolute
                         // value over the full set, exactly like a retry.
                         continue;

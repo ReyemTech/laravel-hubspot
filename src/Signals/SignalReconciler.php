@@ -19,7 +19,7 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
  * process-local flag, so the guarantee survives an Octane worker boundary and a second job instance.
  *
  * @phpstan-type SubjectRow object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string, reconciled_properties: ?string}
- * @phpstan-type SubjectEntry array{id: string, properties: array<string, string>, subjectType: string, subjectId: string, rows: list<SubjectRow>, rowIds: list<int>, reconcileProperties: list<string>}
+ * @phpstan-type SubjectEntry array{id: string, properties: array<string, string>, subjectType: string, subjectId: string, rows: list<SubjectRow>, rowIds: list<int>, reconcileProperties: list<string>, reconcileUnconfirmed: bool}
  * @phpstan-type GroupShape array{objectType: string, idProperty: string, subjects: array<string, SubjectEntry>}
  */
 final class SignalReconciler
@@ -245,6 +245,15 @@ final class SignalReconciler
                 // false and the NEXT flush's read gets a fair shot at actually confirming it --
                 // marking it reconciled here, as the previous code did unconditionally, would have
                 // swallowed every future attempt via candidateProperties() returning [].
+                //
+                // `reconcileUnconfirmed` (P1, codex review 2026-08-12) travels with the subject
+                // into `FlushSignalsJob::sendGroup()`, which must NOT mark this subject's rows
+                // `flushed_at` even if its (now property-stripped) write independently succeeds --
+                // the write's own success and the read's own correlation are two different facts,
+                // and `Console\FlushSignalsCommand` selects on `WHERE flushed_at IS NULL` alone.
+                // Conflating "the write went through" with "the reconcile read is resolved" would
+                // let this subject silently drop off the scheduler forever, with no unflushed row
+                // left to make it eligible again until an unrelated new signal happens to arrive.
                 $properties = $subject['properties'];
 
                 foreach ($subject['reconcileProperties'] as $property) {
@@ -252,6 +261,7 @@ final class SignalReconciler
                 }
 
                 $subject['properties'] = $properties;
+                $subject['reconcileUnconfirmed'] = true;
                 $group['subjects'][$idValue] = $subject;
 
                 continue;
