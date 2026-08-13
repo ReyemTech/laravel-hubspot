@@ -122,3 +122,44 @@ differs.
   mutations, not one -- outside what a single-mutant kill-or-verify pass covers. Worth a follow-up
   note if either line is ever refactored: the pair only stays behaviourally redundant as long as
   BOTH survive.
+
+## New findings from `codex review --base main` on the P1/P2 rebind-race + NUL-byte fix (2026-08-13)
+
+Full-branch CLI review (not the GitHub bot) run per this task's own instructions after committing
+the rebind-race and NUL-byte fixes. Both findings below are genuinely pre-existing -- neither touches
+a line this session's diff added or changed -- and are logged rather than fixed, per the
+scope-boundary rule. **Per `CLAUDE.md`'s review policy a P1 blocks merge**; the first finding below
+is NOT closed and needs an explicit disposition (fix via a follow-up plan, or accept and document)
+before this branch merges -- it is recorded here rather than silently fixed because closing it
+correctly is an architectural decision, not a bug fix (Rule 4).
+
+- **`src/Signals/SignalRecorder.php:80-82` (P1, codex review, out of scope for this diff, UNRESOLVED)**
+  -- `record()`'s INSERT always writes `subject_type`/`subject_id` as `null`, regardless of whether
+  `visitor_id` already carries an existing `identify()` binding. Verified true against the current
+  code and against `README.md`'s own "Selects every identified subject (`subject_type` set)" wording
+  for `hubspot:signals:flush`: a signal recorded for an ALREADY-IDENTIFIED visitor (normal
+  post-conversion activity, or an insert racing just after `identify()`'s own `UPDATE`) is buffered
+  anonymous and never flushed unless the application calls `identify()` again for that visitor --
+  D-09's docs never state this as a requirement, and neither does the phase's `README.md` signals
+  section. This is genuinely undiscussed in `06-CONTEXT.md`'s decisions or deferred ideas.
+  **Why this is not fixed here rather than merely logged:** closing it correctly requires a design
+  decision this task has no mandate to make alone (Rule 4, architectural change) -- candidates
+  include (a) having `record()` query `hubspot_signals` for an existing binding on every call and
+  auto-rebind new rows (adds a query to SIG-02's currently zero-DB-lookup happy path), (b)
+  documenting that an app must re-call `identify()` on every signal after the first for an identified
+  visitor, or (c) having `hubspot:signals:flush` additionally sweep anonymous rows whose `visitor_id`
+  matches an already-identified visitor elsewhere in the buffer. Each has different performance,
+  correctness and API-shape consequences that were not discussed when D-01/D-09 were decided.
+  Surfaced explicitly for a human decision rather than silently dropped or silently auto-fixed.
+
+- **`src/Signals/FlushSignalsJob.php:471-475` (P2, codex review, out of scope for this diff)** --
+  `computeAcrossSignalNames()` iterates the CURRENTLY CONFIGURED `$map->names()` and matches buffered
+  rows against them; a row whose `signal_name` was removed from `hubspot.signals.map` after being
+  buffered is never matched by any name in that loop, so it silently contributes no properties and
+  (per the finding) is never marked flushed -- every scheduled flush recomputes the same
+  now-unflushable subject indefinitely, with no error surfaced to the operator. `FlushSignalsJob.php`
+  is untouched by this session's diff (`IdentityResolver.php`, `SignalRecorder.php`, and their tests
+  only) and the finding is unrelated to the rebind race or NUL-byte defect this task closes --
+  logged per the scope-boundary rule rather than fixed here. Suggested fix mirrors the finding's own
+  wording: iterate the buffered names instead of the configured ones, or reject an unknown persisted
+  name explicitly so the backlog is visible to an operator.
