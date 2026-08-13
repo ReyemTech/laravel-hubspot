@@ -85,6 +85,10 @@ final class SignalRecorderTest extends SignalsTestCase
      * fixed 2026-08-12): PostgreSQL refuses a NUL byte in a `text`/`varchar` value outright, so an
      * accepted one is silently driver-dependent -- accepted by MySQL/SQLite -- and either way it is
      * an identifier this buffer correlates rows by.
+     *
+     * Asserts the EXACT message, not merely a substring -- so a mutant that reorders or truncates
+     * the concatenated segments (`ConcatSwitchSides` / `ConcatRemoveRight`) is caught too, not just
+     * one that removes the check outright.
      */
     public function test_a_visitor_id_containing_a_nul_byte_is_refused_and_writes_no_row(): void
     {
@@ -95,7 +99,12 @@ final class SignalRecorderTest extends SignalsTestCase
 
             self::fail('Expected an InvalidArgumentException for a visitor id containing a NUL byte.');
         } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('NUL byte', $exception->getMessage());
+            self::assertSame(
+                'A signal\'s "visitorId" contains a NUL byte, which PostgreSQL refuses in a '
+                .'text/varchar value outright. Rejecting it here rather than letting the database '
+                .'reject it after the caller believes the call succeeded.',
+                $exception->getMessage(),
+            );
         }
 
         self::assertSame(0, DB::table('hubspot_signals')->count());
@@ -114,7 +123,10 @@ final class SignalRecorderTest extends SignalsTestCase
 
         $nulName = "pricing_page_viewed\0nul";
 
-        config(['hubspot.signals.map' => array_merge(config('hubspot.signals.map', []), [
+        /** @var array<string, mixed> $existingMap */
+        $existingMap = config('hubspot.signals.map', []);
+
+        config(['hubspot.signals.map' => array_merge($existingMap, [
             $nulName => ['object' => 'contacts', 'properties' => []],
         ])]);
 

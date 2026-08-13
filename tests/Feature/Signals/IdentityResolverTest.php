@@ -641,6 +641,16 @@ final class IdentityResolverTest extends SignalsTestCase
         self::assertSame((string) $subject->getKey(), $row->subject_id); // @phpstan-ignore-line cast.string
     }
 
+    /**
+     * The exact message, not merely a substring -- so a mutant that reorders or truncates the
+     * concatenated segments (`ConcatSwitchSides` / `ConcatRemoveRight`) is caught, not just one
+     * that removes the check outright.
+     *
+     * Resolved from the container rather than called through the facade -- the identical
+     * dead-catch false positive `test_a_subject_class_absent_from_hubspot_models_throws_unbound_signal_subject()`
+     * above already documents: PHPStan trusts the `Hubspot` facade's `@method static void
+     * identify(...)` signature (no `@throws`) as authoritative.
+     */
     public function test_a_visitor_id_containing_a_nul_byte_is_refused(): void
     {
         Hubspot::fake();
@@ -648,9 +658,18 @@ final class IdentityResolverTest extends SignalsTestCase
 
         $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessageMatches('/NUL byte/');
+        try {
+            app(IdentityResolver::class)->identify("visitor\0nul", $subject);
 
-        Hubspot::identify("visitor\0nul", $subject);
+            self::fail('Expected an InvalidArgumentException for a visitor id containing a NUL byte.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame(
+                'Hubspot::identify() was given a visitorId containing a NUL byte, which '
+                .'PostgreSQL refuses in a text/varchar value outright. Rejecting it here rather '
+                .'than letting the comparison against hubspot_signals.visitor_id fail with an '
+                .'undirected database error.',
+                $exception->getMessage(),
+            );
+        }
     }
 }
