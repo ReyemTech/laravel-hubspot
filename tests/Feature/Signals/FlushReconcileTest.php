@@ -289,6 +289,40 @@ final class FlushReconcileTest extends SignalsTestCase
         );
     }
 
+    /**
+     * Mutation-coverage / defensive-decode gap (STANDARDS' 100% floor, PR #82 review): the shape
+     * `reconciled_properties` decodes to in normal operation is always the array
+     * `SignalReconciler::reconcileChunk()` itself writes, but the column is read back over the wire
+     * like any other -- a row this package did not write to decodes to something else, and
+     * `withPersistedProperties()` treats that exactly like nothing having been persisted, mirroring
+     * `FlushSignalsJob::decodeProperties()`'s identical defensive precedent for `properties`.
+     */
+    public function test_a_non_array_reconciled_properties_value_is_ignored_and_the_buffer_wins(): void
+    {
+        $fake = Hubspot::fake();
+
+        $subject = SignalSubject::query()->create(['email' => 'corrupted-reconciled@example.com']);
+
+        DB::table('hubspot_signals')->insert([
+            'visitor_id' => 'visitor-corrupted-reconciled',
+            'subject_type' => SignalSubject::class,
+            'subject_id' => (string) $subject->getKey(), // @phpstan-ignore-line cast.string
+            'signal_name' => 'pricing_page_viewed',
+            'properties' => json_encode(['source' => 'buffer-value'], JSON_THROW_ON_ERROR),
+            'occurred_at' => now(),
+            'flushed_at' => null,
+            'reconciled_at' => now(),
+            'reconciled_properties' => json_encode('not-an-object', JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        Hubspot::assertRequestCount(1); // Already reconciled -- upsert only, no read.
+        self::assertSame('buffer-value', self::writtenProperty($fake, 'first_touch_source'));
+    }
+
     // -- Test 8: batching -- ten subjects, one read ----------------------------------------------
 
     public function test_ten_reconciling_subjects_in_one_group_issue_one_read_covering_all_ten(): void

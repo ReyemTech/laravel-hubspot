@@ -87,6 +87,7 @@ final class SignalRecorder
                 'occurred_at' => $occurredAt ?? $now,
                 'flushed_at' => null,
                 'reconciled_at' => null,
+                'reconciled_properties' => null,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);

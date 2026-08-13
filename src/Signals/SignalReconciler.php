@@ -18,7 +18,7 @@ use ReyemTech\Hubspot\Gateway\Contracts\ObjectGatewayContract;
  * ONCE per subject, EVER -- gated on the persisted `hubspot_signals.reconciled_at` column, never a
  * process-local flag, so the guarantee survives an Octane worker boundary and a second job instance.
  *
- * @phpstan-type SubjectRow object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string}
+ * @phpstan-type SubjectRow object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string, reconciled_properties: ?string}
  * @phpstan-type SubjectEntry array{id: string, properties: array<string, string>, subjectType: string, subjectId: string, rows: list<SubjectRow>, rowIds: list<int>, reconcileProperties: list<string>}
  * @phpstan-type GroupShape array{objectType: string, idProperty: string, subjects: array<string, SubjectEntry>}
  */
@@ -73,6 +73,51 @@ final class SignalReconciler
         }
 
         return false;
+    }
+
+    /**
+     * Merges a subject's already-reconciled portal values (PR #82 review) back into `$properties`
+     * BEFORE `self::reconcile()` runs -- a subject `alreadyReconciled()` is filtered out of
+     * `reconcile()`'s own candidates (its `reconcileProperties` is empty, see
+     * {@see self::candidateProperties()}), so this is the ONLY place a retry's fresh buffer
+     * recompute picks the earlier read's result back up. Every row for a subject carries the same
+     * `reconciled_properties` value (written together in {@see self::reconcileChunk()}), so reading
+     * the first one is enough. A non-empty persisted value wins over the buffer's own, mirroring
+     * `reconcileChunk()`'s identical "non-empty wins" precedence for the live read.
+     *
+     * @param  list<SubjectRow>  $rows
+     * @param  array<string, string>  $properties
+     * @return array<string, string>
+     */
+    public static function withPersistedProperties(array $rows, array $properties): array
+    {
+        if (! self::alreadyReconciled($rows)) {
+            return $properties;
+        }
+
+        foreach ($rows as $row) {
+            if ($row->reconciled_properties === null) {
+                continue;
+            }
+
+            /** @var mixed $decoded */
+            $decoded = json_decode($row->reconciled_properties, true);
+
+            if (! is_array($decoded)) {
+                continue;
+            }
+
+            foreach ($decoded as $property => $value) {
+                if (is_string($value) && $value !== '') {
+                    $properties[(string) $property] = $value;
+                }
+            }
+
+            // Every row was written together -- a second row can only repeat this one.
+            break;
+        }
+
+        return $properties;
     }
 
     /**
@@ -155,12 +200,18 @@ final class SignalReconciler
 
         foreach ($chunk as $idValue => $subject) {
             $properties = $subject['properties'];
+            // Exactly what THIS read confirmed -- never $properties, which also carries buffer-only
+            // keys the read never touched. Persisted separately so a later retry's merge
+            // ({@see self::withPersistedProperties()}) stays scoped to values a read actually
+            // returned, the same "non-empty wins" precedence applied live just below.
+            $persisted = [];
 
             foreach ($subject['reconcileProperties'] as $property) {
                 $portalValue = $found[$subject['id']][$property] ?? '';
 
                 if ($portalValue !== '') {
                     $properties[$property] = $portalValue;
+                    $persisted[$property] = $portalValue;
                 }
             }
 
@@ -172,9 +223,17 @@ final class SignalReconciler
             // wrong union instead.
             $group['subjects'][$idValue] = $subject;
 
+            // reconciled_properties is written in the SAME update() as reconciled_at (P1, PR #82
+            // review) -- the flag alone made the READ durable; this makes the VALUE it returned
+            // durable too, so a write that fails after this point still has something for the next
+            // flush's buildGroups() to merge back in instead of recomputing from the buffer alone.
             $connection->table('hubspot_signals')
                 ->whereIn('id', $subject['rowIds'])
-                ->update(['reconciled_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+                ->update([
+                    'reconciled_at' => Carbon::now(),
+                    'reconciled_properties' => json_encode($persisted, JSON_THROW_ON_ERROR),
+                    'updated_at' => Carbon::now(),
+                ]);
         }
 
         return $group;

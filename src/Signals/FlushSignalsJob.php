@@ -88,7 +88,11 @@ use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
  * `first_wins:<field>|reconcile` is the single documented exception to D-40's buffer-first rule --
  * see {@see SignalReconciler} for the mechanism, extracted to its own class to keep this file under
  * STANDARDS §6b's 500-line cap. Runs per group, between {@see self::buildGroups()} and
- * {@see self::sendGroup()} below.
+ * {@see self::sendGroup()} below. `buildGroups()` itself calls
+ * {@see SignalReconciler::withPersistedProperties()} right after the buffer recompute -- the read's
+ * confirmed value is durable (`reconciled_properties`, not just `reconciled_at`), so an already-
+ * reconciled subject, which never reaches `reconcile()` again, still gets that value merged back in
+ * ahead of a retry's fresh buffer-only computation (P1, PR #82 review).
  *
  * ## The flush receipt (SIG-08)
  *
@@ -170,7 +174,7 @@ final class FlushSignalsJob implements ShouldQueue
      *         properties: array<string, string>,
      *         subjectType: string,
      *         subjectId: string,
-     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string}>,
+     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string, reconciled_properties: ?string}>,
      *         rowIds: list<int>,
      *         reconcileProperties: list<string>,
      *     }>,
@@ -197,11 +201,11 @@ final class FlushSignalsJob implements ShouldQueue
             try {
                 $binding = $bindings->for($subjectType);
 
-                /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string}> $rows */
+                /** @var list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string, reconciled_properties: ?string}> $rows */
                 $rows = $connection->table('hubspot_signals')
                     ->where('subject_type', $subjectType)
                     ->where('subject_id', $subjectId)
-                    ->get(['id', 'signal_name', 'properties', 'occurred_at', 'flushed_at', 'reconciled_at'])
+                    ->get(['id', 'signal_name', 'properties', 'occurred_at', 'flushed_at', 'reconciled_at', 'reconciled_properties'])
                     ->all();
 
                 if ($rows === []) {
@@ -209,6 +213,12 @@ final class FlushSignalsJob implements ShouldQueue
                 }
 
                 $properties = self::computeAcrossSignalNames($calculator, $map, $rows, $binding, $subjectType, $subjectId);
+
+                // An already-reconciled subject never reaches SignalReconciler::reconcile() again
+                // (its reconcileProperties is empty) -- this is what makes a retry's fresh buffer
+                // recompute pick the earlier read's confirmed value back up instead of silently
+                // overwriting it (P1, PR #82 review). See SignalReconciler::withPersistedProperties().
+                $properties = SignalReconciler::withPersistedProperties($rows, $properties);
 
                 if ($properties === []) {
                     continue;
@@ -282,7 +292,7 @@ final class FlushSignalsJob implements ShouldQueue
      *         properties: array<string, string>,
      *         subjectType: string,
      *         subjectId: string,
-     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string}>,
+     *         rows: list<object{id: int, signal_name: string, properties: ?string, occurred_at: string, flushed_at: ?string, reconciled_at: ?string, reconciled_properties: ?string}>,
      *         rowIds: list<int>,
      *         reconcileProperties: list<string>,
      *     }>,

@@ -35,6 +35,18 @@ use Illuminate\Support\Facades\Schema;
  * `subject_type` is always an Eloquent model's own `::class` string and `subject_id` its own
  * primary key cast to a string -- not application-supplied free text.
  *
+ * ## `reconciled_properties` -- the read's VALUE, not only that it happened (PR #82 review)
+ *
+ * `reconciled_at` alone made "at most one read per subject, ever" durable, but not what the read
+ * RETURNED: that lived only in the in-memory `$group` `SignalReconciler::reconcile()` built, so a
+ * write that failed or a job that threw after the read (queue retry, worker death) recomputed the
+ * next attempt from the buffer alone (D-40) and overwrote the portal value permanently -- the exact
+ * loss `reconcile` exists to prevent. `reconciled_properties` is written in the SAME `update()` call
+ * as `reconciled_at`, holding exactly what that read confirmed (only the non-empty values, keyed by
+ * HubSpot property) -- see `Signals\SignalReconciler::reconcileChunk()`. A later flush (retry or
+ * otherwise) merges it back in ahead of a fresh buffer recompute (`Signals\FlushSignalsJob::buildGroups()`),
+ * so the read's result survives exactly as long as the read's own gate does.
+ *
  * ## `occurred_at` is a `DATETIME`; `flushed_at` and `reconciled_at` are `timestamp()`
  *
  * The difference is whose value it is, exactly as the webhooks migration's own docblock states for
@@ -83,6 +95,11 @@ return new class extends Migration
 
             $table->timestamp('flushed_at')->nullable();
             $table->timestamp('reconciled_at')->nullable();
+
+            // What the reconcile read returned, not only that it happened -- see the class
+            // docblock's "reconciled_properties" section. Written in the SAME update() call as
+            // reconciled_at, so the two are never durable independently of each other.
+            $table->json('reconciled_properties')->nullable();
 
             $table->timestamps();
 
