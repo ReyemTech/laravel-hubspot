@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 
+use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use InvalidArgumentException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Exceptions\SignalException;
 use ReyemTech\Hubspot\Facades\Hubspot;
@@ -513,5 +515,142 @@ final class IdentityResolverTest extends SignalsTestCase
             ->all();
 
         self::assertSame(['visitor-shared-device-1', 'visitor-shared-device-2'], $visitorIds);
+    }
+
+    /**
+     * Two concurrent `identify()` calls for the SAME visitor id with DIFFERENT subjects,
+     * simulated deterministically via `Connection::beforeExecuting()` -- the same technique
+     * `FlushClaimTest::test_a_lost_reclaim_race_answers_held_rather_than_recursing()` uses, and
+     * for the identical reason stated there: `identify()`'s own conditional UPDATE has no SELECT
+     * before it for `DB::listen()` (a POST-execution hook) to intercept, so
+     * `Connection::beforeExecuting()` -- the PRE-execution hook -- is what this simulation needs,
+     * firing before the very first query THIS call issues.
+     *
+     * The hook fires once, right before the UPDATE this call is about to run, and injects a
+     * competing bind to a DIFFERENT subject in exactly the gap a pre-write check would otherwise
+     * leave open. This call's own UPDATE then affects zero rows when it executes next. Under the
+     * unfixed code (a pre-write `refuseRebindToADifferentSubject()` check that ran and passed
+     * BEFORE this hook's injection existed) that zero-row result was reported as success with no
+     * exception at all -- this call's own subject was never bound and no flush was ever dispatched
+     * for it, yet the caller had no way to know (P1, codex review, fixed 2026-08-12).
+     */
+    public function test_a_lost_rebind_race_throws_rather_than_silently_succeeding(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-race');
+
+        $winner = SignalSubject::query()->create(['email' => 'winner@example.com']);
+        $loser = SecondSignalSubject::query()->create(['email' => 'loser@example.com']);
+
+        $armed = true;
+
+        app(DatabaseManager::class)->connection()->beforeExecuting(
+            function (string $query) use (&$armed, $winner): void {
+                if (! $armed) {
+                    return;
+                }
+
+                if (
+                    str_starts_with(strtolower($query), 'update')
+                    && str_contains($query, 'hubspot_signals')
+                ) {
+                    $armed = false;
+
+                    // The "concurrent worker": binds the visitor to a DIFFERENT subject first, so
+                    // THIS call's own conditional UPDATE -- already about to run -- affects zero
+                    // rows when it executes next.
+                    DB::table('hubspot_signals')
+                        ->where('visitor_id', 'visitor-race')
+                        ->whereNull('subject_type')
+                        ->update([
+                            'subject_type' => SignalSubject::class,
+                            'subject_id' => (string) $winner->getKey(), // @phpstan-ignore-line cast.string
+                            'updated_at' => now(),
+                        ]);
+                }
+            },
+        );
+
+        try {
+            Hubspot::identify('visitor-race', $loser);
+
+            self::fail('Expected a SignalException for a rebind race lost to a concurrent identify() call.');
+        } catch (SignalException $exception) {
+            self::assertStringContainsString('visitor-race', $exception->getMessage());
+        }
+
+        Bus::assertNotDispatched(FlushSignalsJob::class);
+
+        $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-race')->first();
+        self::assertNotNull($row);
+        self::assertSame(SignalSubject::class, $row->subject_type);
+        self::assertSame((string) $winner->getKey(), $row->subject_id); // @phpstan-ignore-line cast.string
+    }
+
+    /**
+     * D-09's mirror case: the concurrent call that wins the SAME visitor id, for the SAME
+     * subject, must not throw. Same `beforeExecuting()` shape as the test above, but the
+     * injected competing write binds to the SAME subject this call also targets, so step 5's
+     * post-write read finds no mismatch. Proves the fix does not turn every zero-affected-row
+     * outcome into an exception -- only a genuinely DIFFERENT subject does.
+     */
+    public function test_a_lost_race_to_the_same_subject_is_a_no_op_not_an_exception(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-race-same');
+
+        $subject = SignalSubject::query()->create(['email' => 'shared-winner@example.com']);
+
+        $armed = true;
+
+        app(DatabaseManager::class)->connection()->beforeExecuting(
+            function (string $query) use (&$armed, $subject): void {
+                if (! $armed) {
+                    return;
+                }
+
+                if (
+                    str_starts_with(strtolower($query), 'update')
+                    && str_contains($query, 'hubspot_signals')
+                ) {
+                    $armed = false;
+
+                    DB::table('hubspot_signals')
+                        ->where('visitor_id', 'visitor-race-same')
+                        ->whereNull('subject_type')
+                        ->update([
+                            'subject_type' => SignalSubject::class,
+                            'subject_id' => (string) $subject->getKey(), // @phpstan-ignore-line cast.string
+                            'updated_at' => now(),
+                        ]);
+                }
+            },
+        );
+
+        Hubspot::identify('visitor-race-same', $subject);
+
+        Bus::assertNotDispatched(FlushSignalsJob::class);
+
+        $row = DB::table('hubspot_signals')->where('visitor_id', 'visitor-race-same')->first();
+        self::assertNotNull($row);
+        self::assertSame(SignalSubject::class, $row->subject_type);
+        self::assertSame((string) $subject->getKey(), $row->subject_id); // @phpstan-ignore-line cast.string
+    }
+
+    public function test_a_visitor_id_containing_a_nul_byte_is_refused(): void
+    {
+        Hubspot::fake();
+        Bus::fake();
+
+        $subject = SignalSubject::query()->create(['email' => 'ada@example.com']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/NUL byte/');
+
+        Hubspot::identify("visitor\0nul", $subject);
     }
 }

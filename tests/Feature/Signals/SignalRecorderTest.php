@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ReyemTech\Hubspot\Tests\Feature\Signals;
 
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
 use ReyemTech\Hubspot\Facades\Hubspot;
 use ReyemTech\Hubspot\Signals\SignalRecorder;
@@ -74,6 +75,55 @@ final class SignalRecorderTest extends SignalsTestCase
             self::fail('Expected a ConfigurationException naming the unmapped signal.');
         } catch (ConfigurationException $exception) {
             self::assertStringContainsString($overLongUnmappedName, $exception->getMessage());
+        }
+
+        self::assertSame(0, DB::table('hubspot_signals')->count());
+    }
+
+    /**
+     * Mirrors `Webhooks\NormalizedWebhookEvent::bounded()`'s NUL-byte refusal (P2, codex review,
+     * fixed 2026-08-12): PostgreSQL refuses a NUL byte in a `text`/`varchar` value outright, so an
+     * accepted one is silently driver-dependent -- accepted by MySQL/SQLite -- and either way it is
+     * an identifier this buffer correlates rows by.
+     */
+    public function test_a_visitor_id_containing_a_nul_byte_is_refused_and_writes_no_row(): void
+    {
+        Hubspot::fake();
+
+        try {
+            $this->recorder()->record('pricing_page_viewed', "visitor\0nul");
+
+            self::fail('Expected an InvalidArgumentException for a visitor id containing a NUL byte.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('NUL byte', $exception->getMessage());
+        }
+
+        self::assertSame(0, DB::table('hubspot_signals')->count());
+    }
+
+    /**
+     * The identical check, exercised through `signalName` rather than `visitorId` -- both route
+     * through the same `bounded()` method, but only a NAME the map already `knows()` ever reaches
+     * it (06-02 Task 3's map-check-first ordering), so the map is extended here, post-boot, with an
+     * entry whose OWN name carries the NUL byte -- `SignalMap::knows()` reads config fresh on every
+     * call (its own class docblock), so this is visible without re-running D-07's boot validation.
+     */
+    public function test_a_signal_name_containing_a_nul_byte_is_refused_and_writes_no_row(): void
+    {
+        Hubspot::fake();
+
+        $nulName = "pricing_page_viewed\0nul";
+
+        config(['hubspot.signals.map' => array_merge(config('hubspot.signals.map', []), [
+            $nulName => ['object' => 'contacts', 'properties' => []],
+        ])]);
+
+        try {
+            $this->recorder()->record($nulName, 'visitor-1');
+
+            self::fail('Expected an InvalidArgumentException for a signal name containing a NUL byte.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('NUL byte', $exception->getMessage());
         }
 
         self::assertSame(0, DB::table('hubspot_signals')->count());
