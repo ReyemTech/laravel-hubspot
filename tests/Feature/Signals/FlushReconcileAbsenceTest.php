@@ -198,6 +198,86 @@ final class FlushReconcileAbsenceTest extends SignalsTestCase
         );
     }
 
+    // -- Test 5 (mutation coverage): the correlation loop moves PAST an uncorrelatable record ----
+
+    /**
+     * `foreach ($result->recordsDespitePartialFailure() as $object) { ... if ($portalIdValue ===
+     * null) { continue; } ... }` -- a single-record response cannot distinguish `continue` from
+     * `break` (nothing follows to skip), so a second, correlatable record is required to prove the
+     * loop moves PAST the uncorrelatable one rather than abandoning the whole read at it. A `break`
+     * mutant here would leave `$found` empty and silently turn every OTHER record in the same
+     * response into "unconfirmed" too.
+     */
+    public function test_the_correlation_loop_continues_past_an_uncorrelatable_record_to_the_next_one(): void
+    {
+        $fake = Hubspot::fake([
+            'contacts' => Hubspot::response([
+                'status' => 'COMPLETE',
+                'results' => [
+                    // No echoed id property -- uncorrelatable, exercising the FIRST loop's own
+                    // `continue`.
+                    ['id' => '910', 'properties' => ['first_touch_source' => 'stray-value']],
+                    ['id' => '911', 'properties' => ['email' => 'correlates-after-stray@example.com', 'first_touch_source' => 'portal-value']],
+                ],
+            ]),
+        ]);
+
+        $subject = SignalSubject::query()->create(['email' => 'correlates-after-stray@example.com']);
+        $this->insertBoundSignal('visitor-correlates-after-stray', $subject, 'pricing_page_viewed', ['source' => 'buffer-value']);
+
+        app()->call([new FlushSignalsJob([$this->subjectEntry($subject)]), 'handle']);
+
+        self::assertSame('portal-value', self::writtenProperty($fake, 'first_touch_source'));
+        self::assertNotNull(
+            DB::table('hubspot_signals')->where('visitor_id', 'visitor-correlates-after-stray')->value('reconciled_at'),
+        );
+    }
+
+    // -- Test 6 (mutation coverage): the per-subject loop moves PAST a stripped unconfirmed one ---
+
+    /**
+     * The `continue;` this file's whole P1 fix added ({@see SignalReconciler::reconcileChunk()}):
+     * a single-subject chunk cannot distinguish it from `break` either. Two subjects in the SAME
+     * chunk, the unconfirmed one FIRST -- a `break` mutant would abandon the loop right there and
+     * leave the second, confirmable subject untouched (buffer value standing, never reconciled),
+     * exactly the silent-overwrite risk this whole fix exists to close.
+     */
+    public function test_the_per_subject_loop_continues_past_a_stripped_unconfirmed_subject_to_the_next_one(): void
+    {
+        Hubspot::fake([
+            'contacts' => Hubspot::response([
+                'status' => 'COMPLETE',
+                'results' => [
+                    // Only the SECOND subject's record comes back -- the first is silently absent,
+                    // as if a 207 partial failure dropped it.
+                    ['id' => '912', 'properties' => ['email' => 'confirmed-second-in-chunk@example.com', 'first_touch_source' => 'portal-value']],
+                ],
+            ]),
+        ]);
+
+        $subjectA = SignalSubject::query()->create(['email' => 'unconfirmed-first-in-chunk@example.com']);
+        $subjectB = SignalSubject::query()->create(['email' => 'confirmed-second-in-chunk@example.com']);
+
+        $this->insertBoundSignal('visitor-unconfirmed-first', $subjectA, 'pricing_page_viewed', ['source' => 'buffer-a']);
+        $this->insertBoundSignal('visitor-confirmed-second', $subjectB, 'pricing_page_viewed', ['source' => 'buffer-b']);
+
+        // Order matters: subjectA (unconfirmed) is listed FIRST so the per-subject loop reaches it
+        // before subjectB (confirmed) -- `buildGroups()` preserves this ordering into `$chunk`.
+        app()->call([new FlushSignalsJob([
+            $this->subjectEntry($subjectA),
+            $this->subjectEntry($subjectB),
+        ]), 'handle']);
+
+        self::assertNull(
+            DB::table('hubspot_signals')->where('visitor_id', 'visitor-unconfirmed-first')->value('reconciled_at'),
+        );
+        self::assertNotNull(
+            DB::table('hubspot_signals')->where('visitor_id', 'visitor-confirmed-second')->value('reconciled_at'),
+            'A `continue` (not `break`) after stripping the unconfirmed FIRST subject must still '
+            .'let the loop reach and reconcile the confirmed SECOND one.',
+        );
+    }
+
     // -- helpers -------------------------------------------------------------------------------
 
     /** @return array{subjectType: class-string, subjectId: string} */
