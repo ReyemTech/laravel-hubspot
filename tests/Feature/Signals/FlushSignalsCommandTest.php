@@ -302,6 +302,13 @@ final class FlushSignalsCommandTest extends SignalsTestCase
             ->first();
         self::assertNotNull($stragglerRow, 'Precondition: the later signal is buffered anonymous.');
 
+        // Backdated directly so the assertion below can tell "updated_at was refreshed by the
+        // sweep's own UPDATE" apart from "updated_at was simply left at whatever record() already
+        // wrote" -- both would otherwise read as the same frozen Carbon::setTestNow() instant.
+        // Mirrors FlushClaimTest::test_after_the_winner_releases_the_same_subject_is_immediately_reclaimable()'s
+        // identical technique.
+        DB::table('hubspot_signals')->where('id', $stragglerRow->id)->update(['updated_at' => now()->subDay()]);
+
         $exitCode = Artisan::call('hubspot:signals:flush');
 
         self::assertSame(Command::SUCCESS, $exitCode);
@@ -315,6 +322,52 @@ final class FlushSignalsCommandTest extends SignalsTestCase
         self::assertSame(SignalSubject::class, $resolved->subject_type);
         self::assertSame((string) $subject->getKey(), $resolved->subject_id); // @phpstan-ignore-line cast.string
         self::assertNotNull($resolved->flushed_at);
+        self::assertSame('2026-08-12 12:00:00', $resolved->updated_at);
+    }
+
+    /**
+     * Isolates `resolveStragglers()`'s own `updated_at` write from `FlushSignalsJob`'s later one --
+     * the headline test above cannot tell the two apart, because both write the same frozen
+     * `Carbon::setTestNow()` instant regardless of which one actually ran. The map here declares
+     * `pricing_page_viewed` with ZERO properties, so `FlushSignalsJob::computeAcrossSignalNames()`
+     * always computes an empty roll-up and the subject is skipped BEFORE any write of its own
+     * (`SignalTracerTest::test_a_subject_whose_computed_properties_are_empty_is_skipped()`'s same
+     * mechanism) -- `flushed_at` and `updated_at` are therefore untouched by every `FlushSignalsJob`
+     * run in this test, and the only thing left that could have refreshed `updated_at` is the
+     * sweep's own stamp.
+     */
+    public function test_the_straggler_sweeps_own_stamp_refreshes_updated_at(): void
+    {
+        Hubspot::fake();
+        config(['hubspot.signals.map' => [
+            'pricing_page_viewed' => ['object' => 'contacts', 'properties' => []],
+        ]]);
+
+        $subject = SignalSubject::query()->create(['email' => 'stamp-only@example.com']);
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-stamp-only');
+        Hubspot::identify('visitor-stamp-only', $subject);
+        Hubspot::assertRequestCount(0); // the empty-properties skip -- nothing ever gets written.
+
+        Hubspot::signal('pricing_page_viewed', 'visitor-stamp-only');
+
+        $stragglerRow = DB::table('hubspot_signals')
+            ->where('visitor_id', 'visitor-stamp-only')
+            ->whereNull('subject_type')
+            ->first();
+        self::assertNotNull($stragglerRow);
+
+        DB::table('hubspot_signals')->where('id', $stragglerRow->id)->update(['updated_at' => now()->subDay()]);
+
+        Artisan::call('hubspot:signals:flush');
+
+        Hubspot::assertRequestCount(0); // still nothing written -- the dispatched job skips too.
+
+        $resolved = DB::table('hubspot_signals')->where('id', $stragglerRow->id)->first();
+        self::assertNotNull($resolved);
+        self::assertSame(SignalSubject::class, $resolved->subject_type);
+        self::assertNull($resolved->flushed_at);
+        self::assertSame('2026-08-12 12:00:00', $resolved->updated_at);
     }
 
     /**

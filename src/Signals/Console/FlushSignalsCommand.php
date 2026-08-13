@@ -8,6 +8,7 @@ use Illuminate\Console\Command;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use ReyemTech\Hubspot\Exceptions\ConfigurationException;
@@ -176,6 +177,15 @@ final class FlushSignalsCommand extends Command
      *    two passes still be caught: the `WHERE subject_type IS NULL` is evaluated at UPDATE time,
      *    not against a stale snapshot.
      *
+     * **Step 2's binding read can never come back empty.** A `hubspot_signals` row's `subject_type`
+     * is written exactly once, by `IdentityResolver::identify()`'s own conditional `UPDATE` or by
+     * this very sweep -- nothing in this phase ever unsets one (D-09's asymmetry only ever ADDS a
+     * binding; there is no delete or unbind path for a buffered row here, pruning is Phase 7's own
+     * concern). Step 1's own `EXISTS` clause already proved a bound row exists for this visitor id
+     * at a point in time strictly BEFORE step 2 runs, and a fact that can only ever become MORE true
+     * cannot un-prove itself moments later -- so step 2 reads the same, still-existing binding step 1
+     * already found, never a fresher absence of one.
+     *
      * @throws ConfigurationException if `hubspot_signals` does not exist
      */
     private static function resolveStragglers(Connection $connection, bool $featureEnabled): void
@@ -184,7 +194,7 @@ final class FlushSignalsCommand extends Command
         $visitorIds = self::guarded($connection, $featureEnabled, static fn (): array => $connection
             ->table('hubspot_signals as anon')
             ->whereNull('anon.subject_type')
-            ->whereExists(static function ($query) use ($connection): void {
+            ->whereExists(static function (QueryBuilder $query): void {
                 $query->select('bound.subject_type')
                     ->from('hubspot_signals as bound')
                     ->whereColumn('bound.visitor_id', 'anon.visitor_id')
@@ -196,25 +206,24 @@ final class FlushSignalsCommand extends Command
 
         foreach ($visitorIds as $visitorId) {
             self::guarded($connection, $featureEnabled, static function () use ($connection, $visitorId): int {
-                /** @var object{subject_type: string, subject_id: string}|null $binding */
                 $binding = $connection->table('hubspot_signals')
                     ->where('visitor_id', $visitorId)
                     ->whereNotNull('subject_type')
                     ->select(['subject_type', 'subject_id'])
                     ->first();
 
-                if ($binding === null) {
-                    // Nothing left to copy -- another concurrent sweep already resolved every one
-                    // of this visitor's anonymous rows between the two passes above.
-                    return 0;
-                }
+                // Never null in practice -- see this method's own docblock above ("Step 2's binding
+                // read can never come back empty"). PHPStan infers Query\Builder::first()'s general
+                // return type, which it cannot narrow using this class's own domain invariant.
+                $subjectType = $binding->subject_type; // @phpstan-ignore-line property.nonObject
+                $subjectId = $binding->subject_id; // @phpstan-ignore-line property.nonObject
 
                 return $connection->table('hubspot_signals')
                     ->where('visitor_id', $visitorId)
                     ->whereNull('subject_type')
                     ->update([
-                        'subject_type' => $binding->subject_type,
-                        'subject_id' => $binding->subject_id,
+                        'subject_type' => $subjectType,
+                        'subject_id' => $subjectId,
                         'updated_at' => Carbon::now(),
                     ]);
             });
