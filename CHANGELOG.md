@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.8.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.7.0...reyemtech/laravel-hubspot-v0.8.0) (2026-08-17)
+
+
+### Features
+
+* **06-01:** wire signal() through identify() to one batched HubSpot write ([874558a](https://github.com/ReyemTech/laravel-hubspot/commit/874558a34a4a8a5bbc26f5460491b59141fea2a8))
+* **06-02:** parse the closed four-verb signal vocabulary in MergeRule ([c00e266](https://github.com/ReyemTech/laravel-hubspot/commit/c00e2661047be3d69691dc8b01ec902f01a52959))
+* **06-02:** validate hubspot.signals.map as a whole in SignalMap ([2cce202](https://github.com/ReyemTech/laravel-hubspot/commit/2cce202bf93fbbf2f4808b283f2cf42add6c760a))
+* **06-02:** validate the signal map at boot and gate signal() on it (D-07) ([0cce7af](https://github.com/ReyemTech/laravel-hubspot/commit/0cce7af0aba57843537c2389eeeffc8a329726f6))
+* **06-03:** add SignalException, the fifth member of the exception hierarchy ([b432da3](https://github.com/ReyemTech/laravel-hubspot/commit/b432da3faebcce8d64484d20c71bd19db60b0bc3))
+* **06-03:** complete IdentityResolver with D-02's blank-value and D-09's rebind refusals ([24dd5a3](https://github.com/ReyemTech/laravel-hubspot/commit/24dd5a33407c022b7299b1a42fc7479d7d20ad97))
+* **06-04:** add the id tie-break sort and precision-safe sum formatting ([89b0088](https://github.com/ReyemTech/laravel-hubspot/commit/89b0088c8f194087036f50220ea4e43661e0aef4))
+* **06-04:** implement RollUpCalculator's four verbs plus the invokable escape ([9acbe80](https://github.com/ReyemTech/laravel-hubspot/commit/9acbe804c2adda4470dd099fba7be4af485a8437))
+* **06-05:** add the SignalStore contract, trail migration, and local driver ([4f83b61](https://github.com/ReyemTech/laravel-hubspot/commit/4f83b61176f6988e0a58516402740f7f71ff67f8))
+* **06-05:** bound LocalSignalStore's inputs so every driver agrees ([f162167](https://github.com/ReyemTech/laravel-hubspot/commit/f162167adfcfddd4f638562caf30d36bd47194e9))
+* **06-05:** resolve SignalStore from HUBSPOT_SIGNAL_STORE with a throwing default arm ([33d782d](https://github.com/ReyemTech/laravel-hubspot/commit/33d782dd52991ac7c6d1b02fdf23ce9b56653715))
+* **06-06:** the subject-level flush claim closes D-06's lost-update race ([bbf7e57](https://github.com/ReyemTech/laravel-hubspot/commit/bbf7e57086c7b984d67ab5883842eb1e43ae4147))
+* **06-07:** hubspot:signals:flush, and document the one scheduler line (D-04) ([f1c1bb2](https://github.com/ReyemTech/laravel-hubspot/commit/f1c1bb26f0fe4adcdce594bf8761d487da0e2c72))
+* **06-07:** reconcile at most once per subject, ever ([9681841](https://github.com/ReyemTech/laravel-hubspot/commit/96818410c0d3e08780d2b600d05b5a17d74a0714))
+* **06-08:** add the third inverted receipt port and SignalReceiptLog ([fc64f8f](https://github.com/ReyemTech/laravel-hubspot/commit/fc64f8f199ef07598e02a57ed7643c5609911b85))
+* **06-08:** wire the signal receipt log through HubspotManager and the fake ([315f72d](https://github.com/ReyemTech/laravel-hubspot/commit/315f72daa1ff31d90c81f2931d66b17000d18816))
+* **signals:** buffer intent signals and flush them as grouped batched property writes ([d4d2e9e](https://github.com/ReyemTech/laravel-hubspot/commit/d4d2e9ed82e6813b59b018bad9be85794cc74734))
+
+
+### Bug Fixes
+
+* **06-06:** key the flush write path on id_property values, not local PKs ([a53968e](https://github.com/ReyemTech/laravel-hubspot/commit/a53968e322dc6858d8052e6573aa51e3dffa31d2))
+* **06:** close identify()'s rebind race and reject NUL bytes in signal identifiers ([42b3e83](https://github.com/ReyemTech/laravel-hubspot/commit/42b3e830b2c05b776b9842d03f6c9cf69815580c))
+* **06:** close three P1s from the PR [#82](https://github.com/ReyemTech/laravel-hubspot/issues/82) review ([4ece6ac](https://github.com/ReyemTech/laravel-hubspot/commit/4ece6ac214d384d882c0cec1bc6f9f63d9beeba6))
+* **06:** persist the reconcile read's value, not only that it ran ([90c9b7a](https://github.com/ReyemTech/laravel-hubspot/commit/90c9b7aec936ce04ed56485eb9fdd3d15a9b756e))
+* **06:** refuse an unsaved subject in identify(), closing a P2 ([6613c30](https://github.com/ReyemTech/laravel-hubspot/commit/6613c303e77f965b747fe4ee87c81e5071cb3c04))
+* **06:** stop a confirmed write from masking an unconfirmed reconcile read ([29299d9](https://github.com/ReyemTech/laravel-hubspot/commit/29299d943bff99849bf12574f4e7e873d1d18d06))
+* **06:** stop collapsing an unconfirmed reconcile read into an empty one ([d660b09](https://github.com/ReyemTech/laravel-hubspot/commit/d660b09165a90d7a44dbc8367b19219348e332ca))
+* **06:** sweep signals recorded after identify() into the scheduled flush ([e7ad299](https://github.com/ReyemTech/laravel-hubspot/commit/e7ad2997390a0a95eadf6b781f5ef1a72dc2a814))
+
 ## [0.7.0](https://github.com/ReyemTech/laravel-hubspot/compare/reyemtech/laravel-hubspot-v0.6.0...reyemtech/laravel-hubspot-v0.7.0) (2026-08-11)
 
 
