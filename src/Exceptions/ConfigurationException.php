@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot\Exceptions;
 
+use Closure;
 use LogicException;
+use ReyemTech\Hubspot\Signals\Contracts\SignalCalculator;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookHandler;
 
 /**
@@ -107,9 +109,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             '%s is bound to HubSpot with id_property "%s", but its $hubspotMap does not produce '
             .'that key. Add an entry to $hubspotMap that maps "%s" to one of the model\'s own '
             .'attributes, so the upsert has a value to converge on.',
-            $modelClass,
-            $idProperty,
-            $idProperty,
+            $modelClass, $idProperty, $idProperty,
         ));
     }
 
@@ -118,8 +118,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
         return new self(sprintf(
             '%s has multiple unlinked models with the same %s. A HubSpot batch upsert response cannot '
             .'establish which local model owns that identifier, so this package refuses to guess.',
-            $modelClass,
-            $idProperty,
+            $modelClass, $idProperty,
         ));
     }
 
@@ -128,8 +127,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
         return new self(sprintf(
             '%s has multiple linked models for the same HubSpot %s record. A batch update cannot '
             .'safely correlate its response, so correct the duplicate hubspot_object_links rows before retrying.',
-            $modelClass,
-            $objectType,
+            $modelClass, $objectType,
         ));
     }
 
@@ -147,8 +145,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'Add one naming the HubSpot object it syncs to and the property it upserts on, for '
             .'example \'%s\' => [\'object\' => \'contacts\', \'id_property\' => \'email\']. This '
             .'package never guesses which object type an unbound model belongs to.',
-            $modelClass,
-            $modelClass,
+            $modelClass, $modelClass,
         ));
     }
 
@@ -287,8 +284,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'resolved to %d. Nothing was pruned: a retention of zero or less puts the cutoff at '
             .'or after the present moment, so this command would delete every handled record '
             .'rather than the ones past retention -- and those records are what make a HubSpot '
-            .'redelivery a no-op. Note that a blank or non-numeric value becomes 0.',
-            $retentionDays,
+            .'redelivery a no-op. Note that a blank or non-numeric value becomes 0.', $retentionDays,
         ));
     }
 
@@ -370,8 +366,7 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'because that component would deploy and then silently receive nothing. Remove the '
             .'declaration and add this subscription in HubSpot directly, or use the legacy_public '
             .'app model, whose API reconciliation has no such gap.',
-            $eventType,
-            $section,
+            $eventType, $section,
         ));
     }
 
@@ -597,6 +592,381 @@ final class ConfigurationException extends LogicException implements HubspotExce
             .'value here is dangerous, not merely broken: HubSpot signs the URI it calls, so a '
             .'mismatch produces rejected deliveries that look like a credential problem rather '
             .'than a configuration one.',
+        );
+    }
+
+    /**
+     * A model passed to `Signals\IdentityResolver::identify()` has no entry in `hubspot.models` --
+     * mirroring `unboundSyncModel()`'s throw-on-miss precedent (Claude's Discretion, 06-CONTEXT.md).
+     * `Signals\BoundModelReader::for()` is the single resolution point every Signals collaborator
+     * that needs a subject's binding reaches (`IdentityResolver::identify()`,
+     * `FlushSignalsJob::handle()`).
+     *
+     * Deliberately its OWN factory, not a reuse of `unboundSyncModel()`: that message names
+     * `ReyemTech\Hubspot\Sync\SyncsToHubspot`, a `Sync`-specific concept that has nothing to do with
+     * why a Signals caller reached this state -- `Signals` reads the same `hubspot.models` config
+     * key but never imports a `Sync` class (D-01, R5/R7), and the message text must not leak the
+     * trait it never required.
+     */
+    public static function unboundSignalSubject(string $modelClass): self
+    {
+        return new self(sprintf(
+            '%s was passed to Hubspot::identify() but has no entry in hubspot.models. Add one '
+            .'naming the HubSpot object it resolves to and the property it upserts on, for '
+            .'example \'%s\' => [\'object\' => \'contacts\', \'id_property\' => \'email\']. This '
+            .'package never guesses which object type an unbound subject belongs to.',
+            $modelClass,
+            $modelClass,
+        ));
+    }
+
+    /**
+     * Two distinct signal subjects, in the SAME `(objectType, idProperty)` group, resolved to the
+     * SAME `id_property` value in one flush (T-06-26, SIG-06 adjacency edge). Thrown by
+     * `Signals\FlushSignalsJob::handle()` before any request for that group is issued -- a batch
+     * upsert has no way to express two different local subjects converging on one HubSpot record,
+     * and merging them silently would attribute one person's buffered behaviour to another.
+     *
+     * Scoped to the group deliberately: the SAME string under two DIFFERENT id properties (an
+     * email of "a@b.c" on contacts and a domain of "a@b.c" on companies) identifies two different
+     * records and is never a collision this factory is thrown for.
+     */
+    public static function duplicateSignalSubjectIdentifier(string $objectType, string $idProperty, string $value, string $firstSubject, string $secondSubject): self
+    {
+        return new self(sprintf(
+            'Two signal subjects resolved to the same HubSpot %s "%s" value "%s" in one flush: %s and %s. '
+            .'A batch upsert has no way to express two different local subjects converging on one HubSpot '
+            .'record, and merging them silently would attribute one person\'s buffered behaviour to '
+            .'another. This package refuses the whole batch for this group rather than guessing which '
+            .'subject actually owns "%s" -- correct the "%s" value on one of the two subjects before the '
+            .'next flush.',
+            $objectType, $idProperty, $value, $firstSubject, $secondSubject, $value, $idProperty,
+        ));
+    }
+
+    /**
+     * `HUBSPOT_SIGNALS=true` is set but the `hubspot_signals` table this package owns has never
+     * been created. Raised by `Signals\SignalRecorder` in place of the driver's own
+     * `SQLSTATE[42S02]`, mirroring `missingWebhookEventsTable()`'s shape exactly: name the table,
+     * name `php artisan migrate`, and pre-empt the publish question, because every other Laravel
+     * package that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingSignalsTable(bool $featureEnabled = true): self
+    {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis -- the identical reasoning missingWebhookEventsTable() already carries for
+        // HOOK-03.
+        if (! $featureEnabled) {
+            return new self(
+                'Recording a signal requires HUBSPOT_SIGNALS=true, and it is currently false. The '
+                .'"hubspot_signals" table is where every buffered signal is written, so recording '
+                .'cannot run without it. Set HUBSPOT_SIGNALS=true and run `php artisan migrate` '
+                .'(+ `php artisan config:cache` if you cache config). Nothing needs publishing '
+                .'first: this package loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+            );
+        }
+
+        return new self(
+            'HUBSPOT_SIGNALS is true but the "hubspot_signals" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+        );
+    }
+
+    /**
+     * A `hubspot.signals.map` property declaration is neither one of `MergeRule::validVerbs()`'s
+     * four verbs nor a valid shape of that verb (missing a required field, carrying a field the
+     * verb rejects, or carrying the `|reconcile` modifier on a verb that does not accept it).
+     * Thrown by `Signals\MergeRule::fromDeclaration()` -- the single parser of a merge-rule
+     * declaration (STANDARDS §6b) -- so every caller that resolves a map, at boot (`SignalMap`) or
+     * at roll-up time (`RollUpCalculator`, 06-04), reports the same directed message.
+     *
+     * `$given` is always the FULL raw declaration string, never just an extracted verb token: a
+     * shape fault like `"increment:anything"` names a recognised verb used the wrong way, and
+     * showing only the wrong part loses the field the operator wrote by mistake.
+     *
+     * @param  list<string>  $validVerbs
+     */
+    public static function unknownSignalMergeVerb(string $given, string $signalName, string $property, array $validVerbs): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"]["%s"] declares "%s", which is not a valid merge-rule '
+            .'declaration. The merge vocabulary is closed to exactly four verbs: %s -- there is '
+            .'no "overwrite" verb; "last_wins" is the closest equivalent. "first_wins" and '
+            .'"last_wins" require a field, for example "first_wins:source", and accept the '
+            .'optional "|reconcile" modifier. "sum" requires a field, for example "sum:value", '
+            .'and rejects the modifier. "increment" takes neither a field nor the modifier.',
+            $signalName,
+            $property,
+            $given,
+            implode(', ', $validVerbs),
+        ));
+    }
+
+    /**
+     * A `hubspot.signals.map` property declaration is meant to name an invokable class-string
+     * (D-08) but does not: it is a `Closure`, a class that does not exist, a class that exists but
+     * does not implement `Signals\Contracts\SignalCalculator`, or some other non-string value.
+     * Thrown by `Signals\MergeRule::fromDeclaration()`.
+     *
+     * The `Closure` branch is the one D-08 exists to name plainly: the design spec's superseded §6
+     * example put a closure directly in `config/hubspot.php`, which makes `php artisan
+     * config:cache` throw *"Your configuration files are not serializable"* the moment it is
+     * cached -- a production-breaking regression invisible until someone deploys with cached
+     * config. The message steers to the class-string alternative rather than merely rejecting the
+     * closure.
+     */
+    public static function invalidSignalCalculator(mixed $value, string $signalName, string $property): self
+    {
+        if ($value instanceof Closure) {
+            return new self(sprintf(
+                'hubspot.signals.map["%s"]["%s"] is a closure. `php artisan config:cache` cannot '
+                .'serialise a closure and throws "Your configuration files are not serializable" '
+                .'the moment one appears anywhere in config/hubspot.php. Declare an invokable '
+                .'class-string implementing %s instead, for example \'%s\' => '
+                .'App\Signals\%s::class, and put the calculation in that class\'s __invoke() '
+                .'method.',
+                $signalName,
+                $property,
+                SignalCalculator::class,
+                $property,
+                str_replace(' ', '', ucwords(str_replace('_', ' ', $property))),
+            ));
+        }
+
+        // The four verbs are repeated as a literal here rather than read from
+        // `Signals\MergeRule::validVerbs()`: `Exceptions` is a cross-cutting namespace every layer
+        // throws through, and reaching into a concrete `Signals` class from here would be the
+        // inverse of the dependency direction the six-layer architecture requires. The literal is
+        // pinned against `MergeRule::validVerbs()`'s own return value in
+        // `tests/Unit/Signals/MergeRuleTest.php`, so the two cannot silently drift.
+        if (is_string($value) && $value !== '' && class_exists($value)) {
+            return new self(sprintf(
+                'hubspot.signals.map["%s"]["%s"] names "%s", which does not implement %s. Add '
+                .'"implements %s" to the class, or correct the declaration to one of the four '
+                .'merge verbs: first_wins, last_wins, increment, sum.',
+                $signalName,
+                $property,
+                $value,
+                SignalCalculator::class,
+                SignalCalculator::class,
+            ));
+        }
+
+        if (is_string($value) && $value !== '') {
+            return new self(sprintf(
+                'hubspot.signals.map["%s"]["%s"] names "%s", which is not a class that exists '
+                .'and is not one of the four merge verbs: first_wins, last_wins, increment, sum. '
+                .'Correct the class name, or declare a valid merge-rule verb instead.',
+                $signalName,
+                $property,
+                $value,
+            ));
+        }
+
+        return new self(sprintf(
+            'hubspot.signals.map["%s"]["%s"] is a %s, which is not a valid merge-rule '
+            .'declaration. Declare one of the four merge verbs (first_wins:<field>, '
+            .'last_wins:<field>, increment, sum:<field>) or an invokable class-string '
+            .'implementing %s.',
+            $signalName,
+            $property,
+            get_debug_type($value),
+            SignalCalculator::class,
+        ));
+    }
+
+    /**
+     * A `hubspot.signals.map` entry's `object` key is missing entirely, or its `properties` key is
+     * present but not an array. Thrown by `Signals\SignalMap::validate()` before any per-property
+     * declaration is parsed -- a structurally malformed entry has no properties worth parsing yet.
+     *
+     * A fifth factory beyond the four SIG-03/D-08/D-03 primarily motivate (06-02-PLAN.md's
+     * `unknownSignalName`, `unknownSignalMergeVerb`, `invalidSignalCalculator`,
+     * `signalObjectTypeMismatch`): STANDARDS §9 requires every caller-facing fault to be a
+     * directed message naming the actual fix rather than a raw `TypeError` from destructuring a
+     * malformed array, and none of those four factories' signatures fit a whole-entry shape fault.
+     */
+    public static function invalidSignalMapEntry(string $signalName, string $reason): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"] is not a valid signal declaration: %s. Each entry must be '
+            .'an array with an "object" key naming the HubSpot object type this signal\'s '
+            .'subject belongs to, and a "properties" key mapping each HubSpot property to a '
+            .'merge-rule declaration, for example [\'object\' => \'contacts\', \'properties\' '
+            .'=> [\'pricing_view_count\' => \'increment\']].',
+            $signalName,
+            $reason,
+        ));
+    }
+
+    /**
+     * `hubspot.signals.map` has no entry named the given signal. Thrown by
+     * `Signals\SignalMap::objectTypeFor()`/`rulesFor()` on a miss, and by `Signals\SignalRecorder::
+     * record()` BEFORE anything else runs (`Hubspot::signal()`'s first check) -- an unmapped
+     * signal name is refused before it is bounded in bytes or written to the buffer, because a
+     * name the map does not recognise can never be flushed to HubSpot regardless of how well
+     * formed the call otherwise is.
+     *
+     * @param  list<string>  $validNames
+     */
+    public static function unknownSignalName(string $given, array $validNames): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map has no entry named "%s". %s Add an entry for "%s" to '
+            .'hubspot.signals.map, or correct the signal name passed to Hubspot::signal().',
+            $given,
+            $validNames === []
+                ? 'No signal names are mapped at all yet.'
+                : sprintf('The mapped names are: %s.', implode(', ', $validNames)),
+            $given,
+        ));
+    }
+
+    /**
+     * A `hubspot.signals.map` entry's `object` key names an object type no `hubspot.models`
+     * binding claims (D-03). Thrown by `Signals\SignalMap::validate()`, from `ServiceProvider::
+     * boot()`'s `bootSignalMap()` -- boot-checkable because "is this object type claimed by some
+     * bound model" needs no runtime subject, unlike the flush-time write itself.
+     *
+     * Both sides are compared after `Registry\HubspotObjectType::normalise()`, so `$mapObjectType`
+     * and `$boundObjectType` are always already-canonical values -- a spelling difference like
+     * "Contacts" vs "contacts" is never what triggered this.
+     */
+    public static function signalObjectTypeMismatch(string $signalName, string $mapObjectType, string $boundObjectType, string $modelClass): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"] declares object type "%s", but no hubspot.models binding claims it -- the closest configured binding is %s, bound to "%s". Add a hubspot.models entry naming "%s", or correct the map\'s "object" key so it names an object type a binding actually claims. Both sides are compared after Registry\HubspotObjectType::normalise(), so a spelling difference like "Contacts" vs "contacts" is never the cause.',
+            $signalName, $mapObjectType, $modelClass, $boundObjectType, $mapObjectType,
+        ));
+    }
+
+    /**
+     * D-03's RUNTIME half. `signalObjectTypeMismatch()` above is the BOOT check: it proves some
+     * bound model claims the map's object type, with no runtime subject in hand. It cannot catch
+     * the case this one exists for -- a signal declared for one object type, buffered against a
+     * subject whose OWN binding resolves to a different one (a `companies`-declared signal name
+     * reused for a `contacts`-bound subject, or the reverse). Both sides pass the boot check
+     * individually; only a specific (signal, subject) pairing at flush time can catch the mismatch.
+     *
+     * Thrown from `FlushSignalsJob::computeAcrossSignalNames()`, per subject, for every buffered
+     * signal name that HAS matching rows for that subject -- never filtered away silently, per the
+     * P1 finding this closes: a dropped signal is exactly the silent attribution loss SIG-06 exists
+     * to prevent. The whole flush aborts rather than skipping just this subject, mirroring
+     * `duplicateSignalSubjectIdentifier()`'s own "refuse rather than guess" precedent.
+     *
+     * `$subjectIdentity` is pre-composed by the caller as `ClassName#id`, the same convention
+     * `duplicateSignalSubjectIdentifier()` already uses.
+     */
+    public static function signalSubjectObjectTypeMismatch(string $signalName, string $mapObjectType, string $subjectObjectType, string $subjectIdentity): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.map["%s"] declares object type "%s", but subject %s resolved to "%s" through hubspot.models -- refusing to flush this signal\'s properties there. A signal\'s declared object type and the object type its subject resolves to must match, or a roll-up computed for one HubSpot object would be written to a different one. Record "%s" only for subjects bound to "%s" in hubspot.models, or add a separate hubspot.signals.map entry declaring "%s" for subjects of that kind.',
+            $signalName, $mapObjectType, $subjectIdentity, $subjectObjectType, $signalName, $mapObjectType, $subjectObjectType,
+        ));
+    }
+
+    /**
+     * `HUBSPOT_SIGNALS=true` is set but the `hubspot_signal_trail` table this package owns has
+     * never been created. Raised by `Signals\Stores\LocalSignalStore` in place of the driver's own
+     * `SQLSTATE[42S02]`, mirroring `missingSignalsTable()`'s shape exactly: name the table, name
+     * `php artisan migrate`, and pre-empt the publish question, because every other Laravel package
+     * that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingSignalTrailTable(bool $featureEnabled = true): self
+    {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis -- the identical reasoning missingSignalsTable() already carries for SIG-01.
+        if (! $featureEnabled) {
+            return new self(
+                'Appending to the signal trail requires HUBSPOT_SIGNALS=true, and it is currently '
+                .'false. The "hubspot_signal_trail" table is where each buffered signal\'s flush '
+                .'is recorded, so appending cannot run without it. Set HUBSPOT_SIGNALS=true and '
+                .'run `php artisan migrate` (+ `php artisan config:cache` if you cache config). '
+                .'Nothing needs publishing first: this package loads its own migrations whenever '
+                .'HUBSPOT_SIGNALS=true.',
+            );
+        }
+
+        return new self(
+            'HUBSPOT_SIGNALS is true but the "hubspot_signal_trail" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package '
+            .'loads its own migrations whenever HUBSPOT_SIGNALS=true.',
+        );
+    }
+
+    /**
+     * `hubspot.signals.store` (env `HUBSPOT_SIGNAL_STORE`) is set to a value the package does not
+     * recognise (SIG-07). Thrown from the `default` arm of `ServiceProvider::register()`'s
+     * `SignalStore` binding, mirroring `unknownStore()`'s shape exactly: a package that fell back
+     * to `local` would keep working while the operator believed a different driver was in use --
+     * the silent-wrong-behaviour failure this package exists to prevent, wearing a config bug's
+     * clothes. Naming a Phase 7 driver (`custom_object`, `timeline`) before it ships throws here
+     * too, rather than being quietly tolerated as a forward declaration.
+     *
+     * @param  list<string>  $validValues
+     */
+    public static function unknownSignalStore(string $given, array $validValues): self
+    {
+        return new self(sprintf(
+            'HUBSPOT_SIGNAL_STORE is set to "%s", which is not a supported signal store. Set it '
+            .'to one of: %s.',
+            $given,
+            implode(', ', $validValues),
+        ));
+    }
+
+    /**
+     * `hubspot.signals.flush_lease` resolved to zero or less. Raised by `Signals\FlushClaims`'s
+     * constructor, mirroring `invalidWebhookClaimLease()`'s exact reasoning: a store that cannot
+     * honour per-subject exclusion should never hand out a claim at all.
+     *
+     * The lease deadline is `now() - flush_lease`. At zero that deadline is the present moment,
+     * and the comparison is not even a tie: persisted timestamps carry second precision while
+     * `Carbon::now()` carries microseconds, so a claim taken moments ago already reads as expired
+     * and an overlapping flush reclaims a subject still being written -- reintroducing exactly the
+     * lost update D-06's revision exists to close. A negative value puts the deadline in the future
+     * and makes every claim reclaimable outright.
+     *
+     * Same `(int)` cast caveat as {@see self::invalidWebhookClaimLease()}.
+     */
+    public static function invalidSignalFlushLease(int $leaseSeconds): self
+    {
+        return new self(sprintf(
+            'hubspot.signals.flush_lease must be a whole number of seconds of at least 1, but is %d. '
+            .'A lease of zero or less makes a claim taken moments ago read as already expired, so an '
+            .'overlapping flush could reclaim a subject still being written and overwrite its correct '
+            .'roll-up value with a stale one. Note that a blank or non-numeric value becomes 0.',
+            $leaseSeconds,
+        ));
+    }
+
+    /**
+     * `HUBSPOT_SIGNALS=true` is set but the `hubspot_signal_flush_claims` table this package owns
+     * has never been created. Raised by `Signals\FlushClaims` in place of the driver's own
+     * `SQLSTATE[42S02]`, mirroring `missingSignalTrailTable()`'s shape exactly: name the table,
+     * name `php artisan migrate`, and pre-empt the publish question, because every other Laravel
+     * package that ships a migration expects `vendor:publish` first and this one does not.
+     */
+    public static function missingSignalFlushClaimTable(bool $featureEnabled = true): self
+    {
+        // Two states, two messages, because the fix differs and a wrong diagnosis costs more than
+        // no diagnosis -- the identical reasoning missingSignalTrailTable() already carries.
+        if (! $featureEnabled) {
+            return new self(
+                'Claiming a subject for flush requires HUBSPOT_SIGNALS=true, and it is currently false. '
+                .'The "hubspot_signal_flush_claims" table is what stops two overlapping flushes from '
+                .'writing the same subject twice, so claiming cannot run without it. Set '
+                .'HUBSPOT_SIGNALS=true and run `php artisan migrate` (+ `php artisan config:cache` if '
+                .'you cache config). Nothing needs publishing first: this package loads its own '
+                .'migrations whenever HUBSPOT_SIGNALS=true.',
+            );
+        }
+
+        return new self(
+            'HUBSPOT_SIGNALS is true but the "hubspot_signal_flush_claims" table does not exist. Run '
+            .'`php artisan migrate` to create it. Nothing needs publishing first: this package loads '
+            .'its own migrations whenever HUBSPOT_SIGNALS=true.',
         );
     }
 }

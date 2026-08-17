@@ -575,13 +575,22 @@ of `Sync`, not a consumer of it: signals are event-shaped and have no local mode
 
   - Acceptance: `config('hubspot.signals.map')` maps a signal name to an object type plus a set of
     HubSpot property → merge-rule entries. The verb vocabulary is closed and has exactly four
-    members: `first_wins:<field>`, `last_wins:<field>`, `increment`, `sum:<field>` — plus a closure
-    receiving the subject's matching signals for cases the vocabulary does not cover. An unknown
-    signal name or unknown merge verb throws `ConfigurationException` **naming the fix**, and the map
-    is validated **at boot, not at flush**, so a typo fails fast rather than silently dropping data.
+    members: `first_wins:<field>`, `last_wins:<field>`, `increment`, `sum:<field>` — plus an
+    invokable class-string receiving the subject's matching signals for cases the vocabulary does
+    not cover. An unknown signal name or unknown merge verb throws `ConfigurationException`
+    **naming the fix**, and the map is validated **at boot, not at flush**, so a typo fails fast
+    rather than silently dropping data.
 
   - Note: an earlier draft listed `overwrite` and `last_wins` as separate verbs. They are the same
     operation. **Only `last_wins` exists.**
+
+  - **Amended 2026-08-12 (D-08, plan 06-02):** "plus a closure" above read "plus an invokable
+    class-string" in the original draft of this acceptance text. `php artisan config:cache`
+    serialises `config/hubspot.php` with `var_export()`, which throws on a closure appearing
+    anywhere in it — a production-breaking regression invisible until deploy. The class-string
+    form loses no expressive power and is what `Signals\MergeRule`/`Signals\Contracts\
+    SignalCalculator` (06-02) implement. The wording is annotated here rather than silently
+    rewritten, matching how 05-03 handled HOOK-01's own stale wording.
 
 - [ ] **SIG-04**: `RollUpCalculator` — a pure function, no dependencies at all
   — signals spec §4, §12
@@ -590,6 +599,11 @@ of `Sync`, not a consumer of it: signals are event-shaped and have no local mode
     fake required to test it. Every merge verb — including `first_wins`, the subtlest behaviour in
     the feature — is provable in a unit test. Roll-ups are **absolute values computed from the
     buffer**, never read back from HubSpot.
+
+  - **Amended 2026-08-12 (D-08, plan 06-02):** the map this class's rules are drawn from carries
+    SIG-03's own vocabulary, including its invokable class-string escape hatch rather than a
+    closure — `RollUpCalculator` interprets whatever `MergeRule` resolved and never parses a
+    declaration itself, so this requirement's own text needed no rewording beyond this note.
 
   - Note: the zero-dependency shape is deliberate, and it is what makes `pest --mutate` meaningfully
     exercise the 80% MSI floor here rather than rubber-stamp it.

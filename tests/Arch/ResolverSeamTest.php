@@ -220,6 +220,11 @@ test('a layer that throws the package exception hierarchy passes its own boundar
         'SeamFixtures/Webhooks/WebhooksTypedOnAFrameworkRequest.php',
         'Webhooks',
     ],
+    'R5, Signals typed on a framework collection' => [
+        'R5',
+        'SeamFixtures/Signals/SignalsTypedOnAFrameworkCollection.php',
+        'Signals',
+    ],
 ]);
 
 test('the scratch overlay the proof above relies on is the tree the rule actually reads', function (): void {
@@ -260,5 +265,28 @@ test('R4 still rejects an SDK import from Webhooks after admitting the framework
 
     expect(str_contains($result['output'], 'HubSpot\\'))->toBeTrue(
         "R4 went red for a reason other than the SDK import.\n\n".$result['output'],
+    );
+});
+
+test('R5 still rejects an SDK import from Signals after admitting the framework', function (): void {
+    // R5's widening to admit `Illuminate` (06-01, SIG-01) must not also admit `HubSpot\*` --
+    // `Gateway` remains the only layer R1 permits to name the SDK. Played on its own, never
+    // merged with R5/SignalsDependsOnFrontend.php's scratch tree: verify-arch-rules-fire.sh
+    // evaluates one run per rule, so a second violation declared there would make R5's firing
+    // verdict ambiguous -- red for either reason -- which is exactly how a later re-admission of
+    // the SDK could pass unnoticed. Mirrors "R4 still rejects an SDK import from Webhooks after
+    // admitting the framework" immediately above.
+    $result = reyemtech_hubspot_arch_rule_over_fixtures('R5', [
+        'SeamFixtures/Signals/SignalsUsingTheSdkDirectly.php' => 'Signals',
+    ]);
+
+    expect($result['exitCode'] === 0)->toBeFalse(
+        'R5 stayed green with an SDK import present in Signals, so widening R5 to admit the '
+        .'framework also admitted the SDK — the one thing R5 exists to forbid from this '
+        ."layer.\n\n".$result['output'],
+    );
+
+    expect(str_contains($result['output'], 'HubSpot\\'))->toBeTrue(
+        "R5 went red for a reason other than the SDK import.\n\n".$result['output'],
     );
 });

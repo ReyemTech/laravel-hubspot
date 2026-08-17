@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ReyemTech\Hubspot;
 
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\DatabaseManager;
@@ -32,10 +33,20 @@ use ReyemTech\Hubspot\Registry\Contracts\RegistryCache;
 use ReyemTech\Hubspot\Registry\Stores\ArrayAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\CacheAssociationTypeStore;
 use ReyemTech\Hubspot\Registry\Stores\DatabaseAssociationTypeStore;
+use ReyemTech\Hubspot\Signals\BoundModelReader;
+use ReyemTech\Hubspot\Signals\Console\FlushSignalsCommand;
+use ReyemTech\Hubspot\Signals\Contracts\SignalReceiptRecorder;
+use ReyemTech\Hubspot\Signals\Contracts\SignalStore;
+use ReyemTech\Hubspot\Signals\FlushClaims;
+use ReyemTech\Hubspot\Signals\IdentityResolver;
+use ReyemTech\Hubspot\Signals\SignalMap;
+use ReyemTech\Hubspot\Signals\SignalRecorder;
+use ReyemTech\Hubspot\Signals\Stores\LocalSignalStore;
 use ReyemTech\Hubspot\Sync\HubspotObserver;
 use ReyemTech\Hubspot\Sync\ModelBindings;
 use ReyemTech\Hubspot\Sync\SyncGate;
 use ReyemTech\Hubspot\Sync\SyncStateContract;
+use ReyemTech\Hubspot\Sync\SyncsToHubspot;
 use ReyemTech\Hubspot\Webhooks\Console\PruneWebhookEventsCommand;
 use ReyemTech\Hubspot\Webhooks\Console\SyncWebhookSubscriptionsCommand;
 use ReyemTech\Hubspot\Webhooks\Contracts\WebhookEventStore;
@@ -170,6 +181,10 @@ final class ServiceProvider extends BaseServiceProvider
         // the port, `HubspotManager` implements it. See `Webhooks\Contracts\WebhookReceiptRecorder`.
         $this->app->bind(WebhookReceiptRecorder::class, HubspotManager::class);
 
+        // The THIRD instance of that same inversion, for R5's identical reason: `Signals` declares
+        // the port, `HubspotManager` implements it. See `Signals\Contracts\SignalReceiptRecorder`.
+        $this->app->bind(SignalReceiptRecorder::class, HubspotManager::class);
+
         // Read fresh from config by every collaborator that resolves it (HubspotObserver,
         // SyncHubspotObjectJob) -- shared as a singleton purely because it holds no transport
         // Hubspot::fake() would ever need to invalidate, unlike the gateways below.
@@ -261,6 +276,119 @@ final class ServiceProvider extends BaseServiceProvider
 
             return new HandlerMap($handlers);
         });
+
+        // Read fresh from config by every collaborator that resolves it (IdentityResolver,
+        // FlushSignalsJob) -- shared as a singleton purely because it holds no transport
+        // Hubspot::fake() would ever need to invalidate, on the same terms as ModelBindings above.
+        $this->app->singleton(BoundModelReader::class);
+
+        // Config-and-BoundModelReader-only, on the same "no transport to invalidate" terms as
+        // BoundModelReader itself. Auto-wired: SignalMap's constructor asks for
+        // Illuminate\Contracts\Config\Repository (bound to 'config' by the framework) and
+        // Signals\BoundModelReader (bound above), so no closure is needed.
+        $this->app->singleton(SignalMap::class);
+
+        // Shared, like WebhookEventStore above: this class holds no transport Hubspot::fake()
+        // would ever need to invalidate, only a database connection.
+        // `hubspot.signals.enabled` is read once, at resolution -- a plain scalar
+        // (config:cache-safe), not a credential, so there is no on-demand-secret reason to defer
+        // this the way WebhookGatewayContract does.
+        $this->app->singleton(SignalRecorder::class, function (Application $app): SignalRecorder {
+            /** @var bool $featureEnabled */
+            $featureEnabled = $app->make('config')->get('hubspot.signals.enabled');
+
+            return new SignalRecorder(
+                $app->make(DatabaseManager::class)->connection(),
+                $app->make(SignalMap::class),
+                $app->make(SignalReceiptRecorder::class),
+                $featureEnabled,
+            );
+        });
+
+        // Config-and-database-only, on the same "no transport to invalidate" terms as
+        // SignalRecorder above. Bound via closure, not auto-wired, for the identical reason
+        // SignalRecorder is above: the container has no default resolution for a plain
+        // `Illuminate\Database\Connection` type-hint, only for `DatabaseManager`.
+        $this->app->singleton(IdentityResolver::class, function (Application $app): IdentityResolver {
+            /** @var bool $featureEnabled */
+            $featureEnabled = $app->make('config')->get('hubspot.signals.enabled');
+
+            return new IdentityResolver(
+                $app->make(DatabaseManager::class)->connection(),
+                $app->make(BoundModelReader::class),
+                $app->make(Dispatcher::class),
+                $featureEnabled,
+            );
+        });
+
+        // The signal-history driver selector is HUBSPOT_SIGNAL_STORE, the identical
+        // throwing-default-arm shape AssociationTypeStore above already establishes: an
+        // unrecognised value throws rather than falling back, because a package that fell back
+        // would keep working while the operator believed a different driver was in use -- the
+        // silent-wrong-behaviour failure this package exists to prevent, wearing a config bug's
+        // clothes. Phase 7 adds custom_object and timeline as further arms; until then naming
+        // either must throw too, not be quietly tolerated as a forward declaration. Shared, like
+        // WebhookEventStore above: holds no transport Hubspot::fake() would ever need to
+        // invalidate, only a database connection.
+        //
+        // Extracted to its own named method (rather than an inline closure, unlike every binding
+        // above it) purely to keep register()'s own cyclomatic complexity under the ceiling
+        // Generic.Metrics.CyclomaticComplexity enforces -- a second match/default-arm pair nested
+        // directly in this method pushed it over. The extraction changes no behaviour.
+        $this->app->singleton(
+            SignalStore::class,
+            fn (Application $app): SignalStore => self::resolveSignalStore($app),
+        );
+
+        // The subject-level flush claim (D-06, revised 2026-08-12). Shared, like WebhookEventStore
+        // and SignalStore above: holds no transport Hubspot::fake() would ever need to invalidate,
+        // only a database connection. hubspot.signals.flush_lease and .enabled are read once, at
+        // resolution -- both plain scalars (config:cache-safe), not credentials.
+        $this->app->singleton(FlushClaims::class, function (Application $app): FlushClaims {
+            $config = $app->make('config');
+
+            /** @var int $leaseSeconds */
+            $leaseSeconds = $config->get('hubspot.signals.flush_lease');
+
+            /** @var bool $featureEnabled */
+            $featureEnabled = $config->get('hubspot.signals.enabled');
+
+            return new FlushClaims(
+                $app->make(DatabaseManager::class)->connection(),
+                $leaseSeconds,
+                $featureEnabled,
+            );
+        });
+    }
+
+    /**
+     * The `SignalStore` binding's own resolver -- see the call site in {@see self::register()} for
+     * why this is a named method rather than the inline closure every other binding above it uses.
+     */
+    private static function resolveSignalStore(Application $app): SignalStore
+    {
+        $config = $app->make('config');
+
+        /** @var mixed $store */
+        $store = $config->get('hubspot.signals.store');
+
+        /** @var bool $trailPayload */
+        $trailPayload = $config->get('hubspot.signals.trail_payload');
+
+        /** @var bool $featureEnabled */
+        $featureEnabled = $config->get('hubspot.signals.enabled');
+
+        return match ($store) {
+            'local' => new LocalSignalStore(
+                $app->make(DatabaseManager::class)->connection(),
+                $trailPayload,
+                $featureEnabled,
+            ),
+            default => throw ConfigurationException::unknownSignalStore(
+                is_string($store) ? $store : get_debug_type($store),
+                self::supportedSignalStores(),
+            ),
+        };
     }
 
     /**
@@ -276,6 +404,24 @@ final class ServiceProvider extends BaseServiceProvider
     private static function supportedStores(): array
     {
         return ['array', 'cache', 'database'];
+    }
+
+    /**
+     * The driver names HUBSPOT_SIGNAL_STORE accepts, named once so the selector above and the
+     * error message that lists the valid values cannot drift apart -- mirrors supportedStores()
+     * above exactly, for the identical reason.
+     *
+     * A method rather than a class constant: `pest --mutate` reports a mutation on a constant
+     * declaration as UNCOVERED, because a constant has no executed line for coverage to attribute a
+     * test to. Dropping a driver from this list is a real defect. `custom_object` and `timeline`
+     * (Phase 7) are deliberately not listed yet -- naming either throws until they ship, rather
+     * than being silently tolerated as a forward declaration.
+     *
+     * @return list<string>
+     */
+    private static function supportedSignalStores(): array
+    {
+        return ['local'];
     }
 
     public function boot(): void
@@ -317,6 +463,7 @@ final class ServiceProvider extends BaseServiceProvider
         $this->publishes($publishable, 'hubspot-migrations');
 
         $this->bootModelBindings();
+        $this->bootSignalMap();
     }
 
     /**
@@ -325,6 +472,20 @@ final class ServiceProvider extends BaseServiceProvider
      * model happens to sync. `Model::observe()` is called with a CLASS STRING for every bound
      * model, never an instance -- see `HubspotObserver`'s own docblock for why an instance would
      * silently discard whatever binding data was baked into it.
+     *
+     * **Only a model that applies `Sync\SyncsToHubspot` is observed** (06-01, discovered by
+     * `Signals`' own tracer). `hubspot.models` stopped being a `Sync`-exclusive config key the
+     * moment D-01 had `Signals\BoundModelReader` read the identical array for identity resolution
+     * -- a model bound solely so `Hubspot::identify()` can resolve its object type and
+     * `id_property` never applies the trait, and `HubspotObserver`'s handlers unconditionally call
+     * `$model->hubspotLink()`, a method the trait alone declares. Attaching the observer to such a
+     * model would not skip cleanly; `passesGate()` reaches `hubspotLink()` before it can decide
+     * anything, throwing `BadMethodCallException` from inside an Eloquent event on the consumer's
+     * very first `create()` or `update()` -- silent until the moment a signals-only binding is
+     * added, at which point every write to that model breaks. `class_uses_recursive()`, not
+     * `method_exists()`, for the identical reason `HubspotObserver::modelUses()` already gives: a
+     * name check would fire for a model declaring `hubspotLink()` for unrelated reasons, and it
+     * would not see the trait inherited from a parent class.
      */
     private function bootModelBindings(): void
     {
@@ -333,8 +494,48 @@ final class ServiceProvider extends BaseServiceProvider
         $bindings->validate();
 
         foreach (array_keys($bindings->all()) as $modelClass) {
+            if (! in_array(SyncsToHubspot::class, class_uses_recursive($modelClass), true)) {
+                continue;
+            }
+
             $modelClass::observe(HubspotObserver::class);
         }
+    }
+
+    /**
+     * D-07: validates `hubspot.signals.map` at BOOT, guarded by an explicit `=== true` check
+     * against `hubspot.signals.enabled` -- so the cost of validation lands only on an install that
+     * opted in, and is zero otherwise.
+     *
+     * **Deliberately NOT unconditional, unlike `bootModelBindings()` above.** That method can run
+     * unconditionally only because `hubspot.models` defaults to `[]`, which makes `ModelBindings::
+     * validate()` a harmless no-op loop over zero entries. An unset `hubspot.signals.map` is a
+     * DIFFERENT kind of default: a real, valid "signals are off" state that this package must not
+     * pay for, whereas `hubspot.models` being empty by default is a genuinely unconfigured feature
+     * with nothing to validate either way. Both end up as no-ops today, but for different reasons,
+     * and only one of those reasons survives a consumer setting `hubspot.signals.enabled = false`
+     * while STILL declaring a map for later -- exactly the case
+     * `SignalMapBootTest::test_disabled_with_a_broken_map_boots_without_throwing()` pins.
+     *
+     * **Why D-07 diverges from `Webhooks\HandlerMap::validate()`, which runs at JOB time, not
+     * boot.** A bad `hubspot.webhooks.handlers` entry costs exactly one webhook claim -- the item
+     * is redelivered by HubSpot and the fix is one worker cycle away. A bad `hubspot.signals.map`
+     * entry is worse: it silently drops the BUFFERED ATTRIBUTION this whole feature exists to
+     * protect, discovered only when a flush fails or never fires at all. Fail-fast at boot is
+     * worth more here than the parallel decision was worth in `Webhooks`.
+     *
+     * `=== true`, never a `(bool)` cast: `hubspot.signals.enabled` reaching here as the string
+     * `'1'` from a misconfigured `.env` reader must NOT enable validation, the same strict-identity
+     * reasoning `migrationGroups()` already states for the identical config key
+     * (`SignalMapBootTest::test_a_truthy_non_bool_enabled_value_does_not_validate_and_boots()`).
+     */
+    private function bootSignalMap(): void
+    {
+        if ($this->app->make('config')->get('hubspot.signals.enabled') !== true) {
+            return;
+        }
+
+        $this->app->make(SignalMap::class)->validate();
     }
 
     /**
@@ -355,6 +556,7 @@ final class ServiceProvider extends BaseServiceProvider
             AssociationsDoctorCommand::class,
             PruneWebhookEventsCommand::class,
             SyncWebhookSubscriptionsCommand::class,
+            FlushSignalsCommand::class,
         ];
     }
 
@@ -366,21 +568,25 @@ final class ServiceProvider extends BaseServiceProvider
      * when something turns it on. The default store is `cache`, so the default install registers no
      * migration path at all.
      *
-     * REG-03 names the second consumer: Phase 6's signal buffer (SIG-01) gates the same way, on
-     * `HUBSPOT_SIGNALS` rather than `HUBSPOT_STORE`. It arrives here as **one more entry** —
-     * `__DIR__.'/../database/migrations/signals' => (bool) $config->get('hubspot.signals')` — and
-     * needs no other change: `boot()` above already publishes every group and loads the active ones.
-     * A nested group directory stays isolated from this one because `loadMigrationsFrom()` is not
-     * recursive; the migrator globs a single directory.
-     *
-     * `database/migrations/sync` (D-13, Phase 4) is exactly that second consumer, arriving one
-     * plan early: gated on `hubspot.models` being non-empty rather than rewriting the entry above,
-     * so an install with no bound models still registers no migration path at all (REG-03).
+     * REG-03 names the second consumer. `database/migrations/sync` (D-13, Phase 4) is exactly that
+     * second consumer, arriving one plan early: gated on `hubspot.models` being non-empty rather
+     * than rewriting the entry above, so an install with no bound models still registers no
+     * migration path at all (REG-03).
      *
      * `database/migrations/webhooks` (D-02, Phase 5) is the THIRD, gated on `hubspot.webhooks.enabled`
      * -- a distinct flag from both of the above, so an install that syncs models or reconciles the
      * registry through the database store still registers no webhook migration path until it opts
      * into that separately.
+     *
+     * `database/migrations/signals` (SIG-01, Phase 6) is the FOURTH, gated on
+     * `hubspot.signals.enabled === true` -- strict identity, at the SAME dotted depth as
+     * `hubspot.webhooks.enabled` beside it, and deliberately NOT
+     * `(bool) $config->get('hubspot.signals')`. That predicate looked like the natural
+     * continuation of the pattern above and is wrong: `hubspot.signals` is a NESTED config array
+     * (`['enabled' => ..., 'store' => ..., 'map' => ...]`), which is always non-empty and therefore
+     * always truthy once the key exists at all -- it would gate the migration ON regardless of the
+     * flag, the moment `config/hubspot.php` shipped a `signals` block, breaking zero-migration
+     * install for every install that never opted in.
      *
      * @return array<string, bool> absolute directory => whether to load it
      */
@@ -390,6 +596,7 @@ final class ServiceProvider extends BaseServiceProvider
             __DIR__.'/../database/migrations' => $this->app->make('config')->get('hubspot.store') === 'database',
             __DIR__.'/../database/migrations/sync' => $this->app->make('config')->get('hubspot.models') !== [],
             __DIR__.'/../database/migrations/webhooks' => $this->app->make('config')->get('hubspot.webhooks.enabled') === true,
+            __DIR__.'/../database/migrations/signals' => $this->app->make('config')->get('hubspot.signals.enabled') === true,
         ];
     }
 

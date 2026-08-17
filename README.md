@@ -100,6 +100,92 @@ taking the first would report success regardless of which id was really written.
 directions are confirmed it records the observed pairing into the registry; when either is not, it
 records nothing.
 
+## Signals
+
+Behavioural signals are recorded against a **visitor id the application supplies** — this package
+never reads a cookie, the session or the request to invent one (D9). `Hubspot::signal()` buffers a
+signal with zero HTTP; `Hubspot::identify()` binds that visitor id to a bound model, backfilling
+every buffered signal for it and dispatching one batched HubSpot write.
+
+One subject may be bound to **many** visitor ids — the same person on their phone and their
+laptop — and roll-ups compute across the union, which is what lets a `first_wins` property capture
+the genuinely earliest touch across a person's own devices. The reverse is refused: one visitor id
+binding to a **second, different** subject throws `SignalException`.
+
+**Accepted consequence:** a visitor id reused across two different people — a shared device, a
+shared browser profile — merges their attribution onto one subject. Visitor-id issuance is the
+application's own responsibility (D9), so the fix lives there: issue a fresh visitor id per
+person, not per device. An operator can recognise a merged subject directly, without this package
+doing anything special to surface it: its `hubspot_signals` rows carry more than one distinct
+`visitor_id` for the same `subject_type`/`subject_id` pair.
+
+### Flushing
+
+`Hubspot::identify()` dispatches one flush per call, covering exactly the subject just identified.
+For everything still buffered when no `identify()` call happens to touch it, schedule the
+package's own command:
+
+```
+php artisan hubspot:signals:flush
+```
+
+First sweeps every buffered signal recorded **after** an `identify()` call for its own visitor id —
+`Hubspot::signal()` always buffers anonymous, even for an already-identified visitor, because
+buffering stays a single write with no lookup (SIG-02); this sweep is what keeps that signal from
+being stranded until the application happens to call `identify()` again. Then selects every
+identified subject (`subject_type` set, straggler sweep included) carrying at least one unflushed
+row, batches them at 100 subjects per dispatch, and queues one `FlushSignalsJob` per batch. The
+package registers **no** schedule of its own (D-04) — add one line in your own
+`routes/console.php` or `bootstrap/app.php`'s `withSchedule()`:
+
+```php
+Schedule::command('hubspot:signals:flush')->everyFiveMinutes()->withoutOverlapping();
+```
+
+Frequency, queue and `withoutOverlapping()` are your own operational choices, sized for your own
+traffic and worker capacity. **`withoutOverlapping()` is convenience, not correctness.** It stops
+two scheduled runs from stacking, but the scheduler's own lock covers only the scheduled command
+— SIG-06 also lets `identify()` dispatch a flush for the very subject a scheduled run is
+mid-flight on, and no scheduler lock can see that second, independently-triggered dispatch. What
+actually makes two overlapping flushes safe is the per-subject claim `FlushSignalsJob` takes
+internally (D-06): the loser of that race skips the subject outright, leaving its rows for the
+next flush to pick up. `withoutOverlapping()` is still worth setting — it just is not the thing
+that makes concurrent flushes correct.
+
+### Testing
+
+`Hubspot::fake()` carries three assertions for the signals path, alongside the ones it already
+carries for outbound writes (`assertSynced()`) and inbound webhooks (`assertWebhookHandled()`):
+
+```php
+Hubspot::fake();
+
+Hubspot::signal('pricing_page_viewed', 'visitor-1', ['source' => 'google_ads']);
+$lead = Lead::create(['email' => 'ada@example.com']);
+Hubspot::identify('visitor-1', $lead);
+
+Hubspot::assertSignalRecorded('visitor-1', 'pricing_page_viewed', ['source' => 'google_ads']);
+Hubspot::assertPropertyRolledUp($lead, 'pricing_page_views', '1');
+Hubspot::assertRequestCount(1);
+```
+
+`assertSignalRecorded()` reads the INBOUND buffer receipt, never the outbound Guzzle history — a
+buffered signal never leaves the process (SIG-02), so it never satisfies `assertRequestCount()` or
+`assertSynced()`, and the reverse holds too. `assertSignalFlushed()` and `assertPropertyRolledUp()`
+take a bound model (as above) or a `'SubjectType#subjectId'` string for a caller with no model
+instance in hand. `assertPropertyRolledUp()` requires that ONE flushed record carried the property
+with the expected value, mirroring `assertSynced()`'s one-record rule — never a value assembled by
+checking the property's presence and the value's presence as two independent facts.
+
+`assertRequestCount()` is the EXISTING mechanism, reused rather than duplicated: a flush issues
+`sum(ceil(groupSize / 100))` requests, one per `(objectType, idProperty)` chunk of at most 100
+subjects (D-05) — the worked example's `1` is that arithmetic for one subject in one group, not a
+promise that every flush is a single request. Two subjects bound to different object types, or
+more than 100 subjects sharing one, issue more than one.
+
+The whole signals suite runs with **no credentials and no internet** — every assertion above
+passes with `HUBSPOT_TOKEN` unset, exactly like the rest of this package's test surface (D-12).
+
 ## Requirements
 
 - PHP `^8.3`

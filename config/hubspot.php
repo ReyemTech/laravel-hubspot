@@ -519,4 +519,125 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Signals
+    |--------------------------------------------------------------------------
+    |
+    | Behavioural signal buffering (SIG-01 … SIG-08): an application records a
+    | signal against an anonymous visitor id, binds it to a person once an
+    | identity appears, and HubSpot receives one batched property write --
+    | with no API call ever occurring in a request lifecycle.
+    |
+    | - enabled: gates the `hubspot_signals` migration exactly the way
+    |   `webhooks.enabled` above gates its own table -- a bare `composer
+    |   require` registers no migration path until this is true.
+    |   HUBSPOT_SIGNALS=true with no table throws a ConfigurationException
+    |   naming the table and `php artisan migrate`.
+    | - store: HUBSPOT_SIGNAL_STORE, the event-trail driver (SIG-07). 'local'
+    |   is the only driver this phase ships, and is the default because it is
+    |   the only one that works on any portal with no new credential, no tier
+    |   gate and no portal schema. 'custom_object' and 'timeline' arrive in a
+    |   later release, and naming either NOW throws a ConfigurationException
+    |   naming the supported drivers -- it is never silently ignored as a
+    |   forward declaration. All three drivers write the SAME roll-up
+    |   properties through Gateway; they differ only in WHERE the per-event
+    |   trail entry that produced those properties is recorded.
+    | - trail_payload: false by default, mirroring 'webhooks' -> audit_payload
+    |   above exactly, for the identical reason -- the `local` driver's
+    |   hubspot_signal_trail table would otherwise persist the consumer's OWN
+    |   customers' behavioural data (visitor ids, ad click identifiers,
+    |   referrer and page-path values, all tied to an identified person by
+    |   the time a row reaches that table), and its retention is UNBOUNDED
+    |   until Phase 7 ships `hubspot:signals:prune`. A package that defaulted
+    |   this true would be an opt-out data-retention decision made on
+    |   somebody else's behalf. Set true only when the operator wants the
+    |   recorded properties inspectable alongside the trail row that
+    |   flushed them.
+    | - map: signal name -> object type + HubSpot property roll-up rules
+    |   (SIG-03, SIG-04). Plain scalars and arrays only, here and everywhere
+    |   in this file -- `php artisan config:cache` serialises with
+    |   var_export(), which throws on a closure, so the merge vocabulary's
+    |   escape hatch names an invokable CLASS-STRING rather than a closure
+    |   (D-08).
+    |
+    |   Each entry is an 'object' key (the HubSpot object type this signal's
+    |   subject belongs to -- must be claimed by a hubspot.models binding,
+    |   D-03) and a 'properties' key mapping each HubSpot property to a
+    |   merge-rule declaration, one entry per verb in the closed four-verb
+    |   vocabulary plus the class-string escape hatch:
+    |
+    |       'map' => [
+    |           'pricing_page_viewed' => [
+    |               'object' => 'contacts',
+    |               'properties' => [
+    |                   // first_wins:<field> -- the EARLIEST matching signal's value of
+    |                   // <field>, never overwritten once set.
+    |                   'first_touch_source' => 'first_wins:source',
+    |                   // last_wins:<field> -- the MOST RECENT matching signal's value.
+    |                   'last_pricing_view' => 'last_wins:occurred_at',
+    |                   // increment -- a count of matching signals. Takes no field.
+    |                   'pricing_view_count' => 'increment',
+    |                   // sum:<field> -- the sum of a numeric field across matching signals.
+    |                   'total_deal_value' => 'sum:value',
+    |                   // An invokable class-string (D-08) for the rare case the four verbs
+    |                   // do not cover: App\Signals\IntentScore::__invoke(Collection $signals)
+    |                   // receives every matching signal and returns the property value.
+    |                   'intent_score' => App\Signals\IntentScore::class,
+    |               ],
+    |           ],
+    |       ],
+    |
+    |   'first_wins' and 'last_wins' accept an optional '|reconcile' modifier
+    |   ('first_wins:source|reconcile') -- performs at most ONE read per
+    |   subject, ever, to reconcile the stored value against what HubSpot
+    |   already holds; 'sum' and 'increment' reject the modifier outright.
+    |
+    |   An unknown signal name, an unknown merge verb -- there is no
+    |   'overwrite'; 'last_wins' is the closest equivalent -- or a
+    |   class-string that does not exist or does not implement
+    |   ReyemTech\Hubspot\Signals\Contracts\SignalCalculator throws a
+    |   ConfigurationException naming the offending value and the fix. This
+    |   map is validated at BOOT (D-07), guarded on 'enabled' above being
+    |   exactly `true` -- so a typo fails your application's boot, rather
+    |   than silently dropping the buffered attribution this feature exists
+    |   to protect, the first time a flush runs.
+    | - flush_lease: seconds a subject's flush claim holds before it is
+    |   considered abandoned and becomes re-claimable (D-06, revised
+    |   2026-08-12). Mirrors 'webhooks' -> claim_lease above in shape and
+    |   reasoning -- a worker that dies mid-flush costs a delay of at most
+    |   this many seconds, never a subject permanently stranded. The claim
+    |   is what stops two overlapping flushes (the identify()-triggered one
+    |   and the scheduled one) from both writing the same subject's roll-up
+    |   at once, which absolute roll-up values alone do NOT make safe: they
+    |   make a RETRY of the same input idempotent, not two workers computing
+    |   over different row sets. Plain scalar only, here and everywhere in
+    |   this file -- `php artisan config:cache` serialises with
+    |   var_export(), which throws on a closure.
+    |
+    |   If you schedule `hubspot:signals:flush` with
+    |   `Schedule::command(...)->withoutOverlapping()`, that call is an
+    |   operational convenience against stacked SCHEDULED runs -- it is NOT
+    |   what makes concurrent flushes correct. A scheduler lock cannot see
+    |   the flush `identify()` dispatches outside the schedule, and this
+    |   claim (flush_lease above) is what covers that race too. See
+    |   README.md's "Flushing" section for the full argument.
+    |
+    | The `properties` recorded against a signal are the consumer's OWN
+    | customers' behavioural data. This package writes to HubSpot only what
+    | the map's roll-up rules read -- the same concern `webhooks.audit_payload`
+    | above names, and a retention or persistence default here would be an
+    | opt-OUT data decision made on somebody else's behalf.
+    |
+    */
+    'signals' => [
+        'enabled' => (bool) env('HUBSPOT_SIGNALS', false),
+        'store' => env('HUBSPOT_SIGNAL_STORE', 'local'),
+        'trail_payload' => (bool) env('HUBSPOT_SIGNAL_TRAIL_PAYLOAD', false),
+        'flush_lease' => 900,
+        'map' => [
+            //
+        ],
+    ],
+
 ];

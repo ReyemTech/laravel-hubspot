@@ -34,7 +34,7 @@
         },
         {
             "id": "R5",
-            "description": "Signals may depend only on Registry, Gateway and the package exceptions",
+            "description": "Signals may depend only on Registry, Gateway, the package exceptions and the framework",
             "fixtures": [
                 "R5/SignalsDependsOnFrontend.php",
                 "R5/FrontendTarget.php"

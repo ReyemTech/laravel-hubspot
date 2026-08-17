@@ -12,6 +12,7 @@ use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Database\Eloquent\Model;
+use InvalidArgumentException;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use ReyemTech\Hubspot\Gateway\AssociationPair;
@@ -63,6 +64,11 @@ final class HubspotFake
      * would read a different log than the job wrote to. That is why `Hubspot::fake()`, not direct
      * construction, is the supported path.
      *
+     * `$signalReceipts` is the THIRD parameter appended this way, for the identical reason
+     * `$webhookReceipts` above was: `v0.6.0` released this constructor as `(Container, array,
+     * ?self $replacing = null)`, and every insertion since has appended rather than inserted so the
+     * released signature stays a strict prefix.
+     *
      * @param  array<string, CannedResponse|CannedConnectionFailure>  $responses  keyed by route key —
      *                                                                            see {@see self::routeKeyOf()}
      * @param  WebhookReceiptLog  $webhookReceipts  owned by `HubspotManager`, not this class — passed
@@ -70,12 +76,17 @@ final class HubspotFake
      *                                              `HubspotManager::recordWebhookHandled()` writes
      *                                              to the SAME log this fake reads (05-03,
      *                                              assertWebhookHandled)
+     * @param  SignalReceiptLog  $signalReceipts  owned by `HubspotManager`, on the same terms as
+     *                                            `$webhookReceipts` — so `recordSignalBuffered()`
+     *                                            and `recordSignalFlushed()` write to the SAME log
+     *                                            this fake reads (SIG-08)
      */
     public function __construct(
         private readonly Container $container,
         private readonly array $responses,
         ?self $replacing = null,
         private readonly WebhookReceiptLog $webhookReceipts = new WebhookReceiptLog,
+        private readonly SignalReceiptLog $signalReceipts = new SignalReceiptLog,
     ) {
         // Constructed per fake, which is what restarts the id counter it owns on every
         // Hubspot::fake() call (02-CONTEXT.md: "ids from a counter").
@@ -201,6 +212,65 @@ final class HubspotFake
     public function assertWebhookHandled(string $eventKey, string|array $expected = []): void
     {
         $this->webhookReceipts->assertWebhookHandled($eventKey, $expected);
+    }
+
+    /**
+     * Reads the INBOUND signal receipt log, never the outbound Guzzle history {@see self::requestLog()}
+     * builds every other assertion in this class from -- see {@see SignalReceiptLog}'s own docblock
+     * for why the two must stay two disjoint records rather than one merged log.
+     *
+     * @param  array<string, mixed>  $expected
+     */
+    public function assertSignalRecorded(string $visitorId, string $signalName, array $expected = []): void
+    {
+        $this->signalReceipts->assertSignalRecorded($visitorId, $signalName, $expected);
+    }
+
+    /**
+     * @param  array<string, mixed>  $expected
+     */
+    public function assertSignalFlushed(string|Model $subject, array $expected = []): void
+    {
+        [$subjectType, $subjectId] = self::resolveSubject($subject);
+
+        $this->signalReceipts->assertSignalFlushed($subjectType, $subjectId, $expected);
+    }
+
+    public function assertPropertyRolledUp(string|Model $subject, string $property, string $value): void
+    {
+        [$subjectType, $subjectId] = self::resolveSubject($subject);
+
+        $this->signalReceipts->assertPropertyRolledUp($subjectType, $subjectId, $property, $value);
+    }
+
+    /**
+     * A subject is a `(subjectType, subjectId)` pair everywhere in `Signals` -- the same pair
+     * `Hubspot::identify()`'s own `$subject` argument resolves to (`$subject::class`, its cast
+     * primary key). Given a `Model`, that pair is read directly. Given a string, it is read from
+     * `'SubjectType#subjectId'` -- the exact identity spelling `FlushSignalsJob`'s own
+     * `duplicateSignalSubjectIdentifier()` error message already uses internally, offered here as
+     * the shorthand for a caller with no `Model` instance in hand.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private static function resolveSubject(string|Model $subject): array
+    {
+        if ($subject instanceof Model) {
+            return [$subject::class, (string) $subject->getKey()]; // @phpstan-ignore-line cast.string
+        }
+
+        $position = strrpos($subject, '#');
+
+        if ($position === false) {
+            throw new InvalidArgumentException(sprintf(
+                "A string subject must be formatted 'SubjectType#subjectId' (e.g. "
+                ."'App\\Models\\Lead#42'), '%s' has no '#'. Pass the Eloquent model instead if you "
+                .'have one.',
+                $subject,
+            ));
+        }
+
+        return [substr($subject, 0, $position), substr($subject, $position + 1)];
     }
 
     private function requestLog(): RequestLog

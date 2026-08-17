@@ -135,6 +135,17 @@ the buffer row so it never repeats.
 
 ## 6. The signal map
 
+> **Amended 2026-08-12 (D-08, plan 06-02).** Two changes from the original draft below, both
+> load-bearing rather than cosmetic: (1) the closure escape hatch in `'intent_score'` is replaced
+> with an invokable class-string -- `php artisan config:cache` serialises `config/hubspot.php` with
+> `var_export()`, which throws *"Your configuration files are not serializable"* the moment a
+> closure appears anywhere in it, a production-breaking regression invisible until someone deploys
+> with cached config. That pattern is legal for `$hubspotMap` (core spec §5) only because those
+> closures live on a MODEL CLASS, never in a config file. (2) each signal's per-property rules are
+> nested under a `'properties'` key, alongside `'object'` -- matching what `Signals\SignalMap` and
+> `Signals\FlushSignalsJob` (06-01) actually implement; the flat shape below (rules as SIBLINGS of
+> `'object'`) was never built.
+
 ```php
 'signals' => [
     'enabled'        => env('HUBSPOT_SIGNALS', false),
@@ -143,15 +154,19 @@ the buffer row so it never repeats.
 
     'map' => [
         'pricing_page_viewed' => [
-            'object'             => 'contacts',
-            'last_pricing_view'  => 'last_wins:occurred_at',
-            'pricing_view_count' => 'increment',
-            'first_touch_source' => 'first_wins:source',
+            'object' => 'contacts',
+            'properties' => [
+                'last_pricing_view'  => 'last_wins:occurred_at',
+                'pricing_view_count' => 'increment',
+                'first_touch_source' => 'first_wins:source',
+            ],
         ],
 
         'demo_requested' => [
-            'object'       => 'contacts',
-            'intent_score' => fn (Collection $signals) => $signals->count() * 10,
+            'object' => 'contacts',
+            'properties' => [
+                'intent_score' => App\Signals\IntentScore::class,   // __invoke(Collection $signals)
+            ],
         ],
     ],
 ],
@@ -166,9 +181,12 @@ the buffer row so it never repeats.
 | `increment` | Count of matching signals |
 | `sum:<field>` | Sum of a numeric field across matching signals |
 
-Plus a closure receiving the subject's matching signals, for the rare case the vocabulary does not
-cover. This is deliberately the same three-tier flexibility core §5 gives `$hubspotMap` — literals,
-field references, closures — which the core spec keeps from tapp on purpose.
+Plus an invokable class-string implementing `Signals\Contracts\SignalCalculator`
+(`__invoke(Collection $signals): mixed`), for the rare case the vocabulary does not cover. This is
+deliberately the same three-tier flexibility core §5 gives `$hubspotMap` — literals, field
+references, an invokable escape hatch — which the core spec keeps from tapp on purpose. The
+class-string form, not a closure, is what keeps `config/hubspot.php` a plain, `config:cache`-safe
+array; see the amendment note above.
 
 **Ambiguity resolved:** an earlier draft listed `overwrite` and `last_wins` as separate verbs.
 They are the same operation. Only `last_wins` exists.
